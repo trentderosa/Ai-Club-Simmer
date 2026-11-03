@@ -31,12 +31,12 @@ export class InMemoryCheckInRepository implements CheckInRepository {
     this.userRecipes.clear();
   }
 
-  async validateUserRecipe(userId: string, userRecipeId: string, slotId: number): Promise<boolean> {
+  validateUserRecipe(userId: string, userRecipeId: string, slotId: number): Promise<boolean> {
     const recipe = this.userRecipes.get(userRecipeId);
     if (!recipe) {
-      return false;
+      return Promise.resolve(false);
     }
-    return recipe.user_id === userId && recipe.slot_id === slotId;
+    return Promise.resolve(recipe.user_id === userId && recipe.slot_id === slotId);
   }
 
   async create(params: CreateCheckInParams): Promise<CheckInRecord> {
@@ -61,20 +61,20 @@ export class InMemoryCheckInRepository implements CheckInRepository {
     return record;
   }
 
-  async getById(id: string, userId: string): Promise<CheckInRecord | null> {
+  getById(id: string, userId: string): Promise<CheckInRecord | null> {
     const record = this.checkIns.get(id);
     if (!record || record.user_id !== userId) {
-      return null;
+      return Promise.resolve(null);
     }
-    return record;
+    return Promise.resolve(record);
   }
 
-  async getRecentByUser(userId: string, limit = 5): Promise<CheckInRecord[]> {
+  getRecentByUser(userId: string, limit = 5): Promise<CheckInRecord[]> {
     const userCheckIns = Array.from(this.checkIns.values())
       .filter((c) => c.user_id === userId)
       .sort((a, b) => b.created_at.getTime() - a.created_at.getTime())
       .slice(0, limit);
-    return userCheckIns;
+    return Promise.resolve(userCheckIns);
   }
 
   /**

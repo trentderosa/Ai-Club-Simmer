@@ -24,7 +24,7 @@ export interface CheckInRecord {
 
 export const CoachNoteSchema = z.object({
   note: z.string().min(1).max(500),
-  focus_area: z.string().optional(),
+  focus_area: z.string().max(40).optional(),
 });
 
 export type CoachNote = z.infer<typeof CoachNoteSchema>;

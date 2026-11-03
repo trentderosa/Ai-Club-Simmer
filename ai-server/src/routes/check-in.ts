@@ -1,17 +1,49 @@
 import { Router, type Request, type Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { ZodError } from 'zod';
 import { CheckInInputSchema } from '../types/check-in.js';
-import { requireAuth } from '../middleware/auth.js';
 import type { CheckInService } from '../services/check-in-service.js';
+import type { JwtVerifier } from '../services/jwt-verifier.js';
 
-export function createCheckInRouter(checkInService: CheckInService): Router {
+export interface CheckInRouterDeps {
+  checkInService: CheckInService;
+  jwtVerifier: JwtVerifier;
+}
+
+export interface CheckInRouterOptions {
+  rateLimit?: {
+    windowMs: number;
+    maxRequests: number;
+  };
+}
+
+export function createCheckInRouter(
+  deps: CheckInRouterDeps,
+  options: CheckInRouterOptions = {}
+): Router {
   const router = Router();
 
+  // S1: Per-user rate limiter after auth to prevent LLM abuse
+  const userLimiter = rateLimit({
+    windowMs: options.rateLimit?.windowMs ?? 60000,
+    max: options.rateLimit?.maxRequests ?? 10,
+    message: { error: 'Too many check-ins, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req) => {
+      // Use user ID from request (set by auth middleware below)
+      // Falls back to 'unknown' when userId not yet set (before auth runs)
+      return (req as Request & { userId?: string }).userId || 'unknown';
+    },
+    // Skip IP-based validation since we use userId, not IP
+    validate: { xForwardedForHeader: false },
+  });
+
   /**
-   * POST /check-ins
+   * POST /api/check-ins
    * Create a post-cook check-in and receive a Coach's note.
    * 
-   * Requires authentication via Supabase JWT.
+   * Requires authentication via Supabase JWT (PR #3's verifier).
    * Does NOT award XP - the client should call award_slot_xp separately
    * (or XP is awarded via server-side trigger in PR #2's schema).
    * 
@@ -31,17 +63,43 @@ export function createCheckInRouter(checkInService: CheckInService): Router {
    *   focus_area?: string
    * }
    */
-  router.post('/', requireAuth, async (req: Request, res: Response): Promise<void> => {
+  // eslint-disable-next-line @typescript-eslint/no-misused-promises
+  router.post('/', userLimiter, async (req: Request, res: Response): Promise<void> => {
     try {
-      if (!req.user) {
-        res.status(401).json({ error: 'Not authenticated' });
+      // Auth validation using PR #3's JWT verifier
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        res.status(401).json({
+          error: 'Missing or invalid authorization header',
+        });
         return;
       }
 
+      const token = authHeader.slice(7);
+      const authResult = await deps.jwtVerifier.verify(token);
+
+      if (authResult.error === 'service_unavailable') {
+        res.status(503).json({ error: 'Authentication service unavailable' });
+        return;
+      }
+
+      if (!authResult.valid || !authResult.userId) {
+        const errorMessage = authResult.error === 'expired' 
+          ? 'Token expired' 
+          : 'Invalid or expired token';
+        res.status(401).json({ error: errorMessage });
+        return;
+      }
+
+      const userId = authResult.userId;
+      // Store userId on request for rate limiter
+      (req as Request & { userId?: string }).userId = userId;
+
       const input = CheckInInputSchema.parse(req.body);
 
-      const isValidRecipe = await checkInService.validateUserRecipe(
-        req.user.id,
+      // N1: Only validate once (removed duplicate from service)
+      const isValidRecipe = await deps.checkInService.validateUserRecipe(
+        userId,
         input.user_recipe_id,
         input.slot_id
       );
@@ -54,7 +112,7 @@ export function createCheckInRouter(checkInService: CheckInService): Router {
         return;
       }
 
-      const response = await checkInService.processCheckIn(req.user.id, input);
+      const response = await deps.checkInService.processCheckIn(userId, input);
       
       res.status(201).json(response);
     } catch (error) {

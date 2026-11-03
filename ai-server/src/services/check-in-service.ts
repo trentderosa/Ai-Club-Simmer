@@ -1,15 +1,17 @@
 import type { CheckInRepository } from '../repositories/check-in-repository.js';
 import type { CheckInInput, CheckInResponse } from '../types/check-in.js';
-import { generateCoachNote } from './ollama-service.js';
-import { sanitizeUserText } from '../utils/sanitize.js';
+import type { CoachNoteGenerator } from './coach-note.js';
 
 export class CheckInService {
-  constructor(private repository: CheckInRepository) {}
+  constructor(
+    private repository: CheckInRepository,
+    private coachNoteGenerator: CoachNoteGenerator
+  ) {}
 
   /**
    * Process a post-cook check-in:
-   * 1. Validate and sanitize input
-   * 2. Persist to repository
+   * 1. Validate ownership (done in route before calling this)
+   * 2. Persist raw text to repository (N2: store raw, sanitize only for prompt)
    * 3. Generate Coach's note via Ollama
    * 4. Return response (does NOT award XP - that's handled by award_slot_xp)
    */
@@ -17,22 +19,19 @@ export class CheckInService {
     userId: string,
     input: CheckInInput
   ): Promise<CheckInResponse> {
-    const sanitizedWentWell = sanitizeUserText(input.went_well);
-    const sanitizedWasHard = sanitizeUserText(input.was_hard);
-
     const checkIn = await this.repository.create({
       user_id: userId,
       user_recipe_id: input.user_recipe_id,
       slot_id: input.slot_id,
       difficulty_rating: input.rating,
-      went_well: sanitizedWentWell,
-      was_hard: sanitizedWasHard,
+      went_well: input.went_well ?? null,
+      was_hard: input.was_hard ?? null,
     });
 
-    const coachNote = await generateCoachNote(
+    const coachNote = await this.coachNoteGenerator.generate(
       input.rating,
-      sanitizedWentWell,
-      sanitizedWasHard
+      input.went_well ?? null,
+      input.was_hard ?? null
     );
 
     return {
