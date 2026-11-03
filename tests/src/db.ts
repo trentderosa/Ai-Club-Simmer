@@ -44,8 +44,10 @@ export class TestDatabase {
       DROP TABLE IF EXISTS profiles CASCADE;
       DROP TABLE IF EXISTS path_slots CASCADE;
       DROP TABLE IF EXISTS xp_config CASCADE;
-      DROP FUNCTION IF EXISTS award_slot_xp CASCADE;
-      DROP FUNCTION IF EXISTS get_user_total_xp CASCADE;
+      DROP FUNCTION IF EXISTS award_slot_xp(UUID) CASCADE;
+      DROP FUNCTION IF EXISTS award_slot_xp(UUID, UUID, INTEGER) CASCADE;
+      DROP FUNCTION IF EXISTS get_user_total_xp() CASCADE;
+      DROP FUNCTION IF EXISTS get_user_total_xp(UUID) CASCADE;
       DROP FUNCTION IF EXISTS update_updated_at CASCADE;
     `);
   }
@@ -122,36 +124,64 @@ export class TestDatabase {
   async createCheckIn(
     userId: string,
     userRecipeId: string,
-    slotId: number,
-    isRepeat: boolean = false
+    slotId: number
   ): Promise<string> {
     const result = await this.pool.query(
-      `INSERT INTO check_ins (user_id, user_recipe_id, slot_id, difficulty_rating, is_repeat)
-       VALUES ($1, $2, $3, 'ok', $4)
+      `INSERT INTO check_ins (user_id, user_recipe_id, slot_id, difficulty_rating)
+       VALUES ($1, $2, $3, 'ok')
        RETURNING id`,
-      [userId, userRecipeId, slotId, isRepeat]
+      [userId, userRecipeId, slotId]
     );
     return result.rows[0].id;
   }
 
-  async awardSlotXp(
-    userId: string,
-    checkInId: string,
-    slotId: number
-  ): Promise<XpAwardResult> {
+  async getCheckInIsRepeat(checkInId: string): Promise<boolean> {
     const result = await this.pool.query(
-      'SELECT * FROM award_slot_xp($1, $2, $3)',
-      [userId, checkInId, slotId]
+      'SELECT is_repeat FROM check_ins WHERE id = $1',
+      [checkInId]
     );
-    return result.rows[0];
+    return result.rows[0].is_repeat;
+  }
+
+  /**
+   * Award XP for a check-in. The new function signature takes only check_in_id
+   * and derives user_id and slot_id from the check_in row.
+   * 
+   * For testing, we simulate auth.uid() by setting a session variable.
+   */
+  async awardSlotXp(checkInId: string, asUserId?: string): Promise<XpAwardResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      
+      if (asUserId) {
+        await client.query(
+          `SELECT set_config('request.jwt.claim.sub', $1, true)`,
+          [asUserId]
+        );
+      }
+      
+      const result = await client.query(
+        'SELECT * FROM award_slot_xp($1)',
+        [checkInId]
+      );
+      
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   async getUserTotalXp(userId: string): Promise<number> {
     const result = await this.pool.query(
-      'SELECT get_user_total_xp($1) as total',
+      'SELECT COALESCE(SUM(xp_awarded), 0) as total FROM xp_events WHERE user_id = $1',
       [userId]
     );
-    return result.rows[0].total;
+    return parseInt(result.rows[0].total);
   }
 
   async getXpEventCount(checkInId: string): Promise<number> {
@@ -180,6 +210,15 @@ export class TestDatabase {
     }
   }
 
+  async hasClientInsertPolicy(tableName: string): Promise<boolean> {
+    const result = await this.pool.query(
+      `SELECT COUNT(*) as count FROM pg_policies 
+       WHERE tablename = $1 AND cmd = 'INSERT'`,
+      [tableName]
+    );
+    return parseInt(result.rows[0].count) > 0;
+  }
+
   async setXpConfig(key: string, value: number): Promise<void> {
     await this.pool.query(
       `UPDATE xp_config SET value = $2 WHERE key = $1`,
@@ -194,16 +233,16 @@ export class TestDatabase {
 
   async backdateXpEvent(checkInId: string, daysAgo: number): Promise<void> {
     await this.pool.query(
-      `UPDATE xp_events SET created_at = NOW() - INTERVAL '${daysAgo} days' WHERE check_in_id = $1`,
-      [checkInId]
+      `UPDATE xp_events SET created_at = NOW() - make_interval(days => $2) WHERE check_in_id = $1`,
+      [checkInId, daysAgo]
     );
   }
 
-  async hasClientInsertPolicy(tableName: string): Promise<boolean> {
+  async isSlotCompleted(userId: string, slotId: number): Promise<boolean> {
     const result = await this.pool.query(
-      `SELECT COUNT(*) as count FROM pg_policies 
-       WHERE tablename = $1 AND cmd = 'INSERT'`,
-      [tableName]
+      `SELECT COUNT(*) as count FROM user_slot_completions 
+       WHERE user_id = $1 AND slot_id = $2`,
+      [userId, slotId]
     );
     return parseInt(result.rows[0].count) > 0;
   }

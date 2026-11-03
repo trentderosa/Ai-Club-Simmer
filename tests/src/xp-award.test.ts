@@ -6,6 +6,7 @@ import path from 'path';
 describe('XP Award Logic (F7)', () => {
   let db: TestDatabase;
   let testUser: TestUser;
+  let testUser2: TestUser;
   let slotId1: number;
   let slotId2: number;
   let slot1XpValue: number;
@@ -33,7 +34,9 @@ describe('XP Award Logic (F7)', () => {
     await db.resetXpConfig();
 
     testUser = await db.createTestUser(`test-${Date.now()}@example.com`);
+    testUser2 = await db.createTestUser(`test2-${Date.now()}@example.com`);
     await db.createProfile(testUser.id);
+    await db.createProfile(testUser2.id);
 
     slotId1 = await db.getSlotId(1);
     slotId2 = await db.getSlotId(2);
@@ -47,7 +50,7 @@ describe('XP Award Logic (F7)', () => {
   describe('First completion', () => {
     it('awards full XP for first completion of a slot', async () => {
       const checkInId = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
-      const result = await db.awardSlotXp(testUser.id, checkInId, slotId1);
+      const result = await db.awardSlotXp(checkInId);
 
       expect(result.out_xp_awarded).toBe(slot1XpValue);
       expect(result.out_is_first_completion).toBe(true);
@@ -56,10 +59,10 @@ describe('XP Award Logic (F7)', () => {
 
     it('awards full XP for first completion of different slots', async () => {
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
-      const result1 = await db.awardSlotXp(testUser.id, checkIn1, slotId1);
+      const result1 = await db.awardSlotXp(checkIn1);
 
       const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId2, slotId2);
-      const result2 = await db.awardSlotXp(testUser.id, checkIn2, slotId2);
+      const result2 = await db.awardSlotXp(checkIn2);
 
       expect(result1.out_xp_awarded).toBe(slot1XpValue);
       expect(result1.out_is_first_completion).toBe(true);
@@ -75,10 +78,10 @@ describe('XP Award Logic (F7)', () => {
   describe('Repeat completions at 50%', () => {
     it('awards 50% XP for repeat completion of same slot', async () => {
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
-      await db.awardSlotXp(testUser.id, checkIn1, slotId1);
+      await db.awardSlotXp(checkIn1);
 
-      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1, true);
-      const result = await db.awardSlotXp(testUser.id, checkIn2, slotId1);
+      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      const result = await db.awardSlotXp(checkIn2);
 
       expect(result.out_xp_awarded).toBe(Math.floor(slot1XpValue * 0.5));
       expect(result.out_is_first_completion).toBe(false);
@@ -88,10 +91,10 @@ describe('XP Award Logic (F7)', () => {
       await db.setXpConfig('repeat_xp_percent', 25);
 
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
-      await db.awardSlotXp(testUser.id, checkIn1, slotId1);
+      await db.awardSlotXp(checkIn1);
 
-      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1, true);
-      const result = await db.awardSlotXp(testUser.id, checkIn2, slotId1);
+      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      const result = await db.awardSlotXp(checkIn2);
 
       expect(result.out_xp_awarded).toBe(Math.floor(slot1XpValue * 0.25));
     });
@@ -100,14 +103,14 @@ describe('XP Award Logic (F7)', () => {
   describe('Weekly repeat cap', () => {
     it('caps repeat XP at 100 per week', async () => {
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
-      await db.awardSlotXp(testUser.id, checkIn1, slotId1);
+      await db.awardSlotXp(checkIn1);
 
       let totalRepeatXp = 0;
       let reachedCap = false;
 
       for (let i = 0; i < 10; i++) {
-        const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1, true);
-        const result = await db.awardSlotXp(testUser.id, checkIn, slotId1);
+        const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+        const result = await db.awardSlotXp(checkIn);
         totalRepeatXp += result.out_xp_awarded;
 
         if (result.out_capped) {
@@ -124,13 +127,13 @@ describe('XP Award Logic (F7)', () => {
       await db.setXpConfig('weekly_repeat_cap', 20);
 
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
-      await db.awardSlotXp(testUser.id, checkIn1, slotId1);
+      await db.awardSlotXp(checkIn1);
 
-      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1, true);
-      await db.awardSlotXp(testUser.id, checkIn2, slotId1);
+      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      await db.awardSlotXp(checkIn2);
 
-      const checkIn3 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1, true);
-      const result = await db.awardSlotXp(testUser.id, checkIn3, slotId1);
+      const checkIn3 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      const result = await db.awardSlotXp(checkIn3);
 
       expect(result.out_xp_awarded).toBe(0);
       expect(result.out_capped).toBe(true);
@@ -139,23 +142,44 @@ describe('XP Award Logic (F7)', () => {
 
     it('resets weekly cap after a week', async () => {
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
-      await db.awardSlotXp(testUser.id, checkIn1, slotId1);
+      await db.awardSlotXp(checkIn1);
 
       await db.setXpConfig('weekly_repeat_cap', 20);
 
-      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1, true);
-      await db.awardSlotXp(testUser.id, checkIn2, slotId1);
+      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      await db.awardSlotXp(checkIn2);
       await db.backdateXpEvent(checkIn2, 8);
 
-      const checkIn3 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1, true);
-      const result = await db.awardSlotXp(testUser.id, checkIn3, slotId1);
+      const checkIn3 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      const result = await db.awardSlotXp(checkIn3);
 
       expect(result.out_xp_awarded).toBe(Math.floor(slot1XpValue * 0.5));
       expect(result.out_capped).toBe(false);
     });
+
+    it('handles concurrent repeat awards without exceeding cap (S1 fix)', async () => {
+      await db.setXpConfig('weekly_repeat_cap', 40);
+
+      const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      await db.awardSlotXp(checkIn1);
+
+      const checkIns = await Promise.all([
+        db.createCheckIn(testUser.id, userRecipeId1, slotId1),
+        db.createCheckIn(testUser.id, userRecipeId1, slotId1),
+        db.createCheckIn(testUser.id, userRecipeId1, slotId1),
+        db.createCheckIn(testUser.id, userRecipeId1, slotId1),
+      ]);
+
+      const results = await Promise.all(
+        checkIns.map(id => db.awardSlotXp(id))
+      );
+
+      const totalRepeatXp = results.reduce((sum, r) => sum + r.out_xp_awarded, 0);
+      expect(totalRepeatXp).toBeLessThanOrEqual(40);
+    });
   });
 
-  describe('Client cannot set XP amounts (RLS enforced in production)', () => {
+  describe('Security: xp_events table (RLS)', () => {
     it('validates xp_events table has no INSERT policy for clients', async () => {
       const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
 
@@ -173,13 +197,61 @@ describe('XP Award Logic (F7)', () => {
     });
   });
 
+  describe('Security: award_slot_xp derives user/slot from check-in (B1 fix)', () => {
+    it('derives user_id and slot_id from check_in row', async () => {
+      const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      const result = await db.awardSlotXp(checkIn);
+
+      expect(result.out_xp_awarded).toBe(slot1XpValue);
+
+      const totalXp = await db.getUserTotalXp(testUser.id);
+      expect(totalXp).toBe(slot1XpValue);
+
+      const user2TotalXp = await db.getUserTotalXp(testUser2.id);
+      expect(user2TotalXp).toBe(0);
+    });
+
+    it('rejects invalid check_in_id', async () => {
+      const fakeCheckInId = '00000000-0000-0000-0000-000000000000';
+
+      await expect(db.awardSlotXp(fakeCheckInId)).rejects.toThrow(/Invalid or non-existent check_in_id/);
+    });
+  });
+
+  describe('Security: is_repeat is server-computed (Additional fix)', () => {
+    it('computes is_repeat from user_slot_completions, ignoring client', async () => {
+      const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      await db.awardSlotXp(checkIn1);
+
+      const isRepeat1 = await db.getCheckInIsRepeat(checkIn1);
+      expect(isRepeat1).toBe(false);
+
+      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      await db.awardSlotXp(checkIn2);
+
+      const isRepeat2 = await db.getCheckInIsRepeat(checkIn2);
+      expect(isRepeat2).toBe(true);
+    });
+
+    it('marks slot as completed in user_slot_completions', async () => {
+      const isCompletedBefore = await db.isSlotCompleted(testUser.id, slotId1);
+      expect(isCompletedBefore).toBe(false);
+
+      const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      await db.awardSlotXp(checkIn);
+
+      const isCompletedAfter = await db.isSlotCompleted(testUser.id, slotId1);
+      expect(isCompletedAfter).toBe(true);
+    });
+  });
+
   describe('Concurrency - two simultaneous requests', () => {
-    it('awards XP exactly once when two requests race', async () => {
+    it('awards XP exactly once when two requests race on same check-in', async () => {
       const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
 
       const results = await Promise.allSettled([
-        db.awardSlotXp(testUser.id, checkIn, slotId1),
-        db.awardSlotXp(testUser.id, checkIn, slotId1),
+        db.awardSlotXp(checkIn),
+        db.awardSlotXp(checkIn),
       ]);
 
       const successes = results.filter(r => r.status === 'fulfilled');
@@ -197,11 +269,11 @@ describe('XP Award Logic (F7)', () => {
 
     it('handles concurrent completions for different check-ins correctly', async () => {
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
-      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1, true);
+      const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
 
       const results = await Promise.allSettled([
-        db.awardSlotXp(testUser.id, checkIn1, slotId1),
-        db.awardSlotXp(testUser.id, checkIn2, slotId1),
+        db.awardSlotXp(checkIn1),
+        db.awardSlotXp(checkIn2),
       ]);
 
       const successes = results.filter(r => r.status === 'fulfilled');
