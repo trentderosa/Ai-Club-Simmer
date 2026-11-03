@@ -320,11 +320,13 @@ describe('Saved recipe caching', () => {
 });
 
 describe('Concurrent first requests', () => {
-  it('produces exactly one row and one Ollama call for concurrent requests', async () => {
+  it('produces exactly one row and exactly one Ollama call for concurrent requests', async () => {
     const userRecipeRepository = new InMemoryUserRecipeRepository();
 
+    let ollamaCallCount = 0;
     const ollamaClient: OllamaClient = {
       generate: vi.fn().mockImplementation(() => {
+        ollamaCallCount++;
         return new Promise<string>((resolve) => {
           setTimeout(() => resolve(JSON.stringify(validRecipe)), 50);
         });
@@ -348,19 +350,24 @@ describe('Concurrent first requests', () => {
     });
 
     expect(userRecipeRepository.getAll()).toHaveLength(1);
-
-    const cachedResponses = responses.filter((r) => r.body.cached === true);
-    const freshResponses = responses.filter((r) => r.body.cached === false);
-    expect(freshResponses.length + cachedResponses.length).toBe(5);
+    expect(ollamaCallCount).toBe(1);
   });
 
-  it('all concurrent requests return the same recipe', async () => {
+  it('all concurrent requests return the same recipe even when Ollama returns different titles', async () => {
     const userRecipeRepository = new InMemoryUserRecipeRepository();
 
+    let callCount = 0;
     const ollamaClient: OllamaClient = {
       generate: vi.fn().mockImplementation(() => {
+        callCount++;
+        const thisCallCount = callCount;
         return new Promise<string>((resolve) => {
-          setTimeout(() => resolve(JSON.stringify(validRecipe)), 20);
+          setTimeout(() => {
+            resolve(JSON.stringify({
+              ...validRecipe,
+              title: `Recipe ${thisCallCount}`,
+            }));
+          }, 20);
         });
       }),
     };
@@ -380,6 +387,6 @@ describe('Concurrent first requests', () => {
     const uniqueTitles = new Set(recipes.map((r) => r.title));
 
     expect(uniqueTitles.size).toBe(1);
-    expect(recipes[0].title).toBe('Test Recipe');
+    expect(callCount).toBe(1);
   });
 });

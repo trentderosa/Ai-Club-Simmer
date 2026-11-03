@@ -1,4 +1,5 @@
 import type { Recipe } from '../schemas/recipe.js';
+import { RecipeSchema } from '../schemas/recipe.js';
 import type { UserRecipeRepository, SavedRecipe } from './user-recipe-repository.js';
 
 export interface SupabaseConfig {
@@ -10,7 +11,7 @@ interface SupabaseUserRecipeRow {
   id: string;
   user_id: string;
   slot_id: number;
-  recipe_json: Recipe;
+  recipe_json: unknown;
   created_at: string;
 }
 
@@ -33,17 +34,40 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
     return `${userId}:${slotId}`;
   }
 
+  private parseRecipe(row: SupabaseUserRecipeRow): SavedRecipe {
+    const parseResult = RecipeSchema.safeParse(row.recipe_json);
+    if (!parseResult.success) {
+      throw new Error(
+        `Invalid recipe data from database: ${parseResult.error.message}`
+      );
+    }
+    return {
+      id: row.id,
+      userId: row.user_id,
+      slotId: row.slot_id,
+      recipe: parseResult.data,
+      createdAt: new Date(row.created_at),
+    };
+  }
+
   async findByUserAndSlot(
     userId: string,
     slotId: number
   ): Promise<SavedRecipe | null> {
     const key = this.makeKey(userId, slotId);
-    
+
     const pending = this.inFlightSaves.get(key);
     if (pending) {
       return pending;
     }
 
+    return this.fetchRecipe(userId, slotId);
+  }
+
+  private async fetchRecipe(
+    userId: string,
+    slotId: number
+  ): Promise<SavedRecipe | null> {
     const url = new URL(`${this.baseUrl}/user_recipes`);
     url.searchParams.set('user_id', `eq.${userId}`);
     url.searchParams.set('slot_id', `eq.${slotId}`);
@@ -64,14 +88,7 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
       return null;
     }
 
-    const row = rows[0];
-    return {
-      id: row.id,
-      userId: row.user_id,
-      slotId: row.slot_id,
-      recipe: row.recipe_json,
-      createdAt: new Date(row.created_at),
-    };
+    return this.parseRecipe(rows[0]);
   }
 
   async save(userId: string, slotId: number, recipe: Recipe): Promise<SavedRecipe> {
@@ -97,13 +114,14 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
     slotId: number,
     recipe: Recipe
   ): Promise<SavedRecipe> {
-    const url = `${this.baseUrl}/user_recipes`;
+    const url = new URL(`${this.baseUrl}/user_recipes`);
+    url.searchParams.set('on_conflict', 'user_id,slot_id');
 
-    const response = await fetch(url, {
+    const response = await fetch(url.toString(), {
       method: 'POST',
       headers: {
         ...this.headers,
-        'Prefer': 'return=representation,resolution=merge-duplicates',
+        'Prefer': 'return=representation,resolution=ignore-duplicates',
       },
       body: JSON.stringify({
         user_id: userId,
@@ -113,7 +131,7 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
     });
 
     if (response.status === 409) {
-      const existing = await this.findByUserAndSlot(userId, slotId);
+      const existing = await this.fetchRecipe(userId, slotId);
       if (existing) {
         return existing;
       }
@@ -126,17 +144,15 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
     }
 
     const rows = (await response.json()) as SupabaseUserRecipeRow[];
+
     if (rows.length === 0) {
-      throw new Error('Insert returned no rows');
+      const existing = await this.fetchRecipe(userId, slotId);
+      if (existing) {
+        return existing;
+      }
+      throw new Error('Insert returned no rows and no existing record found');
     }
 
-    const row = rows[0];
-    return {
-      id: row.id,
-      userId: row.user_id,
-      slotId: row.slot_id,
-      recipe: row.recipe_json,
-      createdAt: new Date(row.created_at),
-    };
+    return this.parseRecipe(rows[0]);
   }
 }

@@ -9,7 +9,7 @@ export interface SupabaseService {
   getUserProfile(userId: string): Promise<UserProfile | null>;
   getPathSlot(slotId: number): Promise<PathSlot | null>;
   getSavedRecipe(userId: string, slotId: number): Promise<Recipe | null>;
-  saveRecipe(userId: string, slotId: number, recipe: Recipe): Promise<void>;
+  saveRecipe(userId: string, slotId: number, recipe: Recipe): Promise<Recipe>;
 }
 
 export interface SupabaseServiceDeps {
@@ -25,10 +25,14 @@ export function createSupabaseService(deps: SupabaseServiceDeps): SupabaseServic
       return jwtVerifier.verify(token);
     },
 
+    // TODO: Implement fetching user profile from Supabase profiles table
+    // Query the profiles table for equipment, budget, experience, recent check-ins
     getUserProfile(_userId: string): Promise<UserProfile | null> {
       return Promise.resolve(null);
     },
 
+    // TODO: Implement fetching path slot from Supabase path_slots table
+    // Query the path_slots table for the dish name and technique focus
     getPathSlot(_slotId: number): Promise<PathSlot | null> {
       return Promise.resolve(null);
     },
@@ -38,8 +42,9 @@ export function createSupabaseService(deps: SupabaseServiceDeps): SupabaseServic
       return saved?.recipe ?? null;
     },
 
-    async saveRecipe(userId: string, slotId: number, recipe: Recipe): Promise<void> {
-      await userRecipeRepository.save(userId, slotId, recipe);
+    async saveRecipe(userId: string, slotId: number, recipe: Recipe): Promise<Recipe> {
+      const saved = await userRecipeRepository.save(userId, slotId, recipe);
+      return saved.recipe;
     },
   };
 }
@@ -48,6 +53,13 @@ export interface SupabaseStubOptions {
   allowStubAuth?: boolean;
 }
 
+/**
+ * Creates a stub Supabase service for development/testing.
+ *
+ * SECURITY: By default, verifyToken FAILS CLOSED (returns { valid: false }).
+ * To enable stub auth for local development, set ALLOW_STUB_AUTH=true.
+ * This is blocked in production (NODE_ENV=production).
+ */
 export function createSupabaseStub(
   options: SupabaseStubOptions = {}
 ): SupabaseService {
@@ -55,6 +67,8 @@ export function createSupabaseStub(
 
   return {
     verifyToken(_token: string): Promise<JwtVerifyResult> {
+      // SECURITY: Stub auth fails closed by default.
+      // Only accepts tokens when explicitly enabled via ALLOW_STUB_AUTH=true.
       if (!allowStubAuth) {
         return Promise.resolve({ valid: false, error: 'invalid_token' });
       }
@@ -80,13 +94,21 @@ export function createSupabaseStub(
     saveRecipe(
       _userId: string,
       _slotId: number,
-      _recipe: Recipe
-    ): Promise<void> {
-      return Promise.resolve();
+      recipe: Recipe
+    ): Promise<Recipe> {
+      return Promise.resolve(recipe);
     },
   };
 }
 
+/**
+ * Checks if stub auth is allowed based on environment variables.
+ * Returns true only if ALLOW_STUB_AUTH=true AND NODE_ENV is not 'production'.
+ *
+ * SECURITY: This function prevents accidental use of stub auth in production.
+ * Even if ALLOW_STUB_AUTH=true is set in production, it will return false
+ * and log a security error.
+ */
 export function isStubAuthAllowed(): boolean {
   const allowStubAuth = process.env.ALLOW_STUB_AUTH === 'true';
   const isProduction = process.env.NODE_ENV === 'production';

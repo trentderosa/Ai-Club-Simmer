@@ -15,6 +15,9 @@ const config = loadConfig();
 
 const app = express();
 
+// Trust proxy for correct client IP behind reverse proxies (nginx, cloudflare tunnel, etc.)
+// This ensures rate limiting uses the real client IP, not the proxy's IP.
+// Set TRUST_PROXY=true when deploying behind a reverse proxy.
 if (process.env.TRUST_PROXY === 'true') {
   app.set('trust proxy', 1);
 }
@@ -25,6 +28,7 @@ const ollamaClient = createOllamaClient(config.ollama);
 
 function createSupabaseServiceFromConfig(): ReturnType<typeof createSupabaseService> {
   const { jwtSecret, jwksUri, url, serviceRoleKey } = config.supabase;
+  const isProduction = process.env.NODE_ENV === 'production';
 
   if (isStubAuthAllowed()) {
     console.warn('STUB AUTH ENABLED - using stub Supabase service');
@@ -38,9 +42,18 @@ function createSupabaseServiceFromConfig(): ReturnType<typeof createSupabaseServ
     return createSupabaseStub({ allowStubAuth: false });
   }
 
+  if (isProduction && (!url || !serviceRoleKey)) {
+    throw new Error(
+      'Production requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY. ' +
+      'Without these, recipes would be stored in-memory and lost on restart.'
+    );
+  }
+
   const jwtVerifier = createJwtVerifier({
     jwtSecret,
     jwksUri,
+    issuer: url ? `${url}/auth/v1` : undefined,
+    audience: 'authenticated',
   });
 
   const userRecipeRepository =
@@ -50,7 +63,7 @@ function createSupabaseServiceFromConfig(): ReturnType<typeof createSupabaseServ
 
   if (!url || !serviceRoleKey) {
     console.warn(
-      'No SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY - using in-memory recipe storage'
+      'No SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY - using in-memory recipe storage (dev only)'
     );
   }
 

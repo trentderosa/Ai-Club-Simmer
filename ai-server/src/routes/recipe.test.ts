@@ -51,7 +51,9 @@ function createMockSupabase(
     getUserProfile: vi.fn().mockResolvedValue(options.userProfile ?? null),
     getPathSlot: vi.fn().mockResolvedValue(options.pathSlot ?? null),
     getSavedRecipe: vi.fn().mockResolvedValue(options.savedRecipe ?? null),
-    saveRecipe: vi.fn().mockResolvedValue(undefined),
+    saveRecipe: vi.fn().mockImplementation((_userId: string, _slotId: number, recipe: Recipe) => 
+      Promise.resolve(recipe)
+    ),
   };
 }
 

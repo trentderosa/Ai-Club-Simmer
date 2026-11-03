@@ -1,10 +1,10 @@
-import jwt, { JwtPayload, VerifyOptions } from 'jsonwebtoken';
+import jwt, { JwtPayload, VerifyOptions, Algorithm } from 'jsonwebtoken';
 import jwksClient from 'jwks-rsa';
 
 export interface JwtVerifyResult {
   valid: boolean;
   userId?: string;
-  error?: 'missing_token' | 'invalid_token' | 'expired' | 'no_user_id';
+  error?: 'missing_token' | 'invalid_token' | 'expired' | 'no_user_id' | 'service_unavailable';
 }
 
 export interface JwtVerifier {
@@ -35,14 +35,48 @@ export function createJwtVerifier(config: JwtVerifierConfig): JwtVerifier {
     });
   }
 
-  const getSigningKey = async (header: jwt.JwtHeader): Promise<string> => {
-    if (jwtSecret) {
-      return jwtSecret;
-    }
+  const ASYMMETRIC_ALGS: Algorithm[] = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384', 'ES512'];
+
+  const getSigningKey = async (
+    header: jwt.JwtHeader
+  ): Promise<{ key: string; algorithm: Algorithm }> => {
+    const alg = header.alg as Algorithm;
+
     if (jwks && header.kid) {
-      const key = await jwks.getSigningKey(header.kid);
-      return key.getPublicKey();
+      try {
+        const signingKey = await jwks.getSigningKey(header.kid);
+        const publicKey = signingKey.getPublicKey();
+        const algorithm = alg || 'RS256';
+        if (!ASYMMETRIC_ALGS.includes(algorithm)) {
+          throw new Error(`Unsupported algorithm: ${algorithm}`);
+        }
+        return { key: publicKey, algorithm };
+      } catch (err) {
+        if (
+          err instanceof Error &&
+          (err.message.includes('ECONNREFUSED') ||
+            err.message.includes('ETIMEDOUT') ||
+            err.message.includes('ENOTFOUND') ||
+            err.message.includes('getaddrinfo') ||
+            err.message.includes('socket'))
+        ) {
+          console.error('JWKS network error:', err.message);
+          throw new JwksNetworkError(err.message);
+        }
+        throw err;
+      }
     }
+
+    if (jwtSecret) {
+      if (alg === 'HS256') {
+        return { key: jwtSecret, algorithm: 'HS256' };
+      }
+      if (ASYMMETRIC_ALGS.includes(alg)) {
+        return { key: jwtSecret, algorithm: alg };
+      }
+      return { key: jwtSecret, algorithm: 'HS256' };
+    }
+
     throw new Error('No signing key available');
   };
 
@@ -58,10 +92,10 @@ export function createJwtVerifier(config: JwtVerifierConfig): JwtVerifier {
           return { valid: false, error: 'invalid_token' };
         }
 
-        const signingKey = await getSigningKey(decoded.header);
+        const { key, algorithm } = await getSigningKey(decoded.header);
 
         const verifyOptions: VerifyOptions = {
-          algorithms: jwtSecret ? ['HS256'] : ['RS256'],
+          algorithms: [algorithm],
         };
 
         if (issuer) {
@@ -71,7 +105,7 @@ export function createJwtVerifier(config: JwtVerifierConfig): JwtVerifier {
           verifyOptions.audience = audience;
         }
 
-        const payload = jwt.verify(token, signingKey, verifyOptions) as JwtPayload;
+        const payload = jwt.verify(token, key, verifyOptions) as JwtPayload;
 
         const userId = payload.sub;
         if (!userId) {
@@ -80,6 +114,9 @@ export function createJwtVerifier(config: JwtVerifierConfig): JwtVerifier {
 
         return { valid: true, userId };
       } catch (err) {
+        if (err instanceof JwksNetworkError) {
+          return { valid: false, error: 'service_unavailable' };
+        }
         if (err instanceof jwt.TokenExpiredError) {
           return { valid: false, error: 'expired' };
         }
@@ -92,19 +129,9 @@ export function createJwtVerifier(config: JwtVerifierConfig): JwtVerifier {
   };
 }
 
-export function createMockJwtVerifier(
-  validTokens: Map<string, string>
-): JwtVerifier {
-  return {
-    verify(token: string): Promise<JwtVerifyResult> {
-      if (!token) {
-        return Promise.resolve({ valid: false, error: 'missing_token' });
-      }
-      const userId = validTokens.get(token);
-      if (userId) {
-        return Promise.resolve({ valid: true, userId });
-      }
-      return Promise.resolve({ valid: false, error: 'invalid_token' });
-    },
-  };
+class JwksNetworkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'JwksNetworkError';
+  }
 }
