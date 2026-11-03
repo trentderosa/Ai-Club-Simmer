@@ -10,34 +10,52 @@ export interface SupabaseService {
   saveRecipe(userId: string, slotId: number, recipe: Recipe): Promise<void>;
 }
 
-export function createSupabaseStub(): SupabaseService {
+export interface SupabaseStubOptions {
+  allowStubAuth?: boolean;
+}
+
+/**
+ * Creates a stub Supabase service for development/testing.
+ *
+ * SECURITY: By default, verifyToken FAILS CLOSED (returns { valid: false }).
+ * To enable stub auth for local development, set ALLOW_STUB_AUTH=true.
+ * This is blocked in production (NODE_ENV=production).
+ */
+export function createSupabaseStub(
+  options: SupabaseStubOptions = {}
+): SupabaseService {
+  const allowStubAuth = options.allowStubAuth ?? false;
+
   return {
     verifyToken(_token: string): Promise<{ valid: boolean; userId?: string }> {
-      // TODO: Implement real Supabase token verification
-      // This should decode and verify the JWT using Supabase's auth
-      // For now, return a stub response for testing
-      console.warn('Supabase token verification not implemented - using stub');
+      // SECURITY: Stub auth fails closed by default.
+      // Only accepts tokens when explicitly enabled via ALLOW_STUB_AUTH=true.
+      if (!allowStubAuth) {
+        return Promise.resolve({ valid: false });
+      }
+
+      // Stub auth enabled for local dev - accepts any token
+      console.warn(
+        'STUB AUTH ENABLED - accepting any token as stub-user-id'
+      );
       return Promise.resolve({ valid: true, userId: 'stub-user-id' });
     },
 
     getUserProfile(_userId: string): Promise<UserProfile | null> {
       // TODO: Implement fetching user profile from Supabase
       // Query the users table for equipment, budget, experience, recent check-ins
-      console.warn('Supabase getUserProfile not implemented - using stub');
       return Promise.resolve(null);
     },
 
     getPathSlot(_slotId: number): Promise<PathSlot | null> {
       // TODO: Implement fetching path slot from Supabase
       // Query the path_slots table for the dish name and technique focus
-      console.warn('Supabase getPathSlot not implemented - using stub');
       return Promise.resolve(null);
     },
 
     getSavedRecipe(_userId: string, _slotId: number): Promise<Recipe | null> {
       // TODO: Implement fetching saved recipe from Supabase
       // Check if a recipe already exists for this user + slot combination
-      console.warn('Supabase getSavedRecipe not implemented - using stub');
       return Promise.resolve(null);
     },
 
@@ -48,8 +66,25 @@ export function createSupabaseStub(): SupabaseService {
     ): Promise<void> {
       // TODO: Implement saving recipe to Supabase
       // Insert the generated recipe into the user_recipes table
-      console.warn('Supabase saveRecipe not implemented - using stub');
       return Promise.resolve();
     },
   };
+}
+
+/**
+ * Checks if stub auth is allowed based on environment variables.
+ * Returns true only if ALLOW_STUB_AUTH=true AND NODE_ENV is not 'production'.
+ */
+export function isStubAuthAllowed(): boolean {
+  const allowStubAuth = process.env.ALLOW_STUB_AUTH === 'true';
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  if (allowStubAuth && isProduction) {
+    console.error(
+      'SECURITY ERROR: ALLOW_STUB_AUTH=true is forbidden in production'
+    );
+    return false;
+  }
+
+  return allowStubAuth;
 }

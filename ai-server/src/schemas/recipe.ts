@@ -14,10 +14,26 @@ import { z } from 'zod';
  * Both must stay in sync. The Zod schema is the source of truth for TypeScript types.
  */
 
+// Max limits to prevent oversized LLM output from passing validation
+const MAX_TITLE_LENGTH = 200;
+const MAX_INSTRUCTION_LENGTH = 1000;
+const MAX_WHY_IT_MATTERS_LENGTH = 500;
+const MAX_TECHNIQUE_NAME_LENGTH = 100;
+const MAX_INGREDIENT_NAME_LENGTH = 100;
+const MAX_INGREDIENT_AMOUNT_LENGTH = 50;
+const MAX_COACH_NOTE_LENGTH = 500;
+const MAX_STEPS = 30;
+const MAX_INGREDIENTS = 50;
+
 export const RecipeStepSchema = z.object({
-  instruction: z.string().min(1).describe('The step instruction text'),
+  instruction: z
+    .string()
+    .min(1)
+    .max(MAX_INSTRUCTION_LENGTH)
+    .describe('The step instruction text'),
   whyItMatters: z
     .string()
+    .max(MAX_WHY_IT_MATTERS_LENGTH)
     .optional()
     .describe('Optional explanation of why this step matters'),
   isSafetyStep: z
@@ -27,29 +43,45 @@ export const RecipeStepSchema = z.object({
     ),
   techniqueName: z
     .string()
+    .max(MAX_TECHNIQUE_NAME_LENGTH)
     .optional()
     .describe('Optional technique name for video lookup (e.g., "dice onion")'),
 });
 
 export const IngredientSchema = z.object({
-  name: z.string().min(1).describe('Ingredient name'),
-  amount: z.string().min(1).describe('Amount with unit (e.g., "2 cups", "1 lb")'),
+  name: z
+    .string()
+    .min(1)
+    .max(MAX_INGREDIENT_NAME_LENGTH)
+    .describe('Ingredient name'),
+  amount: z
+    .string()
+    .min(1)
+    .max(MAX_INGREDIENT_AMOUNT_LENGTH)
+    .describe('Amount with unit (e.g., "2 cups", "1 lb")'),
 });
 
 export const RecipeSchema = z.object({
-  title: z.string().min(1).describe('Recipe title'),
+  title: z.string().min(1).max(MAX_TITLE_LENGTH).describe('Recipe title'),
   ingredients: z
     .array(IngredientSchema)
     .min(1)
+    .max(MAX_INGREDIENTS)
     .describe('List of ingredients with amounts'),
   timeEstimateMinutes: z
     .number()
     .int()
     .positive()
+    .max(1440)
     .describe('Estimated cooking time in minutes'),
-  steps: z.array(RecipeStepSchema).min(1).describe('Ordered list of cooking steps'),
+  steps: z
+    .array(RecipeStepSchema)
+    .min(1)
+    .max(MAX_STEPS)
+    .describe('Ordered list of cooking steps'),
   coachNote: z
     .string()
+    .max(MAX_COACH_NOTE_LENGTH)
     .optional()
     .describe('Optional personalized tip based on user feedback'),
 });

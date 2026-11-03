@@ -1,4 +1,5 @@
 import { Router, Request, Response } from 'express';
+import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { generateRecipe, PathSlot } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
@@ -9,7 +10,10 @@ import {
   DietaryNeedsSchema,
 } from '../schemas/user.js';
 
-// Validates slot ID from URL params
+// Strict slot ID validation - must be purely numeric (rejects "12abc")
+const SLOT_ID_REGEX = /^\d+$/;
+
+// Validates slot ID from URL params using strict numeric check
 const GenerateRecipeParamsSchema = z.object({
   slotId: z.number().int().positive(),
 });
@@ -38,8 +42,30 @@ export interface RecipeRouterDeps {
   supabase: SupabaseService;
 }
 
-export function createRecipeRouter(deps: RecipeRouterDeps): Router {
+export interface RecipeRouterOptions {
+  enablePreviewRoute?: boolean;
+  rateLimit?: {
+    windowMs: number;
+    maxRequests: number;
+  };
+}
+
+export function createRecipeRouter(
+  deps: RecipeRouterDeps,
+  options: RecipeRouterOptions = {}
+): Router {
   const router = Router();
+
+  // Rate limiter to prevent LLM resource exhaustion
+  const limiter = rateLimit({
+    windowMs: options.rateLimit?.windowMs ?? 60000,
+    max: options.rateLimit?.maxRequests ?? 10,
+    message: { error: 'Too many requests, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
+
+  router.use(limiter);
 
   /**
    * POST /api/recipes/generate/:slotId
@@ -74,9 +100,17 @@ export function createRecipeRouter(deps: RecipeRouterDeps): Router {
 
       const userId = authResult.userId;
 
-      // Validate URL params
+      // Strict slot ID validation - reject non-numeric strings like "12abc"
+      const rawSlotId = req.params.slotId;
+      if (!SLOT_ID_REGEX.test(rawSlotId)) {
+        res.status(400).json({
+          error: 'Invalid slot ID: must be a positive integer',
+        });
+        return;
+      }
+
       const paramsResult = GenerateRecipeParamsSchema.safeParse({
-        slotId: parseInt(req.params.slotId, 10),
+        slotId: parseInt(rawSlotId, 10),
       });
 
       if (!paramsResult.success) {
@@ -101,6 +135,9 @@ export function createRecipeRouter(deps: RecipeRouterDeps): Router {
       const dietaryNeedsOverride = bodyResult.data?.dietaryNeeds;
 
       // Check for cached recipe (PRD F3: "same saved recipe is used every time after")
+      // TODO: Add unique (user_id, slot_id) constraint in Supabase and use upsert
+      // to prevent race condition where concurrent requests both generate recipes.
+      // Consider an in-flight promise map for additional protection.
       const existingRecipe = await deps.supabase.getSavedRecipe(userId, slotId);
       if (existingRecipe) {
         res.json({
@@ -141,8 +178,10 @@ export function createRecipeRouter(deps: RecipeRouterDeps): Router {
 
       // Never return partial data - either full valid recipe or error
       if (!result.success) {
+        // Log full error internally but return generic message to client
+        console.error('Recipe generation failed:', result.error);
         res.status(500).json({
-          error: result.error.message,
+          error: 'Recipe generation failed. Please try again.',
           type: result.error.type,
           attempts: result.error.attempts,
         });
@@ -164,55 +203,64 @@ export function createRecipeRouter(deps: RecipeRouterDeps): Router {
     }
   });
 
-  /**
-   * POST /api/recipes/generate-preview
-   *
-   * Preview endpoint for testing recipe generation without auth or persistence.
-   * Useful for development and testing the LLM integration.
-   *
-   * Requires full slot and userProfile in request body.
-   * Does not save the recipe or check for cached versions.
-   */
-  // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  router.post('/generate-preview', async (req: Request, res: Response) => {
-    try {
-      // Validate all inputs strictly
-      const parseResult = PreviewRequestSchema.safeParse(req.body);
-      if (!parseResult.success) {
-        res.status(400).json({
-          error: 'Invalid request body',
-          details: parseResult.error.errors,
+  // Preview route is DISABLED by default (SECURITY: unauthenticated LLM access)
+  // Enable only for local development with ENABLE_PREVIEW_ROUTE=true
+  if (options.enablePreviewRoute) {
+    /**
+     * POST /api/recipes/generate-preview
+     *
+     * Preview endpoint for testing recipe generation without auth or persistence.
+     * Useful for development and testing the LLM integration.
+     *
+     * SECURITY: This route is disabled by default. Enable with ENABLE_PREVIEW_ROUTE=true.
+     * It is rate-limited but not authenticated, so should only be used in dev environments.
+     *
+     * Requires full slot and userProfile in request body.
+     * Does not save the recipe or check for cached versions.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises
+    router.post('/generate-preview', async (req: Request, res: Response) => {
+      try {
+        // Validate all inputs strictly
+        const parseResult = PreviewRequestSchema.safeParse(req.body);
+        if (!parseResult.success) {
+          res.status(400).json({
+            error: 'Invalid request body',
+            details: parseResult.error.errors,
+          });
+          return;
+        }
+
+        const { slot, userProfile } = parseResult.data as {
+          slot: PathSlot;
+          userProfile: UserProfile;
+        };
+
+        const result = await generateRecipe(deps.ollamaClient, slot, userProfile);
+
+        // Never return partial data - either full valid recipe or error
+        if (!result.success) {
+          // Log full error internally but return generic message to client
+          console.error('Recipe generation preview failed:', result.error);
+          res.status(500).json({
+            error: 'Recipe generation failed. Please try again.',
+            type: result.error.type,
+            attempts: result.error.attempts,
+          });
+          return;
+        }
+
+        res.json({
+          recipe: result.recipe,
         });
-        return;
-      }
-
-      const { slot, userProfile } = parseResult.data as {
-        slot: PathSlot;
-        userProfile: UserProfile;
-      };
-
-      const result = await generateRecipe(deps.ollamaClient, slot, userProfile);
-
-      // Never return partial data - either full valid recipe or error
-      if (!result.success) {
+      } catch (error) {
+        console.error('Recipe generation preview error:', error);
         res.status(500).json({
-          error: result.error.message,
-          type: result.error.type,
-          attempts: result.error.attempts,
+          error: 'Internal server error',
         });
-        return;
       }
-
-      res.json({
-        recipe: result.recipe,
-      });
-    } catch (error) {
-      console.error('Recipe generation preview error:', error);
-      res.status(500).json({
-        error: 'Internal server error',
-      });
-    }
-  });
+    });
+  }
 
   return router;
 }
