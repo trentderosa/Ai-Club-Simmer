@@ -111,6 +111,7 @@ const SAFETY_KEYWORDS = [
  *
  * - Strips newlines (prevents breaking out of data sections)
  * - Removes quotes (prevents closing string literals)
+ * - Removes angle brackets (prevents closing </user_data> block)
  * - Trims whitespace
  * - Truncates to maxLength
  *
@@ -120,7 +121,7 @@ const SAFETY_KEYWORDS = [
 function sanitizeUserText(text: string, maxLength = 500): string {
   return text
     .replace(/[\r\n]+/g, ' ')
-    .replace(/["'`]/g, '')
+    .replace(/["'`<>]/g, '')
     .trim()
     .slice(0, maxLength);
 }
@@ -241,11 +242,23 @@ Generate a complete recipe with:
 }
 
 /**
+ * Pre-compiled word-boundary regex patterns for safety keywords.
+ * Using \b ensures we match "pan" but not "Spanish", "expand", or "company".
+ * Over-flagging is still safe (we catch "pans", "toasting", etc.) but we
+ * avoid flagging unrelated words that happen to contain keyword substrings.
+ */
+const SAFETY_KEYWORD_PATTERNS = SAFETY_KEYWORDS.map(
+  (keyword) => new RegExp(`\\b${keyword}`, 'i')
+);
+
+/**
  * Post-processes a validated recipe to ensure all safety steps are flagged.
  *
  * Even though we ask the LLM to flag safety steps, small models sometimes miss them.
  * This function scans each step's instruction for safety keywords and sets
  * isSafetyStep=true if any are found. Existing true flags are preserved.
+ *
+ * Uses word-boundary matching to avoid false positives like "pan" in "Spanish".
  *
  * This ensures we never return a recipe with unflagged dangerous steps.
  */
@@ -253,9 +266,8 @@ function ensureSafetyFlags(recipe: Recipe): Recipe {
   return {
     ...recipe,
     steps: recipe.steps.map((step) => {
-      const instructionLower = step.instruction.toLowerCase();
-      const hasSafetyKeyword = SAFETY_KEYWORDS.some((keyword) =>
-        instructionLower.includes(keyword)
+      const hasSafetyKeyword = SAFETY_KEYWORD_PATTERNS.some((pattern) =>
+        pattern.test(step.instruction)
       );
 
       return {

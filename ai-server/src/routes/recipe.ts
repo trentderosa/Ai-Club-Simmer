@@ -56,8 +56,11 @@ export function createRecipeRouter(
 ): Router {
   const router = Router();
 
-  // Rate limiter to prevent LLM resource exhaustion
-  const limiter = rateLimit({
+  // IP-based rate limiter to prevent LLM resource exhaustion.
+  // NOTE: Behind a reverse proxy, set app.set('trust proxy', 1) in index.ts
+  // so req.ip reflects the real client IP, not the proxy's IP. Without this,
+  // all users behind the proxy share one bucket.
+  const ipLimiter = rateLimit({
     windowMs: options.rateLimit?.windowMs ?? 60000,
     max: options.rateLimit?.maxRequests ?? 10,
     message: { error: 'Too many requests, please try again later' },
@@ -65,7 +68,7 @@ export function createRecipeRouter(
     legacyHeaders: false,
   });
 
-  router.use(limiter);
+  router.use(ipLimiter);
 
   /**
    * POST /api/recipes/generate/:slotId

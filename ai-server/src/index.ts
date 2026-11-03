@@ -7,6 +7,14 @@ import { createRecipeRouter } from './routes/recipe.js';
 const config = loadConfig();
 
 const app = express();
+
+// Trust proxy for correct client IP behind reverse proxies (nginx, cloudflare tunnel, etc.)
+// This ensures rate limiting uses the real client IP, not the proxy's IP.
+// Set TRUST_PROXY=true when deploying behind a reverse proxy.
+if (process.env.TRUST_PROXY === 'true') {
+  app.set('trust proxy', 1);
+}
+
 app.use(express.json());
 
 const ollamaClient = createOllamaClient(config.ollama);
