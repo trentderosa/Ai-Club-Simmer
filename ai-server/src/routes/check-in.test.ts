@@ -345,6 +345,125 @@ describe('Check-in API (F6)', () => {
   });
 });
 
+describe('B3: Per-user rate limiting', () => {
+  it('user A hitting limit does not 429 user B', async () => {
+    const userAId = randomUUID();
+    const userBId = randomUUID();
+    
+    // Create separate verifier that returns different users based on token
+    const multiUserVerifier: JwtVerifier = {
+      verify: vi.fn().mockImplementation((token: string) => {
+        if (token === 'user-a-token') {
+          return Promise.resolve({ valid: true, userId: userAId });
+        } else if (token === 'user-b-token') {
+          return Promise.resolve({ valid: true, userId: userBId });
+        }
+        return Promise.resolve({ valid: false, error: 'invalid_token' as const });
+      }),
+    };
+
+    const repository = new InMemoryCheckInRepository();
+    const coachNoteGenerator: CoachNoteGenerator = {
+      generate: vi.fn().mockResolvedValue({
+        note: 'Great job!',
+        focus_area: 'basics',
+      }),
+    };
+    const service = new CheckInService(repository, coachNoteGenerator);
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/check-ins', createCheckInRouter(
+      { checkInService: service, jwtVerifier: multiUserVerifier },
+      { rateLimit: { windowMs: 60000, maxRequests: 2 } } // Low limit for testing
+    ));
+
+    // Seed recipes for both users
+    const userARecipeId = randomUUID();
+    const userBRecipeId = randomUUID();
+    repository.seedUserRecipe({ id: userARecipeId, user_id: userAId, slot_id: 1 });
+    repository.seedUserRecipe({ id: userBRecipeId, user_id: userBId, slot_id: 1 });
+
+    // User A makes 2 requests (hits the limit)
+    for (let i = 0; i < 2; i++) {
+      await request(app)
+        .post('/api/check-ins')
+        .set('Authorization', 'Bearer user-a-token')
+        .send({ user_recipe_id: userARecipeId, slot_id: 1, rating: 'ok' });
+    }
+
+    // User A's 3rd request should be rate limited
+    const userALimitedResponse = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer user-a-token')
+      .send({ user_recipe_id: userARecipeId, slot_id: 1, rating: 'ok' });
+    
+    expect(userALimitedResponse.status).toBe(429);
+
+    // User B should NOT be rate limited
+    const userBResponse = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer user-b-token')
+      .send({ user_recipe_id: userBRecipeId, slot_id: 1, rating: 'ok' });
+
+    expect(userBResponse.status).toBe(201);
+  });
+
+  it('401 requests do not consume rate limit budget', async () => {
+    const userId = randomUUID();
+    
+    // Verifier that rejects invalid tokens
+    const jwtVerifier: JwtVerifier = {
+      verify: vi.fn().mockImplementation((token: string) => {
+        if (token === 'valid-token') {
+          return Promise.resolve({ valid: true, userId });
+        }
+        return Promise.resolve({ valid: false, error: 'invalid_token' as const });
+      }),
+    };
+
+    const repository = new InMemoryCheckInRepository();
+    const coachNoteGenerator: CoachNoteGenerator = {
+      generate: vi.fn().mockResolvedValue({ note: 'Great!', focus_area: 'test' }),
+    };
+    const service = new CheckInService(repository, coachNoteGenerator);
+
+    const app = express();
+    app.use(express.json());
+    app.use('/api/check-ins', createCheckInRouter(
+      { checkInService: service, jwtVerifier },
+      { rateLimit: { windowMs: 60000, maxRequests: 2 } }
+    ));
+
+    const recipeId = randomUUID();
+    repository.seedUserRecipe({ id: recipeId, user_id: userId, slot_id: 1 });
+
+    // Send many invalid auth requests (should all get 401, not 429)
+    for (let i = 0; i < 10; i++) {
+      const response = await request(app)
+        .post('/api/check-ins')
+        .set('Authorization', 'Bearer invalid-token')
+        .send({ user_recipe_id: recipeId, slot_id: 1, rating: 'ok' });
+      
+      // Should always be 401, never 429
+      expect(response.status).toBe(401);
+    }
+
+    // Valid user should still have full budget
+    const response1 = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ user_recipe_id: recipeId, slot_id: 1, rating: 'ok' });
+    expect(response1.status).toBe(201);
+
+    const response2 = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ user_recipe_id: recipeId, slot_id: 1, rating: 'ok' });
+    expect(response2.status).toBe(201);
+  });
+});
+
 describe('Coach Note Generation Fallback', () => {
   it('FALLBACK_NOTE is defined and has required fields', () => {
     expect(FALLBACK_NOTE).toBeDefined();

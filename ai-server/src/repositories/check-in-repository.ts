@@ -12,7 +12,11 @@ export interface CreateCheckInParams {
 export interface CheckInRepository {
   /**
    * Create a new check-in record.
-   * Validates that user_recipe_id belongs to the user and slot_id matches.
+   * 
+   * NOTE: The route should call validateUserRecipe() BEFORE calling create().
+   * The InMemoryCheckInRepository validates ownership in create() for safety,
+   * but SupabaseCheckInRepository does not (it uses service-role and bypasses RLS).
+   * Do not rely on create() to enforce ownership - always validate first.
    */
   create(params: CreateCheckInParams): Promise<CheckInRecord>;
 
