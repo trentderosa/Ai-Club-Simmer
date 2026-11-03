@@ -7,7 +7,6 @@ on:
       - 'ai-server/**'
       - '.github/workflows/ai-server-ci.yml'
   pull_request:
-    branches: [main]
     paths:
       - 'ai-server/**'
       - '.github/workflows/ai-server-ci.yml'
