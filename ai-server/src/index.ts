@@ -92,6 +92,9 @@ function createServicesFromConfig(): ServiceConfig {
     console.warn(
       'No SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY - using in-memory storage (dev only)'
     );
+    // N10: In dev mode, the in-memory stores are separate, so check-ins require
+    // seeding recipes directly in the check-in repository. This is test-only
+    // behavior; production uses shared Supabase tables.
   }
 
   return {

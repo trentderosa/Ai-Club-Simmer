@@ -51,9 +51,8 @@ export function createCheckInRouter(
    * Create a post-cook check-in and receive a Coach's note.
    * 
    * Requires authentication via Supabase JWT (PR #3's verifier).
-   * Does NOT award XP - XP is awarded server-side via award_slot_xp
-   * after the client reports the check-in (N12 fix: clients cannot call
-   * award_slot_xp directly; it's restricted to service_role).
+   * This route does not award XP; XP awarding is owned by the
+   * gamification flow and happens server-side only.
    * 
    * Request body:
    * {
@@ -75,8 +74,12 @@ export function createCheckInRouter(
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
   router.post('/', authenticate, userLimiter, async (req: Request, res: Response): Promise<void> => {
     try {
-      // userId is guaranteed by authenticate middleware
-      const userId = req.userId!;
+      // N15: Guard against middleware reordering instead of using non-null assertion
+      if (!req.userId) {
+        res.status(401).json({ error: 'Authentication required' });
+        return;
+      }
+      const userId = req.userId;
 
       const input = CheckInInputSchema.parse(req.body);
 

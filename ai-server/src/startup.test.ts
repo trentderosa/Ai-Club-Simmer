@@ -15,13 +15,14 @@ describe('Server Startup (B2 fix)', () => {
     }
   });
 
+  // N13: Increased timeouts for cold CI runners
   it('server starts and responds to health check', async () => {
     const port = 3099 + Math.floor(Math.random() * 100);
 
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
         reject(new Error('Server startup timed out'));
-      }, 10000);
+      }, 15000);
 
       serverProcess = spawn('npx', ['tsx', path.join(__dirname, 'index.ts')], {
         env: {
@@ -69,5 +70,5 @@ describe('Server Startup (B2 fix)', () => {
 
     const body = (await response.json()) as { status: string };
     expect(body.status).toBe('ok');
-  }, 15000);
+  }, 20000);
 });
