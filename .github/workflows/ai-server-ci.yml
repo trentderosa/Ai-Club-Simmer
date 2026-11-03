@@ -1,0 +1,44 @@
+name: AI Server CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'ai-server/**'
+      - '.github/workflows/ai-server-ci.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'ai-server/**'
+      - '.github/workflows/ai-server-ci.yml'
+
+jobs:
+  lint-typecheck-test:
+    name: Lint, Typecheck & Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ai-server
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ai-server/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint
+
+      - name: Run TypeScript type check
+        run: npm run typecheck
+
+      - name: Run tests
+        run: npm test
