@@ -1,0 +1,130 @@
+name: Database Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - 'tests/**'
+      - '.github/workflows/db-tests.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'supabase/**'
+      - 'tests/**'
+      - '.github/workflows/db-tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: simmer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: tests/package-lock.json
+
+      - name: Install dependencies
+        working-directory: tests
+        run: npm ci
+
+      - name: Setup PostgreSQL extensions, roles, and auth schema
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/simmer_test
+        run: |
+          # Install pgcrypto for password hashing in tests
+          psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto;'
+          
+          # Create the authenticated and anon roles (like Supabase)
+          psql "$DATABASE_URL" -c 'CREATE ROLE authenticated NOLOGIN;'
+          psql "$DATABASE_URL" -c 'CREATE ROLE anon NOLOGIN;'
+          
+          # Grant authenticated and anon ability to switch to these roles
+          psql "$DATABASE_URL" -c 'GRANT authenticated TO postgres;'
+          psql "$DATABASE_URL" -c 'GRANT anon TO postgres;'
+          
+          # Create minimal auth schema to simulate Supabase auth
+          psql "$DATABASE_URL" <<'EOF'
+          CREATE SCHEMA IF NOT EXISTS auth;
+          
+          CREATE TABLE IF NOT EXISTS auth.users (
+            instance_id UUID,
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            aud VARCHAR(255),
+            role VARCHAR(255),
+            email VARCHAR(255) UNIQUE,
+            encrypted_password VARCHAR(255),
+            email_confirmed_at TIMESTAMPTZ,
+            invited_at TIMESTAMPTZ,
+            confirmation_token VARCHAR(255),
+            confirmation_sent_at TIMESTAMPTZ,
+            recovery_token VARCHAR(255),
+            recovery_sent_at TIMESTAMPTZ,
+            email_change_token_new VARCHAR(255),
+            email_change VARCHAR(255),
+            email_change_sent_at TIMESTAMPTZ,
+            last_sign_in_at TIMESTAMPTZ,
+            raw_app_meta_data JSONB,
+            raw_user_meta_data JSONB,
+            is_super_admin BOOLEAN,
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW(),
+            phone VARCHAR(15),
+            phone_confirmed_at TIMESTAMPTZ,
+            phone_change VARCHAR(15),
+            phone_change_token VARCHAR(255),
+            phone_change_sent_at TIMESTAMPTZ,
+            confirmed_at TIMESTAMPTZ,
+            email_change_token_current VARCHAR(255),
+            email_change_confirm_status SMALLINT,
+            banned_until TIMESTAMPTZ,
+            reauthentication_token VARCHAR(255),
+            reauthentication_sent_at TIMESTAMPTZ
+          );
+          
+          -- Mock auth.uid() - reads JWT sub claim from session config
+          CREATE OR REPLACE FUNCTION auth.uid()
+          RETURNS UUID AS $$
+            SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::UUID;
+          $$ LANGUAGE SQL STABLE;
+          
+          -- Mock auth.role() - reads JWT role claim from session config
+          CREATE OR REPLACE FUNCTION auth.role()
+          RETURNS TEXT AS $$
+            SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.role', true), ''), 'anon');
+          $$ LANGUAGE SQL STABLE;
+          EOF
+
+      - name: Run lint
+        working-directory: tests
+        run: npm run lint
+
+      - name: Run typecheck
+        working-directory: tests
+        run: npm run typecheck
+
+      - name: Run tests
+        working-directory: tests
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/simmer_test
+        run: npm test
