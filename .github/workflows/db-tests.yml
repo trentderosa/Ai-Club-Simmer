@@ -48,18 +48,22 @@ jobs:
         working-directory: tests
         run: npm ci
 
-      - name: Setup PostgreSQL extensions and auth schema
+      - name: Setup PostgreSQL extensions, roles, and auth schema
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/simmer_test
         run: |
           # Install pgcrypto for password hashing in tests
           psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto;'
           
-          # Create the authenticated role that Supabase uses
-          psql "$DATABASE_URL" -c 'CREATE ROLE authenticated;'
+          # Create the authenticated and anon roles (like Supabase)
+          psql "$DATABASE_URL" -c 'CREATE ROLE authenticated NOLOGIN;'
+          psql "$DATABASE_URL" -c 'CREATE ROLE anon NOLOGIN;'
           
-          # Create minimal auth schema to simulate Supabase auth.users
-          # This is a test-only mock, not the real Supabase auth
+          # Grant authenticated and anon ability to switch to these roles
+          psql "$DATABASE_URL" -c 'GRANT authenticated TO postgres;'
+          psql "$DATABASE_URL" -c 'GRANT anon TO postgres;'
+          
+          # Create minimal auth schema to simulate Supabase auth
           psql "$DATABASE_URL" <<'EOF'
           CREATE SCHEMA IF NOT EXISTS auth;
           
@@ -98,11 +102,16 @@ jobs:
             reauthentication_sent_at TIMESTAMPTZ
           );
           
-          -- Mock auth.uid() function for RLS testing
-          -- In tests, we don't use RLS, but the function must exist for the schema to load
+          -- Mock auth.uid() - reads JWT sub claim from session config
           CREATE OR REPLACE FUNCTION auth.uid()
           RETURNS UUID AS $$
-            SELECT NULL::UUID;
+            SELECT NULLIF(current_setting('request.jwt.claim.sub', true), '')::UUID;
+          $$ LANGUAGE SQL STABLE;
+          
+          -- Mock auth.role() - reads JWT role claim from session config
+          CREATE OR REPLACE FUNCTION auth.role()
+          RETURNS TEXT AS $$
+            SELECT COALESCE(NULLIF(current_setting('request.jwt.claim.role', true), ''), 'anon');
           $$ LANGUAGE SQL STABLE;
           EOF
 

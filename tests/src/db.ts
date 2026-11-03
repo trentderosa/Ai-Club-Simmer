@@ -52,6 +52,35 @@ export class TestDatabase {
     `);
   }
 
+  /**
+   * Setup roles and permissions to simulate Supabase environment.
+   * This allows tests to run as authenticated/anon roles with proper RLS.
+   * Must re-apply security restrictions AFTER granting broad table access.
+   */
+  async setupRoles(): Promise<void> {
+    await this.pool.query(`
+      -- Grant table privileges to authenticated role (like Supabase does)
+      GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
+      GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
+      
+      -- Grant read access to anon
+      GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon;
+      
+      -- Re-apply security restrictions that the migration set (order matters!)
+      -- B4 FIX: xp_config is read-only for clients
+      REVOKE INSERT, UPDATE, DELETE ON xp_config FROM anon, authenticated;
+      
+      -- S5 FIX: user_recipes - no INSERT for clients (service-role only)
+      REVOKE INSERT ON user_recipes FROM anon, authenticated;
+      
+      -- xp_events - no INSERT for clients (only via SECURITY DEFINER function)
+      REVOKE INSERT, UPDATE, DELETE ON xp_events FROM anon, authenticated;
+      
+      -- user_slot_completions - no INSERT for clients (only via SECURITY DEFINER function)
+      REVOKE INSERT, UPDATE, DELETE ON user_slot_completions FROM anon, authenticated;
+    `);
+  }
+
   async cleanupTestData(): Promise<void> {
     await this.pool.query('DELETE FROM xp_events');
     await this.pool.query('DELETE FROM check_ins');
@@ -111,6 +140,10 @@ export class TestDatabase {
     return result.rows[0].xp_value;
   }
 
+  /**
+   * Create a user_recipe. Uses service-role style insert (superuser bypasses RLS)
+   * since clients can no longer insert recipes directly (S5 fix).
+   */
   async createUserRecipe(userId: string, slotId: number): Promise<string> {
     const result = await this.pool.query(
       `INSERT INTO user_recipes (user_id, slot_id, recipe_json)
@@ -144,22 +177,49 @@ export class TestDatabase {
   }
 
   /**
-   * Award XP for a check-in. The new function signature takes only check_in_id
-   * and derives user_id and slot_id from the check_in row.
-   * 
-   * For testing, we simulate auth.uid() by setting a session variable.
+   * Award XP for a check-in (as service_role - bypasses ownership check).
+   * For testing the core XP logic without RLS complications.
    */
-  async awardSlotXp(checkInId: string, asUserId?: string): Promise<XpAwardResult> {
+  async awardSlotXp(checkInId: string): Promise<XpAwardResult> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
+      // Set JWT role claim to service_role to bypass ownership check
+      await client.query(
+        `SELECT set_config('request.jwt.claim.role', 'service_role', true)`
+      );
       
-      if (asUserId) {
-        await client.query(
-          `SELECT set_config('request.jwt.claim.sub', $1, true)`,
-          [asUserId]
-        );
-      }
+      const result = await client.query(
+        'SELECT * FROM award_slot_xp($1)',
+        [checkInId]
+      );
+      
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Award XP as a specific user (with RLS enabled).
+   * S2 FIX: This properly tests RLS by setting the role and JWT claims.
+   */
+  async awardSlotXpAsUser(checkInId: string, userId: string): Promise<XpAwardResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE authenticated');
+      await client.query(
+        `SELECT set_config('request.jwt.claim.sub', $1, true)`,
+        [userId]
+      );
+      await client.query(
+        `SELECT set_config('request.jwt.claim.role', 'authenticated', true)`
+      );
       
       const result = await client.query(
         'SELECT * FROM award_slot_xp($1)',
@@ -192,21 +252,130 @@ export class TestDatabase {
     return parseInt(result.rows[0].count);
   }
 
-  async tryClientInsertXpEvent(
+  /**
+   * S2 FIX: Try to insert into xp_events as authenticated role (should fail due to RLS).
+   */
+  async tryClientInsertXpEventAsRole(
     userId: string,
     checkInId: string,
     slotId: number,
     xpAmount: number
-  ): Promise<boolean> {
+  ): Promise<{ success: boolean; error?: string }> {
+    const client = await this.pool.connect();
     try {
-      await this.pool.query(
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE authenticated');
+      await client.query(
+        `SELECT set_config('request.jwt.claim.sub', $1, true)`,
+        [userId]
+      );
+      
+      await client.query(
         `INSERT INTO xp_events (user_id, check_in_id, slot_id, xp_awarded, is_first_completion)
          VALUES ($1, $2, $3, $4, TRUE)`,
         [userId, checkInId, slotId, xpAmount]
       );
-      return true;
-    } catch {
-      return false;
+      
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      const error = e as Error;
+      return { success: false, error: error.message };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * S2 FIX: Try to update xp_config as authenticated role (should fail).
+   */
+  async tryClientUpdateXpConfigAsRole(key: string, value: number): Promise<{ success: boolean; error?: string }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE authenticated');
+      
+      await client.query(
+        `UPDATE xp_config SET value = $2 WHERE key = $1`,
+        [key, value]
+      );
+      
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      const error = e as Error;
+      return { success: false, error: error.message };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * S5 FIX: Try to insert user_recipe as authenticated role (should fail).
+   */
+  async tryClientInsertUserRecipeAsRole(
+    userId: string,
+    slotId: number
+  ): Promise<{ success: boolean; error?: string }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE authenticated');
+      await client.query(
+        `SELECT set_config('request.jwt.claim.sub', $1, true)`,
+        [userId]
+      );
+      
+      await client.query(
+        `INSERT INTO user_recipes (user_id, slot_id, recipe_json)
+         VALUES ($1, $2, '{"title": "Fake Recipe"}')`,
+        [userId, slotId]
+      );
+      
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      const error = e as Error;
+      return { success: false, error: error.message };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * S2 FIX: Try to create check-in with mismatched slot as authenticated role.
+   */
+  async tryClientInsertCheckInAsRole(
+    userId: string,
+    userRecipeId: string,
+    slotId: number
+  ): Promise<{ success: boolean; error?: string }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE authenticated');
+      await client.query(
+        `SELECT set_config('request.jwt.claim.sub', $1, true)`,
+        [userId]
+      );
+      
+      await client.query(
+        `INSERT INTO check_ins (user_id, user_recipe_id, slot_id, difficulty_rating)
+         VALUES ($1, $2, $3, 'ok')`,
+        [userId, userRecipeId, slotId]
+      );
+      
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      const error = e as Error;
+      return { success: false, error: error.message };
+    } finally {
+      client.release();
     }
   }
 

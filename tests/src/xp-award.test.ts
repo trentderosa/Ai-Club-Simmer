@@ -23,6 +23,8 @@ describe('XP Award Logic (F7)', () => {
     const migrationPath = path.join(__dirname, '../..', 'supabase/migrations/20261103000000_core_schema.sql');
     const migrationSql = fs.readFileSync(migrationPath, 'utf-8');
     await db.runMigration(migrationSql);
+    
+    await db.setupRoles();
   });
 
   afterAll(async () => {
@@ -179,21 +181,73 @@ describe('XP Award Logic (F7)', () => {
     });
   });
 
-  describe('Security: xp_events table (RLS)', () => {
-    it('validates xp_events table has no INSERT policy for clients', async () => {
+  describe('Security: RLS enforcement (S2 fix)', () => {
+    it('client cannot insert into xp_events directly', async () => {
       const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
-
-      const inserted = await db.tryClientInsertXpEvent(
+      
+      const result = await db.tryClientInsertXpEventAsRole(
         testUser.id,
         checkIn,
         slotId1,
         9999
       );
 
-      expect(inserted).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/policy|permission|denied/i);
+    });
 
-      const hasInsertPolicy = await db.hasClientInsertPolicy('xp_events');
-      expect(hasInsertPolicy).toBe(false);
+    it('client cannot update xp_config (B4 fix)', async () => {
+      const result = await db.tryClientUpdateXpConfigAsRole('weekly_repeat_cap', 999999);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/permission|denied/i);
+    });
+
+    it('client cannot insert user_recipes directly (S5 fix)', async () => {
+      const slotId3 = await db.getSlotId(3);
+      
+      const result = await db.tryClientInsertUserRecipeAsRole(testUser.id, slotId3);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/policy|permission|denied/i);
+    });
+
+    it('user B cannot award XP for user A check-in (B1 fix)', async () => {
+      const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+
+      await expect(
+        db.awardSlotXpAsUser(checkIn, testUser2.id)
+      ).rejects.toThrow(/Access denied/);
+    });
+
+    it('user can award XP for their own check-in', async () => {
+      const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+      
+      const result = await db.awardSlotXpAsUser(checkIn, testUser.id);
+
+      expect(result.out_xp_awarded).toBe(slot1XpValue);
+      expect(result.out_is_first_completion).toBe(true);
+    });
+
+    it('client cannot create check-in with mismatched slot (B2 fix)', async () => {
+      const result = await db.tryClientInsertCheckInAsRole(
+        testUser.id,
+        userRecipeId1,
+        slotId2
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/policy|violates/i);
+    });
+
+    it('client can create check-in with matching recipe/slot', async () => {
+      const result = await db.tryClientInsertCheckInAsRole(
+        testUser.id,
+        userRecipeId1,
+        slotId1
+      );
+
+      expect(result.success).toBe(true);
     });
   });
 
@@ -218,7 +272,7 @@ describe('XP Award Logic (F7)', () => {
     });
   });
 
-  describe('Security: is_repeat is server-computed (Additional fix)', () => {
+  describe('Security: is_repeat is server-computed', () => {
     it('computes is_repeat from user_slot_completions, ignoring client', async () => {
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
       await db.awardSlotXp(checkIn1);

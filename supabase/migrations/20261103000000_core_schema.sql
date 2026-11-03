@@ -5,16 +5,22 @@
 -- Tables: profiles, path_slots, user_recipes, check_ins, xp_events
 -- Enables RLS so users can only read their own rows.
 -- xp_events: clients CANNOT insert/update - only service role or SECURITY DEFINER functions.
+-- user_recipes: clients CANNOT insert - only service role (recipe generator)
+-- xp_config: clients can only SELECT - no INSERT/UPDATE/DELETE
 -- 
 -- SECURITY NOTES:
 -- - award_slot_xp takes only check_in_id and derives user/slot from that row
 -- - check_ins INSERT is validated against user_recipes ownership
 -- - is_repeat is computed server-side, not client-supplied
 -- - Weekly cap uses advisory lock for concurrency safety
+-- 
+-- LANE NOTE: XP values, repeat %, weekly cap, and dish list need Ian's sign-off
+-- (gamification). Schema ownership needs Ezzeldin's sign-off (back end).
 -- =============================================================================
 
 -- -----------------------------------------------------------------------------
 -- Configuration table for XP rules (easy to change without code deploys)
+-- B4 FIX: RLS enabled, read-only for clients, no INSERT/UPDATE/DELETE
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS xp_config (
     key TEXT PRIMARY KEY,
@@ -24,6 +30,17 @@ CREATE TABLE IF NOT EXISTS xp_config (
         key != 'repeat_xp_percent' OR (value >= 0 AND value <= 100)
     )
 );
+
+-- B4 FIX: Enable RLS and restrict client access to read-only
+ALTER TABLE xp_config ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Anyone can view XP config" ON xp_config;
+CREATE POLICY "Anyone can view XP config"
+    ON xp_config FOR SELECT
+    USING (TRUE);
+
+-- Belt and braces: explicitly revoke write access from client roles
+REVOKE INSERT, UPDATE, DELETE ON xp_config FROM anon, authenticated;
 
 INSERT INTO xp_config (key, value, description) VALUES
     ('repeat_xp_percent', 50, 'Percentage of XP awarded for repeat completions (0-100)'),
@@ -48,14 +65,17 @@ CREATE TABLE IF NOT EXISTS profiles (
 
 ALTER TABLE profiles ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own profile" ON profiles;
 CREATE POLICY "Users can view own profile"
     ON profiles FOR SELECT
     USING (auth.uid() = id);
 
+DROP POLICY IF EXISTS "Users can insert own profile" ON profiles;
 CREATE POLICY "Users can insert own profile"
     ON profiles FOR INSERT
     WITH CHECK (auth.uid() = id);
 
+DROP POLICY IF EXISTS "Users can update own profile" ON profiles;
 CREATE POLICY "Users can update own profile"
     ON profiles FOR UPDATE
     USING (auth.uid() = id)
@@ -77,6 +97,7 @@ CREATE TABLE IF NOT EXISTS path_slots (
 
 ALTER TABLE path_slots ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Anyone can view path slots" ON path_slots;
 CREATE POLICY "Anyone can view path slots"
     ON path_slots FOR SELECT
     USING (TRUE);
@@ -99,7 +120,8 @@ ON CONFLICT (slot_order) DO NOTHING;
 
 -- -----------------------------------------------------------------------------
 -- user_recipes: generated recipe per user+slot (unique constraint)
--- NOTE: Consider server-only writes from the recipe generator (N1)
+-- S5 FIX: NO client INSERT - only service role (recipe generator) can write
+-- This prevents clients from creating recipes for any slot to bypass path order
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS user_recipes (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -113,18 +135,20 @@ CREATE TABLE IF NOT EXISTS user_recipes (
 
 ALTER TABLE user_recipes ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own recipes" ON user_recipes;
 CREATE POLICY "Users can view own recipes"
     ON user_recipes FOR SELECT
     USING (auth.uid() = user_id);
 
-CREATE POLICY "Users can insert own recipes"
-    ON user_recipes FOR INSERT
-    WITH CHECK (auth.uid() = user_id);
+-- S5 FIX: No INSERT policy for clients - service role only
+-- The recipe generator (ai-server) uses service_role key to insert recipes
+-- This prevents clients from creating recipes to bypass path progression
 
 -- -----------------------------------------------------------------------------
 -- check_ins: feedback after completing a recipe
 -- SECURITY: INSERT validates that user_recipe belongs to the caller and slot matches
 -- is_repeat is computed server-side by award_slot_xp, not trusted from client
+-- N6 FIX: Added length constraints on text fields to bound token cost/injection
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS check_ins (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -132,20 +156,22 @@ CREATE TABLE IF NOT EXISTS check_ins (
     user_recipe_id UUID NOT NULL REFERENCES user_recipes(id) ON DELETE CASCADE,
     slot_id INTEGER NOT NULL REFERENCES path_slots(id) ON DELETE CASCADE,
     difficulty_rating TEXT NOT NULL CHECK (difficulty_rating IN ('easy', 'ok', 'hard')),
-    went_well TEXT,
-    was_hard TEXT,
+    went_well TEXT CHECK (went_well IS NULL OR char_length(went_well) <= 500),
+    was_hard TEXT CHECK (was_hard IS NULL OR char_length(was_hard) <= 500),
     is_repeat BOOLEAN DEFAULT FALSE,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 ALTER TABLE check_ins ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own check-ins" ON check_ins;
 CREATE POLICY "Users can view own check-ins"
     ON check_ins FOR SELECT
     USING (auth.uid() = user_id);
 
 -- B2 FIX: Validate that user_recipe belongs to caller AND slot_id matches the recipe's slot
 -- This prevents clients from creating check-ins for arbitrary slots or other users' recipes
+DROP POLICY IF EXISTS "Users can insert own check-ins with valid recipe" ON check_ins;
 CREATE POLICY "Users can insert own check-ins with valid recipe"
     ON check_ins FOR INSERT
     WITH CHECK (
@@ -175,6 +201,7 @@ CREATE TABLE IF NOT EXISTS xp_events (
 
 ALTER TABLE xp_events ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own XP events" ON xp_events;
 CREATE POLICY "Users can view own XP events"
     ON xp_events FOR SELECT
     USING (auth.uid() = user_id);
@@ -199,6 +226,7 @@ CREATE TABLE IF NOT EXISTS user_slot_completions (
 
 ALTER TABLE user_slot_completions ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own completions" ON user_slot_completions;
 CREATE POLICY "Users can view own completions"
     ON user_slot_completions FOR SELECT
     USING (auth.uid() = user_id);
@@ -213,11 +241,14 @@ CREATE POLICY "Users can view own completions"
 -- 
 -- S1 FIX: Uses advisory lock for concurrency-safe weekly cap calculation
 -- 
+-- N8 FIX: Uses auth.role() for service-role detection (documented Supabase pattern)
+-- 
 -- Additional: is_repeat is computed from user_slot_completions, never from client
 -- -----------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS award_slot_xp(UUID, UUID, INTEGER);
+DROP FUNCTION IF EXISTS award_slot_xp(UUID);
 
-CREATE OR REPLACE FUNCTION award_slot_xp(p_check_in_id UUID)
+CREATE FUNCTION award_slot_xp(p_check_in_id UUID)
 RETURNS TABLE (
     out_xp_awarded INTEGER,
     out_is_first_completion BOOLEAN,
@@ -242,11 +273,9 @@ DECLARE
     v_caller_uid UUID;
     v_is_service_role BOOLEAN;
 BEGIN
-    -- Check if caller is service_role or superuser (bypasses user check)
-    -- In production Supabase, service_role is used for server-side calls
-    -- In tests, we run as postgres superuser which also bypasses
-    v_is_service_role := current_setting('role', true) = 'service_role'
-                      OR current_setting('is_superuser', true) = 'on';
+    -- N8 FIX: Use auth.role() for service-role detection (documented Supabase pattern)
+    -- Service role bypasses ownership check for server-side calls
+    v_is_service_role := COALESCE(auth.role(), '') = 'service_role';
     v_caller_uid := auth.uid();
     
     -- B1 FIX: Derive user_id and slot_id from the check_in row with FOR UPDATE lock
@@ -260,7 +289,7 @@ BEGIN
         RAISE EXCEPTION 'Invalid or non-existent check_in_id: %', p_check_in_id;
     END IF;
     
-    -- B1 FIX: Verify the check-in belongs to the caller (unless service_role/superuser)
+    -- B1 FIX: Verify the check-in belongs to the caller (unless service_role)
     IF NOT v_is_service_role AND v_caller_uid IS DISTINCT FROM v_user_id THEN
         RAISE EXCEPTION 'Access denied: check-in % does not belong to caller', p_check_in_id;
     END IF;
@@ -335,7 +364,9 @@ BEGIN
 END;
 $$;
 
+-- N7 FIX: Revoke from both PUBLIC and anon explicitly
 REVOKE EXECUTE ON FUNCTION award_slot_xp(UUID) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION award_slot_xp(UUID) FROM anon;
 GRANT EXECUTE ON FUNCTION award_slot_xp(UUID) TO authenticated;
 
 -- -----------------------------------------------------------------------------
@@ -343,8 +374,9 @@ GRANT EXECUTE ON FUNCTION award_slot_xp(UUID) TO authenticated;
 -- S3 FIX: No parameter; uses auth.uid() directly to prevent leaking other users' XP
 -- -----------------------------------------------------------------------------
 DROP FUNCTION IF EXISTS get_user_total_xp(UUID);
+DROP FUNCTION IF EXISTS get_user_total_xp();
 
-CREATE OR REPLACE FUNCTION get_user_total_xp()
+CREATE FUNCTION get_user_total_xp()
 RETURNS INTEGER
 LANGUAGE plpgsql
 SECURITY INVOKER
@@ -362,7 +394,9 @@ BEGIN
 END;
 $$;
 
+-- N7 FIX: Revoke from both PUBLIC and anon explicitly
 REVOKE EXECUTE ON FUNCTION get_user_total_xp() FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION get_user_total_xp() FROM anon;
 GRANT EXECUTE ON FUNCTION get_user_total_xp() TO authenticated;
 
 -- -----------------------------------------------------------------------------
@@ -381,3 +415,20 @@ CREATE TRIGGER profiles_updated_at
     BEFORE UPDATE ON profiles
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at();
+
+-- -----------------------------------------------------------------------------
+-- FINAL SECURITY LOCKDOWN
+-- These REVOKEs ensure clients cannot bypass RLS via table permissions.
+-- They are placed at the end so they apply regardless of when roles are created.
+-- In Supabase, the PostgREST layer grants broad access to authenticated/anon,
+-- so we must explicitly revoke write access on sensitive tables.
+-- -----------------------------------------------------------------------------
+
+-- S5 FIX: user_recipes - no client INSERT (service-role only)
+REVOKE INSERT ON user_recipes FROM anon, authenticated;
+
+-- xp_events - no client INSERT/UPDATE/DELETE (SECURITY DEFINER function only)
+REVOKE INSERT, UPDATE, DELETE ON xp_events FROM anon, authenticated;
+
+-- user_slot_completions - no client INSERT/UPDATE/DELETE (SECURITY DEFINER function only)
+REVOKE INSERT, UPDATE, DELETE ON user_slot_completions FROM anon, authenticated;
