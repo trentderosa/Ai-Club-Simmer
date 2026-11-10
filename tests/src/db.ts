@@ -57,11 +57,13 @@ export class TestDatabase {
     // Drop and recreate the public schema to ensure a clean slate.
     // This handles all tables, functions, types, triggers, etc. in one go,
     // avoiding race conditions with PostgreSQL's type catalog.
+    // B3: Recreate pgcrypto after schema drop since it was installed in public.
     await this.pool.query(`
       DROP SCHEMA IF EXISTS public CASCADE;
       CREATE SCHEMA public;
       GRANT ALL ON SCHEMA public TO postgres;
       GRANT ALL ON SCHEMA public TO PUBLIC;
+      CREATE EXTENSION IF NOT EXISTS pgcrypto;
     `);
   }
 

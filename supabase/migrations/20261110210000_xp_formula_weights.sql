@@ -26,8 +26,17 @@ ALTER TABLE xp_config
     ALTER COLUMN value TYPE NUMERIC USING value::NUMERIC;
 
 -- Update the CHECK constraint for the new NUMERIC type
+-- N2: Add upper bounds on weights (0-10 for weights, 0-1000 for multiplier) to catch misconfigs
 ALTER TABLE xp_config DROP CONSTRAINT IF EXISTS xp_config_value_check;
 ALTER TABLE xp_config ADD CONSTRAINT xp_config_value_check CHECK (value >= 0);
+ALTER TABLE xp_config DROP CONSTRAINT IF EXISTS xp_config_weight_bounds;
+ALTER TABLE xp_config ADD CONSTRAINT xp_config_weight_bounds CHECK (
+    CASE 
+        WHEN key IN ('steps_weight', 'ingredients_weight', 'cook_minutes_weight') THEN value <= 10
+        WHEN key = 'xp_multiplier' THEN value <= 1000
+        ELSE TRUE
+    END
+);
 
 -- -----------------------------------------------------------------------------
 -- 2. Add XP formula weight configs

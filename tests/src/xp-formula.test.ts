@@ -14,9 +14,9 @@ import { TestDatabase, TestUser } from './db';
  * 4. Repeat rule (50%) still works with new formula
  * 5. Weekly cap (100 XP) still works with new formula
  *
- * N5 note on rounding: PostgreSQL ROUND uses banker's rounding (round half to even),
- * so 55.5 rounds to 56, but 52.5 rounds to 52. JavaScript Math.round always rounds
- * half up. The tests use the actual database values to avoid this discrepancy.
+ * Note: The formula uses NUMERIC types, and PostgreSQL ROUND(numeric) rounds
+ * half away from zero (52.5 → 53, -52.5 → -53), matching JavaScript Math.round
+ * for positive numbers. Tests read the actual database values to be authoritative.
  */
 describe('XP Formula (weighted inputs)', () => {
   let db: TestDatabase;
