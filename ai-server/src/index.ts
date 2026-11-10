@@ -6,10 +6,15 @@ import {
   createSupabaseStub,
   isStubAuthAllowed,
 } from './services/supabase.js';
-import { createJwtVerifier } from './services/jwt-verifier.js';
+import { createJwtVerifier, type JwtVerifier } from './services/jwt-verifier.js';
 import { InMemoryUserRecipeRepository } from './repositories/user-recipe-repository.js';
 import { SupabaseUserRecipeRepository } from './repositories/supabase-user-recipe-repository.js';
 import { createRecipeRouter } from './routes/recipe.js';
+import { createCheckInRouter } from './routes/check-in.js';
+import { CheckInService } from './services/check-in-service.js';
+import { createCoachNoteGenerator } from './services/coach-note.js';
+import { InMemoryCheckInRepository } from './repositories/in-memory-check-in-repository.js';
+import { SupabaseCheckInRepository } from './repositories/supabase-check-in-repository.js';
 
 const config = loadConfig();
 
@@ -26,20 +31,34 @@ app.use(express.json());
 
 const ollamaClient = createOllamaClient(config.ollama);
 
-function createSupabaseServiceFromConfig(): ReturnType<typeof createSupabaseService> {
+interface ServiceConfig {
+  supabase: ReturnType<typeof createSupabaseService>;
+  jwtVerifier: JwtVerifier | null;
+  checkInService: CheckInService | null;
+}
+
+function createServicesFromConfig(): ServiceConfig {
   const { jwtSecret, jwksUri, url, serviceRoleKey } = config.supabase;
   const isProduction = process.env.NODE_ENV === 'production';
 
   if (isStubAuthAllowed()) {
     console.warn('STUB AUTH ENABLED - using stub Supabase service');
-    return createSupabaseStub({ allowStubAuth: true });
+    return {
+      supabase: createSupabaseStub({ allowStubAuth: true }),
+      jwtVerifier: null,
+      checkInService: null,
+    };
   }
 
   if (!jwtSecret && !jwksUri) {
     console.warn(
       'No SUPABASE_JWT_SECRET or SUPABASE_JWKS_URI configured - auth will fail closed'
     );
-    return createSupabaseStub({ allowStubAuth: false });
+    return {
+      supabase: createSupabaseStub({ allowStubAuth: false }),
+      jwtVerifier: null,
+      checkInService: null,
+    };
   }
 
   if (isProduction && (!url || !serviceRoleKey)) {
@@ -61,24 +80,39 @@ function createSupabaseServiceFromConfig(): ReturnType<typeof createSupabaseServ
       ? new SupabaseUserRecipeRepository({ url, serviceRoleKey })
       : new InMemoryUserRecipeRepository();
 
+  const checkInRepository =
+    url && serviceRoleKey
+      ? new SupabaseCheckInRepository({ url, serviceRoleKey })
+      : new InMemoryCheckInRepository();
+
+  const coachNoteGenerator = createCoachNoteGenerator(ollamaClient);
+  const checkInService = new CheckInService(checkInRepository, coachNoteGenerator);
+
   if (!url || !serviceRoleKey) {
     console.warn(
-      'No SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY - using in-memory recipe storage (dev only)'
+      'No SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY - using in-memory storage (dev only)'
     );
+    // N10: In dev mode, the in-memory stores are separate, so check-ins require
+    // seeding recipes directly in the check-in repository. This is test-only
+    // behavior; production uses shared Supabase tables.
   }
 
-  return createSupabaseService({
+  return {
+    supabase: createSupabaseService({
+      jwtVerifier,
+      userRecipeRepository,
+    }),
     jwtVerifier,
-    userRecipeRepository,
-  });
+    checkInService,
+  };
 }
 
-const supabase = createSupabaseServiceFromConfig();
+const services = createServicesFromConfig();
 
 const recipeRouter = createRecipeRouter(
   {
     ollamaClient,
-    supabase,
+    supabase: services.supabase,
   },
   {
     enablePreviewRoute: config.enablePreviewRoute,
@@ -87,6 +121,23 @@ const recipeRouter = createRecipeRouter(
 );
 
 app.use('/api/recipes', recipeRouter);
+
+// Mount check-in router if JWT verifier and check-in service are available
+if (services.jwtVerifier && services.checkInService) {
+  const checkInRouter = createCheckInRouter(
+    {
+      checkInService: services.checkInService,
+      jwtVerifier: services.jwtVerifier,
+    },
+    {
+      rateLimit: config.rateLimit,
+    }
+  );
+  app.use('/api/check-ins', checkInRouter);
+  console.info('Check-in route: ENABLED');
+} else {
+  console.warn('Check-in route: DISABLED (no JWT verifier configured)');
+}
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
