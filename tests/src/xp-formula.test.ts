@@ -175,8 +175,8 @@ describe('XP Formula (weighted inputs)', () => {
 
       // But path_slots.xp_value should have been recomputed
       const newSlot = await db.getSlotDetails(1);
-      // New formula: max(1, round((4*1 + 5*1 + 10*1) * 10)) = max(1, round(190)) = 190
-      expect(newSlot.xp_value).toBe(190);
+      // New formula with weights=1.0: max(1, round((6*1 + 10*1 + 20*1) * 10)) = 360
+      expect(newSlot.xp_value).toBe(360);
       expect(newSlot.xp_value).not.toBe(originalXp);
 
       // User's total XP should still reflect the original award
@@ -205,10 +205,10 @@ describe('XP Formula (weighted inputs)', () => {
     });
 
     it('weekly repeat cap (100 XP) still enforced', async () => {
-      const slotId = await db.getSlotId(3); // Slot 3 has XP=88, 50%=44
+      const slotId = await db.getSlotId(3); // Slot 3 has XP=75, 50%=37
       const userRecipeId = await db.createUserRecipe(testUser.id, slotId);
 
-      // First completion: full 88 XP
+      // First completion: full 75 XP
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId, slotId);
       await db.awardSlotXp(checkIn1);
 

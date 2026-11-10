@@ -225,7 +225,7 @@ UPDATE path_slots SET steps = 6, ingredients = 8, cook_minutes = 25 WHERE slot_o
 -- Slot 7: Sheet Pan
 -- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
 -- steps=5, ingredients=11, cook_minutes=38
--- XP = max(1, round((5*0.45 + 11*0.35 + 38*0.2) * 10)) = round(136.5) = 137
+-- XP = max(1, round((5*0.45 + 11*0.35 + 38*0.2) * 10)) = round(137) = 137
 UPDATE path_slots SET steps = 5, ingredients = 11, cook_minutes = 38 WHERE slot_order = 7;
 
 -- Slot 8: Seared Chicken
