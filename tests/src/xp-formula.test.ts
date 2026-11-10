@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { TestDatabase, TestUser } from './db';
-import fs from 'fs';
-import path from 'path';
 
 /**
  * XP Formula Tests
@@ -15,6 +13,10 @@ import path from 'path';
  * 3. Changing weights does NOT alter already-awarded xp_events
  * 4. Repeat rule (50%) still works with new formula
  * 5. Weekly cap (100 XP) still works with new formula
+ *
+ * N5 note on rounding: PostgreSQL ROUND uses banker's rounding (round half to even),
+ * so 55.5 rounds to 56, but 52.5 rounds to 52. JavaScript Math.round always rounds
+ * half up. The tests use the actual database values to avoid this discrepancy.
  */
 describe('XP Formula (weighted inputs)', () => {
   let db: TestDatabase;
@@ -24,17 +26,8 @@ describe('XP Formula (weighted inputs)', () => {
     db = new TestDatabase();
     await db.connect();
     await db.dropAllTables();
-
-    // Run both migrations in order
-    const coreMigrationPath = path.join(__dirname, '../..', 'supabase/migrations/20261103000000_core_schema.sql');
-    const formulaMigrationPath = path.join(__dirname, '../..', 'supabase/migrations/20261110210000_xp_formula_weights.sql');
-
-    const coreMigrationSql = fs.readFileSync(coreMigrationPath, 'utf-8');
-    const formulaMigrationSql = fs.readFileSync(formulaMigrationPath, 'utf-8');
-
-    await db.runMigration(coreMigrationSql);
-    await db.runMigration(formulaMigrationSql);
-
+    // N6: Use shared helper that runs all migrations in sorted order
+    await db.runAllMigrations();
     await db.setupRoles();
   });
 
@@ -271,6 +264,15 @@ describe('XP Formula (weighted inputs)', () => {
       expect(ingredientsWeight).toBe(0.35);
       expect(cookMinutesWeight).toBe(0.2);
       expect(multiplier).toBe(10);
+    });
+  });
+
+  describe('security: recompute_slot_xp access control (S1)', () => {
+    it('client cannot call recompute_slot_xp directly', async () => {
+      const result = await db.tryClientCallRecomputeSlotXpAsRole();
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/permission|denied/i);
     });
   });
 });

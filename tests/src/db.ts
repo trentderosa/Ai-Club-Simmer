@@ -1,4 +1,6 @@
 import pg, { Pool as PoolType } from 'pg';
+import fs from 'fs';
+import path from 'path';
 
 const { Pool } = pg;
 
@@ -33,6 +35,22 @@ export class TestDatabase {
 
   async runMigration(sql: string): Promise<void> {
     await this.pool.query(sql);
+  }
+
+  /**
+   * N6: Run all migrations from supabase/migrations/ in sorted order.
+   * This ensures future migrations are automatically included.
+   */
+  async runAllMigrations(): Promise<void> {
+    const migrationsDir = path.join(__dirname, '../..', 'supabase/migrations');
+    const files = fs.readdirSync(migrationsDir)
+      .filter(f => f.endsWith('.sql'))
+      .sort();
+    
+    for (const file of files) {
+      const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
+      await this.pool.query(sql);
+    }
   }
 
   async dropAllTables(): Promise<void> {
@@ -486,9 +504,31 @@ export class TestDatabase {
   }
 
   /**
-   * Manually call recompute_slot_xp for testing
+   * Manually call recompute_slot_xp for testing (as superuser)
    */
   async recomputeSlotXp(slotId: number | null = null): Promise<void> {
     await this.pool.query('SELECT recompute_slot_xp($1)', [slotId]);
+  }
+
+  /**
+   * S1: Try to call recompute_slot_xp as authenticated role (should fail)
+   */
+  async tryClientCallRecomputeSlotXpAsRole(): Promise<{ success: boolean; error?: string }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE authenticated');
+      
+      await client.query('SELECT recompute_slot_xp(NULL)');
+      
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      const error = e as Error;
+      return { success: false, error: error.message };
+    } finally {
+      client.release();
+    }
   }
 }

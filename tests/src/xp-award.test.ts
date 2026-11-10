@@ -1,7 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { TestDatabase, TestUser } from './db';
-import fs from 'fs';
-import path from 'path';
 
 describe('XP Award Logic (F7)', () => {
   let db: TestDatabase;
@@ -19,17 +17,8 @@ describe('XP Award Logic (F7)', () => {
     await db.connect();
 
     await db.dropAllTables();
-
-    // Run both migrations in order
-    const coreMigrationPath = path.join(__dirname, '../..', 'supabase/migrations/20261103000000_core_schema.sql');
-    const formulaMigrationPath = path.join(__dirname, '../..', 'supabase/migrations/20261110210000_xp_formula_weights.sql');
-    
-    const coreMigrationSql = fs.readFileSync(coreMigrationPath, 'utf-8');
-    const formulaMigrationSql = fs.readFileSync(formulaMigrationPath, 'utf-8');
-    
-    await db.runMigration(coreMigrationSql);
-    await db.runMigration(formulaMigrationSql);
-    
+    // N6: Use shared helper that runs all migrations in sorted order
+    await db.runAllMigrations();
     await db.setupRoles();
   });
 
@@ -132,7 +121,9 @@ describe('XP Award Logic (F7)', () => {
     });
 
     it('awards 0 XP for repeats after cap is reached', async () => {
-      await db.setXpConfig('weekly_repeat_cap', 20);
+      // B2 fix: Set cap to exactly one repeat's worth so the second repeat gets 0
+      const repeatXp = Math.floor(slot1XpValue * 0.5);
+      await db.setXpConfig('weekly_repeat_cap', repeatXp);
 
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
       await db.awardSlotXp(checkIn1);
@@ -152,21 +143,27 @@ describe('XP Award Logic (F7)', () => {
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
       await db.awardSlotXp(checkIn1);
 
-      await db.setXpConfig('weekly_repeat_cap', 20);
+      // B2 fix: Set cap to exactly one repeat's worth
+      const repeatXp = Math.floor(slot1XpValue * 0.5);
+      await db.setXpConfig('weekly_repeat_cap', repeatXp);
 
       const checkIn2 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
       await db.awardSlotXp(checkIn2);
       await db.backdateXpEvent(checkIn2, 8);
 
+      // After backdating, this week has 0 repeat XP, so the cap should allow full repeat
       const checkIn3 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
       const result = await db.awardSlotXp(checkIn3);
 
-      expect(result.out_xp_awarded).toBe(Math.floor(slot1XpValue * 0.5));
+      expect(result.out_xp_awarded).toBe(repeatXp);
       expect(result.out_capped).toBe(false);
     });
 
     it('handles concurrent repeat awards without exceeding cap (S1 fix)', async () => {
-      await db.setXpConfig('weekly_repeat_cap', 40);
+      // B2 fix: Use a cap that's less than 4 repeats but more than 1
+      const repeatXp = Math.floor(slot1XpValue * 0.5);
+      const cap = repeatXp * 2; // Allow ~2 repeats
+      await db.setXpConfig('weekly_repeat_cap', cap);
 
       const checkIn1 = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
       await db.awardSlotXp(checkIn1);
@@ -183,7 +180,7 @@ describe('XP Award Logic (F7)', () => {
       );
 
       const totalRepeatXp = results.reduce((sum, r) => sum + r.out_xp_awarded, 0);
-      expect(totalRepeatXp).toBeLessThanOrEqual(40);
+      expect(totalRepeatXp).toBeLessThanOrEqual(cap);
     });
   });
 

@@ -107,18 +107,19 @@ BEGIN
 END;
 $$;
 
--- N7 style: Revoke from PUBLIC and anon for belt-and-braces security
+-- S1: Revoke from PUBLIC, anon, and authenticated - only service role should call this
 REVOKE EXECUTE ON FUNCTION recompute_slot_xp(INTEGER) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION recompute_slot_xp(INTEGER) FROM anon;
+REVOKE EXECUTE ON FUNCTION recompute_slot_xp(INTEGER) FROM authenticated;
 
 -- -----------------------------------------------------------------------------
 -- 5. Create recompute_all_slot_xp() for config changes
 -- When a weight or multiplier changes, all slots need recomputation
 -- -----------------------------------------------------------------------------
+-- N4: Trigger functions don't need SECURITY DEFINER - they inherit the trigger's context
 CREATE OR REPLACE FUNCTION recompute_all_slot_xp()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
@@ -141,10 +142,10 @@ CREATE TRIGGER xp_config_recompute_trigger
 -- 6. Create trigger for path_slots input changes
 -- When steps, ingredients, or cook_minutes change, recompute that slot's XP
 -- -----------------------------------------------------------------------------
+-- N4: Trigger functions don't need SECURITY DEFINER
 CREATE OR REPLACE FUNCTION recompute_slot_xp_on_change()
 RETURNS TRIGGER
 LANGUAGE plpgsql
-SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
