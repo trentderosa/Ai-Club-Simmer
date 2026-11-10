@@ -36,22 +36,14 @@ export class TestDatabase {
   }
 
   async dropAllTables(): Promise<void> {
+    // Drop and recreate the public schema to ensure a clean slate.
+    // This handles all tables, functions, types, triggers, etc. in one go,
+    // avoiding race conditions with PostgreSQL's type catalog.
     await this.pool.query(`
-      DROP TABLE IF EXISTS xp_events CASCADE;
-      DROP TABLE IF EXISTS check_ins CASCADE;
-      DROP TABLE IF EXISTS user_recipes CASCADE;
-      DROP TABLE IF EXISTS user_slot_completions CASCADE;
-      DROP TABLE IF EXISTS profiles CASCADE;
-      DROP TABLE IF EXISTS path_slots CASCADE;
-      DROP TABLE IF EXISTS xp_config CASCADE;
-      DROP FUNCTION IF EXISTS award_slot_xp(UUID) CASCADE;
-      DROP FUNCTION IF EXISTS award_slot_xp(UUID, UUID, INTEGER) CASCADE;
-      DROP FUNCTION IF EXISTS get_user_total_xp() CASCADE;
-      DROP FUNCTION IF EXISTS get_user_total_xp(UUID) CASCADE;
-      DROP FUNCTION IF EXISTS update_updated_at CASCADE;
-      DROP FUNCTION IF EXISTS recompute_slot_xp(INTEGER) CASCADE;
-      DROP FUNCTION IF EXISTS recompute_all_slot_xp CASCADE;
-      DROP FUNCTION IF EXISTS recompute_slot_xp_on_change CASCADE;
+      DROP SCHEMA IF EXISTS public CASCADE;
+      CREATE SCHEMA public;
+      GRANT ALL ON SCHEMA public TO postgres;
+      GRANT ALL ON SCHEMA public TO PUBLIC;
     `);
   }
 
