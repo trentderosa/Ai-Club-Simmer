@@ -533,4 +533,20 @@ export class TestDatabase {
       client.release();
     }
   }
+
+  /**
+   * N7: Try to update xp_config value (as superuser) to test CHECK constraints
+   */
+  async tryUpdateXpConfigValue(key: string, value: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.pool.query(
+        `UPDATE xp_config SET value = $2 WHERE key = $1`,
+        [key, value]
+      );
+      return { success: true };
+    } catch (e) {
+      const error = e as Error;
+      return { success: false, error: error.message };
+    }
+  }
 }

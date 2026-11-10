@@ -275,4 +275,29 @@ describe('XP Formula (weighted inputs)', () => {
       expect(result.error).toMatch(/permission|denied/i);
     });
   });
+
+  describe('config bounds enforcement (N7)', () => {
+    it('rejects weight values above upper bound', async () => {
+      // N7: Test that the xp_config_weight_bounds CHECK constraint is enforced
+      // Weights (steps, ingredients, cook_minutes) have max 10
+      const result = await db.tryUpdateXpConfigValue('steps_weight', 11);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/check|constraint|violates/i);
+    });
+
+    it('rejects multiplier values above upper bound', async () => {
+      // xp_multiplier has max 1000
+      const result = await db.tryUpdateXpConfigValue('xp_multiplier', 1001);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/check|constraint|violates/i);
+    });
+
+    it('accepts weight values within bounds', async () => {
+      const result = await db.tryUpdateXpConfigValue('steps_weight', 5);
+
+      expect(result.success).toBe(true);
+    });
+  });
 });
