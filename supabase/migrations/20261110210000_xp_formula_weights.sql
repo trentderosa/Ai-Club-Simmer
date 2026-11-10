@@ -177,66 +177,74 @@ CREATE TRIGGER path_slots_recompute_trigger
 -- -----------------------------------------------------------------------------
 -- 7. Seed path_slots with steps, ingredients, cook_minutes
 -- 
--- Data sources searched in repo:
--- - PRD.md: No specific recipe counts
--- - ai-server tests: Mock data only, not authoritative
--- - supabase/migrations: Only dish names, no counts
---
--- Slots 1-3 have reasonable estimates based on dish complexity.
--- Slots 4-10 are PLACEHOLDERS - need Ian's review with actual recipe data.
+-- Values are averages of two published beginner recipes per slot.
+-- Salt, pepper and water are not counted as ingredients.
+-- Time is published prep plus cook time.
+-- Approved by Trent (2026-11-10).
 --
 -- XP formula: max(1, round((steps*0.45 + ingredients*0.35 + cook_minutes*0.2) * 10))
+-- PostgreSQL ROUND(numeric) rounds halves away from zero.
 -- -----------------------------------------------------------------------------
 
--- Slot 1: Knife Basics Salad - simple chopping exercise
--- steps=4 (wash, chop veggies, combine, dress), ingredients=5, cook_minutes=10
--- XP = max(1, round((4*0.45 + 5*0.35 + 10*0.2) * 10)) = max(1, round((1.8+1.75+2)*10)) = round(55.5) = 56
-UPDATE path_slots SET steps = 4, ingredients = 5, cook_minutes = 10 WHERE slot_order = 1;
+-- Slot 1: Knife Skills Salad
+-- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
+-- steps=6, ingredients=10, cook_minutes=20
+-- XP = max(1, round((6*0.45 + 10*0.35 + 20*0.2) * 10)) = round(102) = 102
+UPDATE path_slots SET steps = 6, ingredients = 10, cook_minutes = 20 WHERE slot_order = 1;
 
--- Slot 2: Scrambled Eggs - basic heat control
--- steps=5 (crack eggs, whisk, heat pan, scramble, plate), ingredients=4, cook_minutes=8
--- XP = max(1, round((5*0.45 + 4*0.35 + 8*0.2) * 10)) = max(1, round((2.25+1.4+1.6)*10)) = round(52.5) = 53
-UPDATE path_slots SET steps = 5, ingredients = 4, cook_minutes = 8 WHERE slot_order = 2;
+-- Slot 2: Scrambled Eggs
+-- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
+-- steps=7, ingredients=3, cook_minutes=10
+-- XP = max(1, round((7*0.45 + 3*0.35 + 10*0.2) * 10)) = round(62) = 62
+UPDATE path_slots SET steps = 7, ingredients = 3, cook_minutes = 10 WHERE slot_order = 2;
 
--- Slot 3: Pasta with Sauce - boiling and timing
--- steps=6 (boil water, cook pasta, make sauce, drain, combine, serve), ingredients=6, cook_minutes=20
--- XP = max(1, round((6*0.45 + 6*0.35 + 20*0.2) * 10)) = max(1, round((2.7+2.1+4)*10)) = round(88) = 88
-UPDATE path_slots SET steps = 6, ingredients = 6, cook_minutes = 20 WHERE slot_order = 3;
+-- Slot 3: Pasta
+-- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
+-- steps=4, ingredients=6, cook_minutes=18
+-- XP = max(1, round((4*0.45 + 6*0.35 + 18*0.2) * 10)) = round(75) = 75
+UPDATE path_slots SET steps = 4, ingredients = 6, cook_minutes = 18 WHERE slot_order = 3;
 
--- Slot 4: Stir-Fry Vegetables -- PLACEHOLDER: needs Ian
--- Estimate: steps=7, ingredients=8, cook_minutes=15
--- XP = max(1, round((7*0.45 + 8*0.35 + 15*0.2) * 10)) = max(1, round((3.15+2.8+3)*10)) = round(89.5) = 90
-UPDATE path_slots SET steps = 7, ingredients = 8, cook_minutes = 15 WHERE slot_order = 4;
+-- Slot 4: Stir-Fry
+-- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
+-- steps=6, ingredients=13, cook_minutes=35
+-- XP = max(1, round((6*0.45 + 13*0.35 + 35*0.2) * 10)) = round(142.5) = 143 (half away from zero)
+UPDATE path_slots SET steps = 6, ingredients = 13, cook_minutes = 35 WHERE slot_order = 4;
 
--- Slot 5: Grilled Cheese -- PLACEHOLDER: needs Ian
--- Estimate: steps=4, ingredients=3, cook_minutes=10
--- XP = max(1, round((4*0.45 + 3*0.35 + 10*0.2) * 10)) = max(1, round((1.8+1.05+2)*10)) = round(48.5) = 49
-UPDATE path_slots SET steps = 4, ingredients = 3, cook_minutes = 10 WHERE slot_order = 5;
+-- Slot 5: Grilled Cheese
+-- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
+-- steps=4, ingredients=3, cook_minutes=18
+-- XP = max(1, round((4*0.45 + 3*0.35 + 18*0.2) * 10)) = round(64.5) = 65 (half away from zero)
+UPDATE path_slots SET steps = 4, ingredients = 3, cook_minutes = 18 WHERE slot_order = 5;
 
--- Slot 6: Rice Bowl -- PLACEHOLDER: needs Ian
--- Estimate: steps=6, ingredients=7, cook_minutes=25
--- XP = max(1, round((6*0.45 + 7*0.35 + 25*0.2) * 10)) = max(1, round((2.7+2.45+5)*10)) = round(101.5) = 102
-UPDATE path_slots SET steps = 6, ingredients = 7, cook_minutes = 25 WHERE slot_order = 6;
+-- Slot 6: Rice Bowl
+-- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
+-- steps=6, ingredients=8, cook_minutes=25
+-- XP = max(1, round((6*0.45 + 8*0.35 + 25*0.2) * 10)) = round(105) = 105
+UPDATE path_slots SET steps = 6, ingredients = 8, cook_minutes = 25 WHERE slot_order = 6;
 
--- Slot 7: Sheet Pan Vegetables -- PLACEHOLDER: needs Ian
--- Estimate: steps=5, ingredients=6, cook_minutes=30
--- XP = max(1, round((5*0.45 + 6*0.35 + 30*0.2) * 10)) = max(1, round((2.25+2.1+6)*10)) = round(103.5) = 104
-UPDATE path_slots SET steps = 5, ingredients = 6, cook_minutes = 30 WHERE slot_order = 7;
+-- Slot 7: Sheet Pan
+-- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
+-- steps=5, ingredients=11, cook_minutes=38
+-- XP = max(1, round((5*0.45 + 11*0.35 + 38*0.2) * 10)) = round(136.5) = 137
+UPDATE path_slots SET steps = 5, ingredients = 11, cook_minutes = 38 WHERE slot_order = 7;
 
--- Slot 8: Seared Chicken Breast -- PLACEHOLDER: needs Ian
--- Estimate: steps=6, ingredients=5, cook_minutes=25
--- XP = max(1, round((6*0.45 + 5*0.35 + 25*0.2) * 10)) = max(1, round((2.7+1.75+5)*10)) = round(94.5) = 95
-UPDATE path_slots SET steps = 6, ingredients = 5, cook_minutes = 25 WHERE slot_order = 8;
+-- Slot 8: Seared Chicken
+-- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
+-- steps=5, ingredients=5, cook_minutes=20
+-- XP = max(1, round((5*0.45 + 5*0.35 + 20*0.2) * 10)) = round(80) = 80
+UPDATE path_slots SET steps = 5, ingredients = 5, cook_minutes = 20 WHERE slot_order = 8;
 
--- Slot 9: Simple Soup -- PLACEHOLDER: needs Ian
--- Estimate: steps=7, ingredients=9, cook_minutes=35
--- XP = max(1, round((7*0.45 + 9*0.35 + 35*0.2) * 10)) = max(1, round((3.15+3.15+7)*10)) = round(133) = 133
-UPDATE path_slots SET steps = 7, ingredients = 9, cook_minutes = 35 WHERE slot_order = 9;
+-- Slot 9: Soup
+-- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
+-- steps=5, ingredients=13, cook_minutes=40
+-- XP = max(1, round((5*0.45 + 13*0.35 + 40*0.2) * 10)) = round(148) = 148
+UPDATE path_slots SET steps = 5, ingredients = 13, cook_minutes = 40 WHERE slot_order = 9;
 
--- Slot 10: Roast Chicken (mastery challenge) -- PLACEHOLDER: needs Ian
--- Estimate: steps=8, ingredients=10, cook_minutes=75
--- XP = max(1, round((8*0.45 + 10*0.35 + 75*0.2) * 10)) = max(1, round((3.6+3.5+15)*10)) = round(221) = 221
-UPDATE path_slots SET steps = 8, ingredients = 10, cook_minutes = 75 WHERE slot_order = 10;
+-- Slot 10: Roast Chicken (mastery challenge)
+-- Averages of two published beginner recipes (salt/pepper/water not counted; time = prep + cook). Approved by Trent.
+-- steps=3, ingredients=2, cook_minutes=80
+-- XP = max(1, round((3*0.45 + 2*0.35 + 80*0.2) * 10)) = round(180.5) = 181 (half away from zero)
+UPDATE path_slots SET steps = 3, ingredients = 2, cook_minutes = 80 WHERE slot_order = 10;
 
 -- Now recompute all XP values using the formula
 SELECT recompute_slot_xp(NULL);

@@ -46,69 +46,81 @@ describe('XP Formula (weighted inputs)', () => {
 
   describe('XP calculation with formula', () => {
     /**
-     * Slot 1: Knife Basics Salad
-     * steps=4, ingredients=5, cook_minutes=10
-     * XP = max(1, round((4*0.45 + 5*0.35 + 10*0.2) * 10))
-     *    = max(1, round((1.8 + 1.75 + 2.0) * 10))
-     *    = max(1, round(55.5))
-     *    = max(1, 56)
-     *    = 56
+     * Slot 1: Knife Skills Salad
+     * steps=6, ingredients=10, cook_minutes=20
+     * XP = max(1, round((6*0.45 + 10*0.35 + 20*0.2) * 10))
+     *    = max(1, round((2.7 + 3.5 + 4.0) * 10))
+     *    = max(1, round(102))
+     *    = 102
      */
-    it('computes XP correctly for slot 1 (Knife Basics Salad)', async () => {
+    it('computes XP correctly for slot 1 (Knife Skills Salad)', async () => {
       const slot = await db.getSlotDetails(1);
 
-      expect(slot.steps).toBe(4);
-      expect(slot.ingredients).toBe(5);
-      expect(slot.cook_minutes).toBe(10);
-
-      // Formula: max(1, round((4*0.45 + 5*0.35 + 10*0.2) * 10)) = 56
-      const expectedXp = Math.max(1, Math.round((4 * 0.45 + 5 * 0.35 + 10 * 0.2) * 10));
-      expect(expectedXp).toBe(56);
-      expect(slot.xp_value).toBe(56);
+      expect(slot.steps).toBe(6);
+      expect(slot.ingredients).toBe(10);
+      expect(slot.cook_minutes).toBe(20);
+      expect(slot.xp_value).toBe(102);
     });
 
     /**
      * Slot 2: Scrambled Eggs
-     * steps=5, ingredients=4, cook_minutes=8
-     * XP = max(1, round((5*0.45 + 4*0.35 + 8*0.2) * 10))
-     *    = max(1, round((2.25 + 1.4 + 1.6) * 10))
-     *    = max(1, round(52.5))
-     *    = max(1, 53)
-     *    = 53
+     * steps=7, ingredients=3, cook_minutes=10
+     * XP = max(1, round((7*0.45 + 3*0.35 + 10*0.2) * 10))
+     *    = max(1, round((3.15 + 1.05 + 2.0) * 10))
+     *    = max(1, round(62))
+     *    = 62
      */
     it('computes XP correctly for slot 2 (Scrambled Eggs)', async () => {
       const slot = await db.getSlotDetails(2);
 
-      expect(slot.steps).toBe(5);
-      expect(slot.ingredients).toBe(4);
-      expect(slot.cook_minutes).toBe(8);
-
-      // Formula: max(1, round((5*0.45 + 4*0.35 + 8*0.2) * 10)) = 53
-      const expectedXp = Math.max(1, Math.round((5 * 0.45 + 4 * 0.35 + 8 * 0.2) * 10));
-      expect(expectedXp).toBe(53);
-      expect(slot.xp_value).toBe(53);
+      expect(slot.steps).toBe(7);
+      expect(slot.ingredients).toBe(3);
+      expect(slot.cook_minutes).toBe(10);
+      expect(slot.xp_value).toBe(62);
     });
 
     /**
-     * Slot 3: Pasta with Sauce
-     * steps=6, ingredients=6, cook_minutes=20
-     * XP = max(1, round((6*0.45 + 6*0.35 + 20*0.2) * 10))
-     *    = max(1, round((2.7 + 2.1 + 4.0) * 10))
-     *    = max(1, round(88.0))
-     *    = max(1, 88)
-     *    = 88
+     * Slot 3: Pasta
+     * steps=4, ingredients=6, cook_minutes=18
+     * XP = max(1, round((4*0.45 + 6*0.35 + 18*0.2) * 10))
+     *    = max(1, round((1.8 + 2.1 + 3.6) * 10))
+     *    = max(1, round(75))
+     *    = 75
      */
-    it('computes XP correctly for slot 3 (Pasta with Sauce)', async () => {
+    it('computes XP correctly for slot 3 (Pasta)', async () => {
       const slot = await db.getSlotDetails(3);
 
-      expect(slot.steps).toBe(6);
+      expect(slot.steps).toBe(4);
       expect(slot.ingredients).toBe(6);
-      expect(slot.cook_minutes).toBe(20);
+      expect(slot.cook_minutes).toBe(18);
+      expect(slot.xp_value).toBe(75);
+    });
+  });
 
-      // Formula: max(1, round((6*0.45 + 6*0.35 + 20*0.2) * 10)) = 88
-      const expectedXp = Math.max(1, Math.round((6 * 0.45 + 6 * 0.35 + 20 * 0.2) * 10));
-      expect(expectedXp).toBe(88);
-      expect(slot.xp_value).toBe(88);
+  describe('half-away-from-zero rounding on .5 values', () => {
+    /**
+     * These slots have raw values ending in .5, proving NUMERIC rounding
+     * rounds halves away from zero (142.5→143, 64.5→65, 180.5→181).
+     */
+    it('slot 4 (Stir-Fry) rounds 142.5 to 143', async () => {
+      // steps=6, ingredients=13, cook_minutes=35
+      // raw = (6*0.45 + 13*0.35 + 35*0.2) * 10 = (2.7 + 4.55 + 7) * 10 = 142.5
+      const slot = await db.getSlotDetails(4);
+      expect(slot.xp_value).toBe(143);
+    });
+
+    it('slot 5 (Grilled Cheese) rounds 64.5 to 65', async () => {
+      // steps=4, ingredients=3, cook_minutes=18
+      // raw = (4*0.45 + 3*0.35 + 18*0.2) * 10 = (1.8 + 1.05 + 3.6) * 10 = 64.5
+      const slot = await db.getSlotDetails(5);
+      expect(slot.xp_value).toBe(65);
+    });
+
+    it('slot 10 (Roast Chicken) rounds 180.5 to 181', async () => {
+      // steps=3, ingredients=2, cook_minutes=80
+      // raw = (3*0.45 + 2*0.35 + 80*0.2) * 10 = (1.35 + 0.7 + 16) * 10 = 180.5
+      const slot = await db.getSlotDetails(10);
+      expect(slot.xp_value).toBe(181);
     });
   });
 
@@ -129,8 +141,8 @@ describe('XP Formula (weighted inputs)', () => {
       const slotBefore = await db.getSlotDetails(1);
       const storedXp = slotBefore.xp_value;
 
-      // Verify the stored value matches expected formula
-      expect(storedXp).toBe(56);
+      // Verify the stored value matches expected formula (slot 1 = 102)
+      expect(storedXp).toBe(102);
 
       // Read it again to confirm it's stored, not computed on read
       const slotAfter = await db.getSlotDetails(1);
@@ -225,8 +237,8 @@ describe('XP Formula (weighted inputs)', () => {
       const slotId = await db.getSlotId(1);
       const originalSlot = await db.getSlotDetails(1);
 
-      // Original: steps=4, ingredients=5, cook_minutes=10, XP=56
-      expect(originalSlot.xp_value).toBe(56);
+      // Original: steps=6, ingredients=10, cook_minutes=20, XP=102
+      expect(originalSlot.xp_value).toBe(102);
 
       // Update inputs: steps=10, ingredients=10, cook_minutes=30
       await db.updateSlotInputs(slotId, 10, 10, 30);
