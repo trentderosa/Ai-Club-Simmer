@@ -20,9 +20,15 @@ describe('XP Award Logic (F7)', () => {
 
     await db.dropAllTables();
 
-    const migrationPath = path.join(__dirname, '../..', 'supabase/migrations/20261103000000_core_schema.sql');
-    const migrationSql = fs.readFileSync(migrationPath, 'utf-8');
-    await db.runMigration(migrationSql);
+    // Run both migrations in order
+    const coreMigrationPath = path.join(__dirname, '../..', 'supabase/migrations/20261103000000_core_schema.sql');
+    const formulaMigrationPath = path.join(__dirname, '../..', 'supabase/migrations/20261110210000_xp_formula_weights.sql');
+    
+    const coreMigrationSql = fs.readFileSync(coreMigrationPath, 'utf-8');
+    const formulaMigrationSql = fs.readFileSync(formulaMigrationPath, 'utf-8');
+    
+    await db.runMigration(coreMigrationSql);
+    await db.runMigration(formulaMigrationSql);
     
     await db.setupRoles();
   });
