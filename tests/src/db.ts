@@ -49,6 +49,9 @@ export class TestDatabase {
       DROP FUNCTION IF EXISTS get_user_total_xp() CASCADE;
       DROP FUNCTION IF EXISTS get_user_total_xp(UUID) CASCADE;
       DROP FUNCTION IF EXISTS update_updated_at CASCADE;
+      DROP FUNCTION IF EXISTS recompute_slot_xp(INTEGER) CASCADE;
+      DROP FUNCTION IF EXISTS recompute_all_slot_xp CASCADE;
+      DROP FUNCTION IF EXISTS recompute_slot_xp_on_change CASCADE;
     `);
   }
 
@@ -418,5 +421,82 @@ export class TestDatabase {
 
   getPool(): PoolType {
     return this.pool;
+  }
+
+  /**
+   * Get a slot's full details including recipe input columns
+   */
+  async getSlotDetails(slotOrder: number): Promise<{
+    id: number;
+    slot_order: number;
+    dish_name: string;
+    xp_value: number;
+    steps: number | null;
+    ingredients: number | null;
+    cook_minutes: number | null;
+  }> {
+    const result = await this.pool.query(
+      `SELECT id, slot_order, dish_name, xp_value, steps, ingredients, cook_minutes 
+       FROM path_slots WHERE slot_order = $1`,
+      [slotOrder]
+    );
+    return result.rows[0];
+  }
+
+  /**
+   * Get XP config value (returns number for NUMERIC type)
+   */
+  async getXpConfigValue(key: string): Promise<number> {
+    const result = await this.pool.query(
+      'SELECT value FROM xp_config WHERE key = $1',
+      [key]
+    );
+    return parseFloat(result.rows[0].value);
+  }
+
+  /**
+   * Update a slot's recipe input columns (superuser bypass)
+   */
+  async updateSlotInputs(
+    slotId: number,
+    steps: number,
+    ingredients: number,
+    cookMinutes: number
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE path_slots SET steps = $2, ingredients = $3, cook_minutes = $4 WHERE id = $1`,
+      [slotId, steps, ingredients, cookMinutes]
+    );
+  }
+
+  /**
+   * Get XP event details by check_in_id
+   */
+  async getXpEventDetails(checkInId: string): Promise<{
+    xp_awarded: number;
+    is_first_completion: boolean;
+  } | null> {
+    const result = await this.pool.query(
+      'SELECT xp_awarded, is_first_completion FROM xp_events WHERE check_in_id = $1',
+      [checkInId]
+    );
+    return result.rows[0] || null;
+  }
+
+  /**
+   * Reset XP weights to default formula values
+   */
+  async resetXpWeights(): Promise<void> {
+    await this.pool.query(`UPDATE xp_config SET value = 0.45 WHERE key = 'steps_weight'`);
+    await this.pool.query(`UPDATE xp_config SET value = 0.35 WHERE key = 'ingredients_weight'`);
+    await this.pool.query(`UPDATE xp_config SET value = 0.2 WHERE key = 'cook_minutes_weight'`);
+    await this.pool.query(`UPDATE xp_config SET value = 10 WHERE key = 'xp_multiplier'`);
+  }
+
+  /**
+   * Manually call recompute_slot_xp for testing
+   */
+  async recomputeSlotXp(slotId: number | null = null): Promise<void> {
+    await this.pool.query('SELECT recompute_slot_xp($1)', [slotId]);
   }
 }
