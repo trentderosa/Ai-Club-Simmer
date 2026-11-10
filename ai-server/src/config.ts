@@ -12,6 +12,12 @@ export interface Config {
     windowMs: number;
     maxRequests: number;
   };
+  supabase: {
+    url?: string;
+    serviceRoleKey?: string;
+    jwtSecret?: string;
+    jwksUri?: string;
+  };
 }
 
 export function loadConfig(): Config {
@@ -30,6 +36,12 @@ export function loadConfig(): Config {
     rateLimit: {
       windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
       maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '10', 10),
+    },
+    supabase: {
+      url: process.env.SUPABASE_URL,
+      serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      jwtSecret: process.env.SUPABASE_JWT_SECRET,
+      jwksUri: process.env.SUPABASE_JWKS_URI,
     },
   };
 }
