@@ -1,4 +1,6 @@
 import pg, { Pool as PoolType } from 'pg';
+import fs from 'fs';
+import path from 'path';
 
 const { Pool } = pg;
 
@@ -35,20 +37,33 @@ export class TestDatabase {
     await this.pool.query(sql);
   }
 
+  /**
+   * N6: Run all migrations from supabase/migrations/ in sorted order.
+   * This ensures future migrations are automatically included.
+   */
+  async runAllMigrations(): Promise<void> {
+    const migrationsDir = path.join(__dirname, '../..', 'supabase/migrations');
+    const files = fs.readdirSync(migrationsDir)
+      .filter(f => f.endsWith('.sql'))
+      .sort();
+    
+    for (const file of files) {
+      const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf-8');
+      await this.pool.query(sql);
+    }
+  }
+
   async dropAllTables(): Promise<void> {
+    // Drop and recreate the public schema to ensure a clean slate.
+    // This handles all tables, functions, types, triggers, etc. in one go,
+    // avoiding race conditions with PostgreSQL's type catalog.
+    // B3: Recreate pgcrypto after schema drop since it was installed in public.
     await this.pool.query(`
-      DROP TABLE IF EXISTS xp_events CASCADE;
-      DROP TABLE IF EXISTS check_ins CASCADE;
-      DROP TABLE IF EXISTS user_recipes CASCADE;
-      DROP TABLE IF EXISTS user_slot_completions CASCADE;
-      DROP TABLE IF EXISTS profiles CASCADE;
-      DROP TABLE IF EXISTS path_slots CASCADE;
-      DROP TABLE IF EXISTS xp_config CASCADE;
-      DROP FUNCTION IF EXISTS award_slot_xp(UUID) CASCADE;
-      DROP FUNCTION IF EXISTS award_slot_xp(UUID, UUID, INTEGER) CASCADE;
-      DROP FUNCTION IF EXISTS get_user_total_xp() CASCADE;
-      DROP FUNCTION IF EXISTS get_user_total_xp(UUID) CASCADE;
-      DROP FUNCTION IF EXISTS update_updated_at CASCADE;
+      DROP SCHEMA IF EXISTS public CASCADE;
+      CREATE SCHEMA public;
+      GRANT ALL ON SCHEMA public TO postgres;
+      GRANT ALL ON SCHEMA public TO PUBLIC;
+      CREATE EXTENSION IF NOT EXISTS pgcrypto;
     `);
   }
 
@@ -418,5 +433,120 @@ export class TestDatabase {
 
   getPool(): PoolType {
     return this.pool;
+  }
+
+  /**
+   * Get a slot's full details including recipe input columns
+   */
+  async getSlotDetails(slotOrder: number): Promise<{
+    id: number;
+    slot_order: number;
+    dish_name: string;
+    xp_value: number;
+    steps: number | null;
+    ingredients: number | null;
+    cook_minutes: number | null;
+  }> {
+    const result = await this.pool.query(
+      `SELECT id, slot_order, dish_name, xp_value, steps, ingredients, cook_minutes 
+       FROM path_slots WHERE slot_order = $1`,
+      [slotOrder]
+    );
+    return result.rows[0];
+  }
+
+  /**
+   * Get XP config value (returns number for NUMERIC type)
+   */
+  async getXpConfigValue(key: string): Promise<number> {
+    const result = await this.pool.query(
+      'SELECT value FROM xp_config WHERE key = $1',
+      [key]
+    );
+    return parseFloat(result.rows[0].value);
+  }
+
+  /**
+   * Update a slot's recipe input columns (superuser bypass)
+   */
+  async updateSlotInputs(
+    slotId: number,
+    steps: number,
+    ingredients: number,
+    cookMinutes: number
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE path_slots SET steps = $2, ingredients = $3, cook_minutes = $4 WHERE id = $1`,
+      [slotId, steps, ingredients, cookMinutes]
+    );
+  }
+
+  /**
+   * Get XP event details by check_in_id
+   */
+  async getXpEventDetails(checkInId: string): Promise<{
+    xp_awarded: number;
+    is_first_completion: boolean;
+  } | null> {
+    const result = await this.pool.query(
+      'SELECT xp_awarded, is_first_completion FROM xp_events WHERE check_in_id = $1',
+      [checkInId]
+    );
+    return result.rows[0] || null;
+  }
+
+  /**
+   * Reset XP weights to default formula values
+   */
+  async resetXpWeights(): Promise<void> {
+    await this.pool.query(`UPDATE xp_config SET value = 0.45 WHERE key = 'steps_weight'`);
+    await this.pool.query(`UPDATE xp_config SET value = 0.35 WHERE key = 'ingredients_weight'`);
+    await this.pool.query(`UPDATE xp_config SET value = 0.2 WHERE key = 'cook_minutes_weight'`);
+    await this.pool.query(`UPDATE xp_config SET value = 10 WHERE key = 'xp_multiplier'`);
+  }
+
+  /**
+   * Manually call recompute_slot_xp for testing (as superuser)
+   */
+  async recomputeSlotXp(slotId: number | null = null): Promise<void> {
+    await this.pool.query('SELECT recompute_slot_xp($1)', [slotId]);
+  }
+
+  /**
+   * S1: Try to call recompute_slot_xp as authenticated role (should fail)
+   */
+  async tryClientCallRecomputeSlotXpAsRole(): Promise<{ success: boolean; error?: string }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE authenticated');
+      
+      await client.query('SELECT recompute_slot_xp(NULL)');
+      
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      const error = e as Error;
+      return { success: false, error: error.message };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * N7: Try to update xp_config value (as superuser) to test CHECK constraints
+   */
+  async tryUpdateXpConfigValue(key: string, value: number): Promise<{ success: boolean; error?: string }> {
+    try {
+      await this.pool.query(
+        `UPDATE xp_config SET value = $2 WHERE key = $1`,
+        [key, value]
+      );
+      return { success: true };
+    } catch (e) {
+      const error = e as Error;
+      return { success: false, error: error.message };
+    }
   }
 }
