@@ -215,21 +215,45 @@ describe('XP Award Logic (F7)', () => {
       expect(result.error).toMatch(/policy|permission|denied/i);
     });
 
-    it('user B cannot award XP for user A check-in (B1 fix)', async () => {
+    it('authenticated cannot execute award_slot_xp even for own check-in', async () => {
       const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
 
-      await expect(
-        db.awardSlotXpAsUser(checkIn, testUser2.id)
-      ).rejects.toThrow(/Access denied/);
+      const result = await db.tryAwardSlotXpAsRole(checkIn, 'authenticated', testUser.id);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/permission denied/i);
     });
 
-    it('user can award XP for their own check-in', async () => {
+    it('authenticated cannot execute award_slot_xp for another user check-in', async () => {
       const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
-      
-      const result = await db.awardSlotXpAsUser(checkIn, testUser.id);
+
+      const result = await db.tryAwardSlotXpAsRole(checkIn, 'authenticated', testUser2.id);
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/permission denied/i);
+    });
+
+    it('anon cannot execute award_slot_xp', async () => {
+      const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+
+      const result = await db.tryAwardSlotXpAsRole(checkIn, 'anon');
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/permission denied/i);
+    });
+
+    it('service_role awards XP end to end for a check-in', async () => {
+      const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
+
+      const result = await db.awardSlotXp(checkIn);
 
       expect(result.out_xp_awarded).toBe(slot1XpValue);
       expect(result.out_is_first_completion).toBe(true);
+      expect(result.out_capped).toBe(false);
+
+      const totalXp = await db.getUserTotalXp(testUser.id);
+      expect(totalXp).toBe(slot1XpValue);
+      expect(await db.getXpEventCount(checkIn)).toBe(1);
     });
 
     it('client cannot create check-in with mismatched slot (B2 fix)', async () => {

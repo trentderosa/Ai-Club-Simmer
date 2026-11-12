@@ -4,6 +4,15 @@ import path from 'path';
 
 const { Pool } = pg;
 
+const CLIENT_ROLES = ['authenticated', 'anon'] as const;
+type ClientRole = (typeof CLIENT_ROLES)[number];
+
+function assertClientRole(role: string): asserts role is ClientRole {
+  if (!(CLIENT_ROLES as readonly string[]).includes(role)) {
+    throw new Error(`Refusing SET ROLE for non-client role: ${role}`);
+  }
+}
+
 export interface TestUser {
   id: string;
   email: string;
@@ -38,10 +47,38 @@ export class TestDatabase {
   }
 
   /**
+   * Shared Supabase-like role bootstrap (N1: single helper for migrations + setupRoles).
+   */
+  private async ensureSupabaseRoles(): Promise<void> {
+    await this.pool.query(`
+      DO $roles$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+          CREATE ROLE authenticated NOLOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+          CREATE ROLE anon NOLOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+          CREATE ROLE service_role NOLOGIN;
+        END IF;
+      END
+      $roles$;
+
+      GRANT authenticated TO postgres;
+      GRANT anon TO postgres;
+      GRANT service_role TO postgres;
+      GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
+    `);
+  }
+
+  /**
    * N6: Run all migrations from supabase/migrations/ in sorted order.
    * This ensures future migrations are automatically included.
    */
   async runAllMigrations(): Promise<void> {
+    await this.ensureSupabaseRoles();
+
     const migrationsDir = path.join(__dirname, '../..', 'supabase/migrations');
     const files = fs.readdirSync(migrationsDir)
       .filter(f => f.endsWith('.sql'))
@@ -69,10 +106,12 @@ export class TestDatabase {
 
   /**
    * Setup roles and permissions to simulate Supabase environment.
-   * This allows tests to run as authenticated/anon roles with proper RLS.
+   * This allows tests to run as authenticated/anon/service_role with proper RLS.
    * Must re-apply security restrictions AFTER granting broad table access.
    */
   async setupRoles(): Promise<void> {
+    await this.ensureSupabaseRoles();
+
     await this.pool.query(`
       -- Grant table privileges to authenticated role (like Supabase does)
       GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
@@ -93,6 +132,10 @@ export class TestDatabase {
       
       -- user_slot_completions - no INSERT for clients (only via SECURITY DEFINER function)
       REVOKE INSERT, UPDATE, DELETE ON user_slot_completions FROM anon, authenticated;
+
+      -- Re-assert RPC lockdown after broad GRANTs (migrations already set these)
+      REVOKE EXECUTE ON FUNCTION public.award_slot_xp(UUID) FROM PUBLIC, anon, authenticated;
+      GRANT EXECUTE ON FUNCTION public.award_slot_xp(UUID) TO service_role;
     `);
   }
 
@@ -192,14 +235,15 @@ export class TestDatabase {
   }
 
   /**
-   * Award XP for a check-in (as service_role - bypasses ownership check).
-   * For testing the core XP logic without RLS complications.
+   * Award XP for a check-in as service_role (the production ai-server path).
+   * Sets both SET ROLE service_role (EXECUTE grant) and the JWT role claim
+   * (ownership bypass inside the SECURITY DEFINER body).
    */
   async awardSlotXp(checkInId: string): Promise<XpAwardResult> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      // Set JWT role claim to service_role to bypass ownership check
+      await client.query('SET LOCAL ROLE service_role');
       await client.query(
         `SELECT set_config('request.jwt.claim.role', 'service_role', true)`
       );
@@ -217,6 +261,56 @@ export class TestDatabase {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Try to execute award_slot_xp as a client role (authenticated or anon).
+   */
+  async tryAwardSlotXpAsRole(
+    checkInId: string,
+    role: ClientRole,
+    userId?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    assertClientRole(role);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SET LOCAL ROLE ${role}`);
+      if (userId) {
+        await client.query(
+          `SELECT set_config('request.jwt.claim.sub', $1, true)`,
+          [userId]
+        );
+      }
+      await client.query(
+        `SELECT set_config('request.jwt.claim.role', $1, true)`,
+        [role]
+      );
+      await client.query('SELECT * FROM award_slot_xp($1)', [checkInId]);
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      const error = e as Error;
+      return { success: false, error: error.message };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * has_function_privilege for a role and function signature.
+   */
+  async hasFunctionPrivilege(
+    role: string,
+    functionSignature: string,
+    privilege: string = 'EXECUTE'
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `SELECT has_function_privilege($1, $2::regprocedure, $3) AS allowed`,
+      [role, `public.${functionSignature}`, privilege]
+    );
+    return result.rows[0].allowed === true;
   }
 
   /**

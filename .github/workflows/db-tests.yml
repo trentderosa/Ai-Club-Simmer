@@ -55,13 +55,15 @@ jobs:
           # Install pgcrypto for password hashing in tests
           psql "$DATABASE_URL" -c 'CREATE EXTENSION IF NOT EXISTS pgcrypto;'
           
-          # Create the authenticated and anon roles (like Supabase)
+          # Create authenticated, anon, and service_role (like Supabase)
           psql "$DATABASE_URL" -c 'CREATE ROLE authenticated NOLOGIN;'
           psql "$DATABASE_URL" -c 'CREATE ROLE anon NOLOGIN;'
+          psql "$DATABASE_URL" -c 'CREATE ROLE service_role NOLOGIN;'
           
-          # Grant authenticated and anon ability to switch to these roles
+          # Allow postgres to SET ROLE to these (for RLS / privilege tests)
           psql "$DATABASE_URL" -c 'GRANT authenticated TO postgres;'
           psql "$DATABASE_URL" -c 'GRANT anon TO postgres;'
+          psql "$DATABASE_URL" -c 'GRANT service_role TO postgres;'
           
           # Create minimal auth schema to simulate Supabase auth
           psql "$DATABASE_URL" <<'EOF'
