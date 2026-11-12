@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { CheckInService, type CheckInLogger } from './check-in-service.js';
 import { InMemoryCheckInRepository } from '../repositories/in-memory-check-in-repository.js';
 import type { CoachNoteGenerator } from './coach-note.js';
-import type { XpAwarder } from './xp-awarder.js';
+import { XpAwardError, type XpAwarder } from './xp-awarder.js';
 
 describe('CheckInService XP award', () => {
   const userId = randomUUID();
@@ -67,7 +67,29 @@ describe('CheckInService XP award', () => {
     expect(logger.error).toHaveBeenCalledWith('xp_award_failed', {
       check_in_id: response.check_in_id,
       slot_id: 1,
+      reason: 'unknown',
       error: 'award_slot_xp failed: 500 boom',
+    });
+  });
+
+  it('treats an award timeout as failed: check-in kept, logged with reason "timeout"', async () => {
+    const xpAwarder: XpAwarder = {
+      award: vi
+        .fn()
+        .mockRejectedValue(new XpAwardError('timeout', 'award_slot_xp timed out after 5000ms')),
+    };
+    const service = new CheckInService(repository, coachNoteGenerator, xpAwarder, logger);
+
+    const response = await service.processCheckIn(userId, input);
+
+    expect(repository.getAllCheckIns().map((c) => c.id)).toEqual([response.check_in_id]);
+    expect(response.xp).toEqual({ status: 'failed' });
+    expect(response.coach_note).toBe('Nice work.');
+    expect(logger.error).toHaveBeenCalledWith('xp_award_failed', {
+      check_in_id: response.check_in_id,
+      slot_id: 1,
+      reason: 'timeout',
+      error: 'award_slot_xp timed out after 5000ms',
     });
   });
 

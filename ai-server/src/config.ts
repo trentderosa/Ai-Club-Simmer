@@ -18,6 +18,45 @@ export interface Config {
     jwtSecret?: string;
     jwksUri?: string;
   };
+  xpAward: {
+    timeoutMs: number;
+  };
+}
+
+type Env = Record<string, string | undefined>;
+
+/**
+ * Parse an optional integer env var within [min, max]. Unset or empty uses the
+ * default; anything else that is not a whole number in range throws, naming
+ * only the variable and the allowed range.
+ */
+export function parseBoundedIntEnv(
+  env: Env,
+  name: string,
+  defaultValue: number,
+  min: number,
+  max: number
+): number {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === '') return defaultValue;
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be a whole number from ${min} to ${max}`);
+  }
+  return value;
+}
+
+export const XP_AWARD_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
+
+export function loadXpAwardTimeoutMs(env: Env = process.env): number {
+  return parseBoundedIntEnv(
+    env,
+    'XP_AWARD_TIMEOUT_MS',
+    XP_AWARD_TIMEOUT_MS.default,
+    XP_AWARD_TIMEOUT_MS.min,
+    XP_AWARD_TIMEOUT_MS.max
+  );
 }
 
 export function loadConfig(): Config {
@@ -42,6 +81,9 @@ export function loadConfig(): Config {
       serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
       jwtSecret: process.env.SUPABASE_JWT_SECRET,
       jwksUri: process.env.SUPABASE_JWKS_URI,
+    },
+    xpAward: {
+      timeoutMs: loadXpAwardTimeoutMs(),
     },
   };
 }
