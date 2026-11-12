@@ -6,7 +6,9 @@
 --
 -- Scope: GRANT/REVOKE only. Do NOT drop or alter the function body —
 -- that function is owned by Nathan and Ezzeldin (Supabase ensure_rls helper).
--- No EXECUTE grant is given to service_role.
+-- No EXECUTE is granted or revoked for service_role. In prod, Supabase
+-- default privileges already grant EXECUTE directly to service_role; that
+-- server-only grant is left in place.
 --
 -- Guarded: the function exists in simmer.prod but is not created by any
 -- migration in this repo, so fresh local / preview DBs may not have it.

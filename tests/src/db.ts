@@ -87,7 +87,9 @@ export class TestDatabase {
    * N2: Prod's helper may be RETURNS event_trigger (ensure_rls event trigger).
    * This stub is RETURNS void SECURITY DEFINER so we can call it via SELECT and
    * assert EXECUTE ACL. We are testing grants, not the prod function body/shape.
-   * Confirm prod with: \\df+ public.rls_auto_enable
+   * GRANT mirrors Supabase public-schema default privileges: EXECUTE to PUBLIC
+   * and a direct grant to anon, authenticated, and service_role. Confirm prod
+   * with: \\df+ public.rls_auto_enable
    */
   async ensureRlsAutoEnableStub(): Promise<void> {
     await this.pool.query(`
@@ -101,7 +103,7 @@ export class TestDatabase {
         NULL;
       END;
       $fn$;
-      GRANT EXECUTE ON FUNCTION public.rls_auto_enable() TO PUBLIC;
+      GRANT EXECUTE ON FUNCTION public.rls_auto_enable() TO PUBLIC, anon, authenticated, service_role;
     `);
   }
 
@@ -109,7 +111,7 @@ export class TestDatabase {
    * Create Supabase-like roles and optionally stub rls_auto_enable.
    * Must run after dropAllTables and before migrations that GRANT TO service_role.
    */
-  async ensurePlatformStubs(options: { stubRlsAutoEnable?: boolean } = {}): Promise<void> {
+  async ensurePlatformStubs(options: RunMigrationsOptions = {}): Promise<void> {
     const stubRlsAutoEnable = options.stubRlsAutoEnable ?? true;
     await this.ensureSupabaseRoles();
     if (stubRlsAutoEnable) {

@@ -32,10 +32,11 @@ describe('rls_auto_enable EXECUTE grants lockdown', () => {
       expect(await db.hasFunctionPrivilege('authenticated', 'rls_auto_enable()')).toBe(false);
     });
 
-    it('denies EXECUTE to service_role (no explicit grant; PUBLIC revoked)', async () => {
-      // Lockdown only REVOKEs PUBLIC/anon/authenticated; it does not GRANT
-      // service_role. After PUBLIC is revoked, service_role has no EXECUTE.
-      expect(await db.hasFunctionPrivilege('service_role', 'rls_auto_enable()')).toBe(false);
+    it('allows EXECUTE to service_role (direct grant kept; server-only)', async () => {
+      // Lockdown only REVOKEs PUBLIC/anon/authenticated. It does not revoke
+      // service_role. The stub mirrors prod default privileges, so service_role
+      // keeps its direct EXECUTE grant.
+      expect(await db.hasFunctionPrivilege('service_role', 'rls_auto_enable()')).toBe(true);
     });
   });
 
@@ -91,7 +92,7 @@ describe('rls_auto_enable lockdown migration apply (with and without the functio
     expect(await db.hasRlsAutoEnable()).toBe(true);
     expect(await db.hasFunctionPrivilege('anon', 'rls_auto_enable()')).toBe(false);
     expect(await db.hasFunctionPrivilege('authenticated', 'rls_auto_enable()')).toBe(false);
-    expect(await db.hasFunctionPrivilege('service_role', 'rls_auto_enable()')).toBe(false);
+    expect(await db.hasFunctionPrivilege('service_role', 'rls_auto_enable()')).toBe(true);
     expect(await db.hasFunctionPrivilege('service_role', 'award_slot_xp(uuid)')).toBe(true);
   });
 });
