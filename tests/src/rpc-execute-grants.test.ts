@@ -106,3 +106,44 @@ describe('RPC EXECUTE grants lockdown', () => {
     });
   });
 });
+
+/**
+ * S1: Lockdown migration must apply on a fresh DB that lacks rls_auto_enable(),
+ * and also when the function is present (prod / stubbed local).
+ */
+describe('RPC lockdown migration apply (with and without rls_auto_enable)', () => {
+  let db: TestDatabase;
+
+  beforeAll(async () => {
+    db = new TestDatabase();
+    await db.connect();
+  });
+
+  afterAll(async () => {
+    await db.close();
+  });
+
+  it('applies cleanly when public.rls_auto_enable() is absent', async () => {
+    await db.dropAllTables();
+    await expect(
+      db.runAllMigrations({ stubRlsAutoEnable: false })
+    ).resolves.toBeUndefined();
+
+    expect(await db.hasRlsAutoEnable()).toBe(false);
+    expect(await db.hasFunctionPrivilege('anon', 'award_slot_xp(uuid)')).toBe(false);
+    expect(await db.hasFunctionPrivilege('authenticated', 'award_slot_xp(uuid)')).toBe(false);
+    expect(await db.hasFunctionPrivilege('service_role', 'award_slot_xp(uuid)')).toBe(true);
+  });
+
+  it('applies cleanly when public.rls_auto_enable() is present and revokes client EXECUTE', async () => {
+    await db.dropAllTables();
+    await expect(
+      db.runAllMigrations({ stubRlsAutoEnable: true })
+    ).resolves.toBeUndefined();
+
+    expect(await db.hasRlsAutoEnable()).toBe(true);
+    expect(await db.hasFunctionPrivilege('anon', 'rls_auto_enable()')).toBe(false);
+    expect(await db.hasFunctionPrivilege('authenticated', 'rls_auto_enable()')).toBe(false);
+    expect(await db.hasFunctionPrivilege('service_role', 'award_slot_xp(uuid)')).toBe(true);
+  });
+});
