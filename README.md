@@ -71,3 +71,20 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `ENABLE_PREVIEW_ROUTE` | Dev only: enable the unauthenticated `/generate-preview` route. |
 | `TRUST_PROXY` | Set to `true` when the server sits behind a reverse proxy. |
 | `NODE_ENV` | `production` enables production checks (real auth and Supabase keys required). |
+| `XP_AWARD_TIMEOUT_MS` | Timeout for each `award_slot_xp` call in ms (default `5000`, range `100`–`60000`). A timeout counts as a failed award. |
+| `XP_RECONCILE_LOOKBACK_HOURS` | Reconcile job: how far back to look for check-ins missing XP (default `168`, range `1`–`720`). |
+| `XP_RECONCILE_MIN_AGE_SECONDS` | Reconcile job: skip check-ins younger than this (default `120`, range `0`–`86400`). |
+| `XP_RECONCILE_BATCH_LIMIT` | Reconcile job: most check-ins handled per run (default `100`, range `1`–`1000`). |
+
+### Retrying failed XP awards
+
+If a check-in's XP award fails (for example a timeout), the check-in is kept without XP. To retry, run the reconcile job from `ai-server/` with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set in the environment:
+
+```bash
+cd ai-server
+npm run build
+npm run reconcile:xp -- --dry-run   # list check-ins missing XP, award nothing
+npm run reconcile:xp                # award them via award_slot_xp
+```
+
+It's safe to run repeatedly. Nothing schedules it yet. See [ai-server/README.md](ai-server/README.md#reconcile-missing-xp-awards).

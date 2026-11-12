@@ -117,6 +117,8 @@ Users earn XP for finishing recipes. Harder recipes are worth more, and repeatin
 - [ ] The user's total XP is shown on the plan screen, and XP gains show briefly after a check-in.
 - [ ] XP is calculated and saved on the server side, not trusted from the client. `award_slot_xp` is EXECUTE-granted to `service_role` only (PR #6, merged as `7fb5b24`). The client never calls it, and only the ai-server awards XP.
 - [ ] After a check-in is saved, the AI server awards XP by calling `award_slot_xp` with the service role (the client never calls it). If the award fails, the check-in stays saved and the error is logged.
+- [ ] The AI server's `award_slot_xp` call times out after `XP_AWARD_TIMEOUT_MS` (default 5000 ms). A timeout counts as a failed award: the check-in stays saved, the response says `xp: { status: "failed" }`, and `xp_award_failed` is logged with `reason: "timeout"`.
+- [ ] Failed or missing awards are retried by the reconcile job (`npm run reconcile:xp` in `ai-server/`). It finds check-ins with no `xp_events` row created in the lookback window (default the last 168 hours, skipping ones younger than 120 seconds, at most 100 per run), oldest first, and re-runs `award_slot_xp` for each with the service role. Running it again, or twice at once, never double-awards: `UNIQUE(check_in_id)` rejects a second award, and the job counts that as already awarded. The job is run by hand for now and isn't scheduled.
 
 ### F8. Mastery challenge (final path recipe only)
 The user cooks the final recipe with the steps hidden, revealing individual steps only when they need help. Safety steps always stay visible.
@@ -200,3 +202,4 @@ Do **not** build these. They're future work.
 7. **Video accuracy.** Taking the top YouTube result may sometimes return off-target or low-quality videos. Is that acceptable, or should someone check the cached videos for the 10 slots?
 8. **User testing.** Should we test with people outside the team before the showcase, and what targets should we set (e.g., 5 testers, 2 recipes each)?
 9. **The 10 path dishes.** The proposal names 5 (knife basics, eggs, pasta, stir-fry, roast chicken). Which 5 go in between, and in what order?
+10. **Week for a retried XP award.** `award_slot_xp` applies the weekly repeat cap to the week the award runs (UTC), not the week of the check-in. A repeat check-in whose award is retried by the reconcile job in a later week counts toward that later week's 100 XP cap. Is that acceptable, or should the cap use the check-in's week? (Gamification owner: Ian.)
