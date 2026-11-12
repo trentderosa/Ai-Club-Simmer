@@ -1,19 +1,27 @@
 import type { CheckInRepository } from '../repositories/check-in-repository.js';
-import type { CheckInInput, CheckInResponse } from '../types/check-in.js';
+import type { CheckInInput, CheckInResponse, CheckInXp } from '../types/check-in.js';
 import type { CoachNoteGenerator } from './coach-note.js';
+import type { XpAwarder } from './xp-awarder.js';
+
+export interface CheckInLogger {
+  error(message: string, context: Record<string, unknown>): void;
+}
 
 export class CheckInService {
   constructor(
     private repository: CheckInRepository,
-    private coachNoteGenerator: CoachNoteGenerator
+    private coachNoteGenerator: CoachNoteGenerator,
+    private xpAwarder: XpAwarder | null = null,
+    private logger: CheckInLogger = console
   ) {}
 
   /**
    * Process a post-cook check-in:
    * 1. Validate ownership (done in route before calling this)
    * 2. Persist raw text to repository (N2: store raw, sanitize only for prompt)
-   * 3. Generate Coach's note via Ollama
-   * 4. Return response (does NOT award XP - that's handled by award_slot_xp)
+   * 3. Award XP server-side via award_slot_xp (service role). A failed award
+   *    is logged and reported as xp.status = 'failed'; the check-in stays saved.
+   * 4. Generate Coach's note via Ollama
    */
   async processCheckIn(
     userId: string,
@@ -28,6 +36,8 @@ export class CheckInService {
       was_hard: input.was_hard ?? null,
     });
 
+    const xp = await this.awardXp(checkIn.id, checkIn.slot_id);
+
     const coachNote = await this.coachNoteGenerator.generate(
       input.rating,
       input.went_well ?? null,
@@ -38,7 +48,31 @@ export class CheckInService {
       check_in_id: checkIn.id,
       coach_note: coachNote.note,
       focus_area: coachNote.focus_area,
+      xp,
     };
+  }
+
+  private async awardXp(checkInId: string, slotId: number): Promise<CheckInXp> {
+    if (!this.xpAwarder) {
+      return { status: 'skipped' };
+    }
+    try {
+      const result = await this.xpAwarder.award(checkInId);
+      return {
+        status: 'awarded',
+        xp_awarded: result.xp_awarded,
+        is_first_completion: result.is_first_completion,
+        capped: result.capped,
+      };
+    } catch (error) {
+      // Never rethrow: the check-in is already saved and must not be lost.
+      this.logger.error('xp_award_failed', {
+        check_in_id: checkInId,
+        slot_id: slotId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { status: 'failed' };
+    }
   }
 
   /**

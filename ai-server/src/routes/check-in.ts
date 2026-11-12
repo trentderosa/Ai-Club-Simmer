@@ -51,8 +51,9 @@ export function createCheckInRouter(
    * Create a post-cook check-in and receive a Coach's note.
    * 
    * Requires authentication via Supabase JWT (PR #3's verifier).
-   * This route does not award XP; XP awarding is owned by the
-   * gamification flow and happens server-side only.
+   * After the check-in is saved, the server awards XP via award_slot_xp
+   * using the service role (the client never calls award_slot_xp). If the
+   * award fails, the check-in is still saved and xp.status is 'failed'.
    * 
    * Request body:
    * {
@@ -67,7 +68,9 @@ export function createCheckInRouter(
    * {
    *   check_in_id: string,
    *   coach_note: string,
-   *   focus_area?: string
+   *   focus_area?: string,
+   *   xp: { status: 'awarded', xp_awarded: number, is_first_completion: boolean, capped: boolean }
+   *     | { status: 'failed' } | { status: 'skipped' }
    * }
    */
   // B3 fix: authenticate runs BEFORE userLimiter
