@@ -100,7 +100,7 @@ Users earn XP for finishing recipes. Harder recipes are worth more, and repeatin
 
   XP = max(1, round((steps×0.45 + ingredients×0.35 + cook_minutes×0.2)×10))
 
-  The weights (0.45, 0.35, 0.2) and the ×10 multiplier live in `xp_config`. PostgreSQL `NUMERIC` `round()` rounds halves away from zero. Current slot inputs and XP, in path order (steps / ingredients / cook_minutes):
+  The weights (0.45, 0.35, 0.2) and the ×10 multiplier live in `xp_config`. PostgreSQL `NUMERIC` `round()` rounds halves away from zero. The formula applies only when steps, ingredients, and cook_minutes are all set; slots missing an input keep their stored `xp_value`. Current slot inputs and XP, in path order (steps / ingredients / cook_minutes):
 
   1. Knife Basics Salad — 6/10/20 → 102
   2. Scrambled Eggs — 7/3/10 → 62
@@ -113,7 +113,7 @@ Users earn XP for finishing recipes. Harder recipes are worth more, and repeatin
   9. Simple Soup — 5/13/40 → 148
   10. Roast Chicken — 3/2/80 → 181
 - [ ] XP is awarded once per completed check-in for that slot.
-- [ ] Repeating an already-completed recipe earns 50% of its value, up to a weekly repeat cap of 100 XP per week (confirmed). Repeats over the cap earn 0 XP, and the app says so.
+- [ ] Repeating an already-completed recipe earns 50% of its value, up to a weekly repeat cap of 100 XP per week. Confirmed in Ian's final XP spec (gamification owner), relayed Nov 10, 2026; implemented in PR #5 (merged ca3deff, migration 20261110210000_xp_formula_weights.sql). Repeats over the cap earn 0 XP, and the app says so.
 - [ ] The user's total XP is shown on the plan screen, and XP gains show briefly after a check-in.
 - [ ] XP is calculated and saved on the server side, not trusted from the client. `award_slot_xp` is EXECUTE-granted to `service_role` only (PR #6, merged as `7fb5b24`). The client never calls it, and only the ai-server awards XP.
 - [ ] After a check-in is saved, the AI server awards XP by calling `award_slot_xp` with the service role (the client never calls it). If the award fails, the check-in stays saved and the error is logged.
@@ -195,7 +195,7 @@ Do **not** build these. They're future work.
 2. **Back-end/database owner.** The proposal lists this as TBD (Matthew?). Someone also needs to own the AI-server laptop setup.
 3. **Team hours per week.** Not yet known. This affects whether everything in F1–F10 fits.
 4. **Mastery pass threshold.** Right now finishing the challenge counts as passing, no matter how many steps were revealed. Should there be a reveal limit (e.g., at most 2 reveals)?
-5. **XP numbers.** Resolved. Slot XP uses the approved formula in F7, XP = max(1, round((steps×0.45 + ingredients×0.35 + cook_minutes×0.2)×10)), with the weights and ×10 multiplier in `xp_config`. Current `path_slots` inputs and XP are listed in F7 (102, 62, 75, 143, 65, 105, 137, 80, 148, 181). Repeats earn 50%, capped at 100 XP per week (confirmed). `award_slot_xp` is EXECUTE-granted to `service_role` only (PR #6, merged as `7fb5b24`); the client never calls it, and only the ai-server awards XP.
+5. **XP numbers.** Resolved. Slot XP uses the approved formula in F7, XP = max(1, round((steps×0.45 + ingredients×0.35 + cook_minutes×0.2)×10)), with the weights and ×10 multiplier in `xp_config`. Current `path_slots` inputs and XP are listed in F7 (102, 62, 75, 143, 65, 105, 137, 80, 148, 181). Repeats earn 50%, capped at 100 XP per week (confirmed in Ian's final XP spec (gamification owner), relayed Nov 10, 2026; implemented in PR #5 (merged ca3deff, migration 20261110210000_xp_formula_weights.sql)). `award_slot_xp` is EXECUTE-granted to `service_role` only (PR #6, merged as `7fb5b24`); the client never calls it, and only the ai-server awards XP.
 6. **Local model quality and safety.** Small models make more mistakes in recipes and safety flags. Should the team review the generated recipes for the 10 slots before the demo, and which exact model should we use?
 7. **Video accuracy.** Taking the top YouTube result may sometimes return off-target or low-quality videos. Is that acceptable, or should someone check the cached videos for the 10 slots?
 8. **User testing.** Should we test with people outside the team before the showcase, and what targets should we set (e.g., 5 testers, 2 recipes each)?

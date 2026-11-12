@@ -47,7 +47,7 @@ npm ci
 DATABASE_URL=postgresql://postgres:postgres@localhost:5432/simmer_test npm test
 ```
 
-`DATABASE_URL` defaults to that value if unset. Lint and typecheck: `npm run lint` and `npm run typecheck`.
+`DATABASE_URL` is for the database tests only (not in `ai-server/.env`) and defaults to that value if unset. Lint and typecheck: `npm run lint` and `npm run typecheck`.
 
 ## Environment variables
 
@@ -71,4 +71,3 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `ENABLE_PREVIEW_ROUTE` | Dev only: enable the unauthenticated `/generate-preview` route. |
 | `TRUST_PROXY` | Set to `true` when the server sits behind a reverse proxy. |
 | `NODE_ENV` | `production` enables production checks (real auth and Supabase keys required). |
-| `DATABASE_URL` | Postgres URL for the database tests (see above). |
