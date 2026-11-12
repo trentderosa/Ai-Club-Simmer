@@ -101,6 +101,7 @@ Users earn XP for finishing recipes. Harder recipes are worth more, and repeatin
 - [ ] Repeating an already-completed recipe earns reduced XP *(proposed: 50% of its value)*, up to a weekly repeat cap *(proposed: 100 XP per week)*. Repeats over the cap earn 0 XP, and the app says so.
 - [ ] The user's total XP is shown on the plan screen, and XP gains show briefly after a check-in.
 - [ ] XP is calculated and saved on the server side (database function or AI server), not trusted from the client.
+- [ ] After a check-in is saved, the AI server awards XP by calling `award_slot_xp` with the service role (the client never calls it). If the award fails, the check-in stays saved and the error is logged.
 
 ### F8. Mastery challenge (final path recipe only)
 The user cooks the final recipe with the steps hidden, revealing individual steps only when they need help. Safety steps always stay visible.

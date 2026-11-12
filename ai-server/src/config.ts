@@ -45,3 +45,25 @@ export function loadConfig(): Config {
     },
   };
 }
+
+/**
+ * Fail fast in production when required Supabase settings are missing.
+ * Required: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, and one of
+ * SUPABASE_JWT_SECRET / SUPABASE_JWKS_URI. Only variable names are reported,
+ * never values. Dev and test keep the existing fallbacks (in-memory storage,
+ * check-in route disabled without a JWT verifier).
+ */
+export function assertProductionConfig(supabase: Config['supabase']): void {
+  const missing: string[] = [];
+  if (!supabase.url) missing.push('SUPABASE_URL');
+  if (!supabase.serviceRoleKey) missing.push('SUPABASE_SERVICE_ROLE_KEY');
+  if (!supabase.jwtSecret && !supabase.jwksUri) {
+    missing.push('SUPABASE_JWT_SECRET or SUPABASE_JWKS_URI');
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      `Missing required config for NODE_ENV=production: ${missing.join(', ')}. ` +
+        'See ai-server/README.md (Production config).'
+    );
+  }
+}
