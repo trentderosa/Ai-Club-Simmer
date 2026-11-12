@@ -29,8 +29,20 @@ export const CoachNoteSchema = z.object({
 
 export type CoachNote = z.infer<typeof CoachNoteSchema>;
 
+/**
+ * XP outcome for a check-in.
+ * - awarded: award_slot_xp ran (xp_awarded may be 0 when the weekly repeat cap is hit)
+ * - failed: the award call errored; the check-in is still saved and the error is logged
+ * - skipped: no XP awarder is configured (dev in-memory mode only)
+ */
+export type CheckInXp =
+  | { status: 'awarded'; xp_awarded: number; is_first_completion: boolean; capped: boolean }
+  | { status: 'failed' }
+  | { status: 'skipped' };
+
 export interface CheckInResponse {
   check_in_id: string;
   coach_note: string;
   focus_area?: string;
+  xp: CheckInXp;
 }
