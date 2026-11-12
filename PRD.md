@@ -117,6 +117,7 @@ Users earn XP for finishing recipes. Harder recipes are worth more, and repeatin
 - [ ] The user's total XP is shown on the plan screen, and XP gains show briefly after a check-in.
 - [ ] XP is calculated and saved on the server side, not trusted from the client. `award_slot_xp` is EXECUTE-granted to `service_role` only (PR #6, merged as `7fb5b24`). The client never calls it, and only the ai-server awards XP.
 - [ ] After a check-in is saved, the AI server awards XP by calling `award_slot_xp` with the service role (the client never calls it). If the award fails, the check-in stays saved and the error is logged.
+- [ ] Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`, the event-trigger helper owned by Nathan and Ezzeldin. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Approved by Trent on Nov 12, 2026.
 
 ### F8. Mastery challenge (final path recipe only)
 The user cooks the final recipe with the steps hidden, revealing individual steps only when they need help. Safety steps always stay visible.
