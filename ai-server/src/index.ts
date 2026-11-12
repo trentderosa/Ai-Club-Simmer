@@ -1,5 +1,5 @@
 import express from 'express';
-import { loadConfig } from './config.js';
+import { assertProductionConfig, loadConfig } from './config.js';
 import { createOllamaClient } from './services/ollama-client.js';
 import {
   createSupabaseService,
@@ -15,6 +15,7 @@ import { CheckInService } from './services/check-in-service.js';
 import { createCoachNoteGenerator } from './services/coach-note.js';
 import { InMemoryCheckInRepository } from './repositories/in-memory-check-in-repository.js';
 import { SupabaseCheckInRepository } from './repositories/supabase-check-in-repository.js';
+import { SupabaseXpAwarder } from './services/xp-awarder.js';
 
 const config = loadConfig();
 
@@ -41,6 +42,11 @@ function createServicesFromConfig(): ServiceConfig {
   const { jwtSecret, jwksUri, url, serviceRoleKey } = config.supabase;
   const isProduction = process.env.NODE_ENV === 'production';
 
+  // Fail fast at startup with a clear message (names only, never values).
+  if (isProduction) {
+    assertProductionConfig(config.supabase);
+  }
+
   if (isStubAuthAllowed()) {
     console.warn('STUB AUTH ENABLED - using stub Supabase service');
     return {
@@ -61,13 +67,6 @@ function createServicesFromConfig(): ServiceConfig {
     };
   }
 
-  if (isProduction && (!url || !serviceRoleKey)) {
-    throw new Error(
-      'Production requires SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY. ' +
-      'Without these, recipes would be stored in-memory and lost on restart.'
-    );
-  }
-
   const jwtVerifier = createJwtVerifier({
     jwtSecret,
     jwksUri,
@@ -86,7 +85,10 @@ function createServicesFromConfig(): ServiceConfig {
       : new InMemoryCheckInRepository();
 
   const coachNoteGenerator = createCoachNoteGenerator(ollamaClient);
-  const checkInService = new CheckInService(checkInRepository, coachNoteGenerator);
+  // XP is awarded only here, server-side, with the service role (never by the client).
+  const xpAwarder =
+    url && serviceRoleKey ? new SupabaseXpAwarder({ url, serviceRoleKey }) : null;
+  const checkInService = new CheckInService(checkInRepository, coachNoteGenerator, xpAwarder);
 
   if (!url || !serviceRoleKey) {
     console.warn(

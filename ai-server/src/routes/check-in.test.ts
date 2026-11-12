@@ -8,6 +8,7 @@ import { InMemoryCheckInRepository } from '../repositories/in-memory-check-in-re
 import type { JwtVerifier, JwtVerifyResult } from '../services/jwt-verifier.js';
 import type { CoachNoteGenerator } from '../services/coach-note.js';
 import { FALLBACK_NOTE } from '../services/coach-note.js';
+import type { XpAwarder } from '../services/xp-awarder.js';
 
 function createMockJwtVerifier(defaultResult: JwtVerifyResult): JwtVerifier {
   return {
@@ -470,5 +471,74 @@ describe('Coach Note Generation Fallback', () => {
     expect(FALLBACK_NOTE.note).toBeDefined();
     expect(typeof FALLBACK_NOTE.note).toBe('string');
     expect(FALLBACK_NOTE.note.length).toBeGreaterThan(0);
+  });
+});
+
+describe('Check-in API XP award (service role)', () => {
+  const userId = randomUUID();
+  const recipeId = randomUUID();
+
+  function buildApp(award: XpAwarder['award']): {
+    app: express.Express;
+    repository: InMemoryCheckInRepository;
+  } {
+    const repository = new InMemoryCheckInRepository();
+    repository.seedUserRecipe({ id: recipeId, user_id: userId, slot_id: 1 });
+    const service = new CheckInService(
+      repository,
+      { generate: vi.fn().mockResolvedValue({ note: 'Nice.', focus_area: 'heat' }) },
+      { award },
+      { error: vi.fn() }
+    );
+    const app = express();
+    app.use(express.json());
+    app.use(
+      '/api/check-ins',
+      createCheckInRouter(
+        { checkInService: service, jwtVerifier: createMockJwtVerifier({ valid: true, userId }) },
+        { rateLimit: { windowMs: 60000, maxRequests: 100 } }
+      )
+    );
+    return { app, repository };
+  }
+
+  it('returns 201 with xp.status awarded', async () => {
+    const award = vi.fn<[string], ReturnType<XpAwarder['award']>>().mockResolvedValue({
+      xp_awarded: 102,
+      is_first_completion: true,
+      weekly_repeat_remaining: 100,
+      capped: false,
+    });
+    const { app } = buildApp(award);
+
+    const response = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ user_recipe_id: recipeId, slot_id: 1, rating: 'ok' });
+
+    expect(response.status).toBe(201);
+    expect(award).toHaveBeenCalledWith(response.body.check_in_id);
+    expect(response.body.xp).toEqual({
+      status: 'awarded',
+      xp_awarded: 102,
+      is_first_completion: true,
+      capped: false,
+    });
+  });
+
+  it('still returns 201 and keeps the check-in when the award fails', async () => {
+    const award = vi
+      .fn<[string], ReturnType<XpAwarder['award']>>()
+      .mockRejectedValue(new Error('award_slot_xp failed: 503 unavailable'));
+    const { app, repository } = buildApp(award);
+
+    const response = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ user_recipe_id: recipeId, slot_id: 1, rating: 'ok' });
+
+    expect(response.status).toBe(201);
+    expect(response.body.xp).toEqual({ status: 'failed' });
+    expect(repository.getAllCheckIns().map((c) => c.id)).toEqual([response.body.check_in_id]);
   });
 });
