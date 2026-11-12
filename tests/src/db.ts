@@ -38,10 +38,54 @@ export class TestDatabase {
   }
 
   /**
+   * Create Supabase-like roles and stub platform helpers that exist in prod
+   * but not in vanilla Postgres. Must run after dropAllTables and before
+   * migrations (GRANT TO service_role / REVOKE on rls_auto_enable).
+   */
+  async ensurePlatformStubs(): Promise<void> {
+    await this.pool.query(`
+      DO $roles$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+          CREATE ROLE authenticated NOLOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+          CREATE ROLE anon NOLOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+          CREATE ROLE service_role NOLOGIN;
+        END IF;
+      END
+      $roles$;
+
+      GRANT authenticated TO postgres;
+      GRANT anon TO postgres;
+      GRANT service_role TO postgres;
+      GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
+
+      -- Mirror Supabase's public.rls_auto_enable() (ensure_rls event-trigger helper).
+      -- Default PUBLIC EXECUTE so the lockdown migration's REVOKEs are meaningful.
+      CREATE OR REPLACE FUNCTION public.rls_auto_enable()
+      RETURNS void
+      LANGUAGE plpgsql
+      SECURITY DEFINER
+      SET search_path = public
+      AS $fn$
+      BEGIN
+        NULL;
+      END;
+      $fn$;
+      GRANT EXECUTE ON FUNCTION public.rls_auto_enable() TO PUBLIC;
+    `);
+  }
+
+  /**
    * N6: Run all migrations from supabase/migrations/ in sorted order.
    * This ensures future migrations are automatically included.
    */
   async runAllMigrations(): Promise<void> {
+    await this.ensurePlatformStubs();
+
     const migrationsDir = path.join(__dirname, '../..', 'supabase/migrations');
     const files = fs.readdirSync(migrationsDir)
       .filter(f => f.endsWith('.sql'))
@@ -69,11 +113,32 @@ export class TestDatabase {
 
   /**
    * Setup roles and permissions to simulate Supabase environment.
-   * This allows tests to run as authenticated/anon roles with proper RLS.
+   * This allows tests to run as authenticated/anon/service_role with proper RLS.
    * Must re-apply security restrictions AFTER granting broad table access.
    */
   async setupRoles(): Promise<void> {
     await this.pool.query(`
+      -- Ensure Supabase-like roles exist (CI creates them; local runs may not)
+      DO $roles$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+          CREATE ROLE authenticated NOLOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+          CREATE ROLE anon NOLOGIN;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+          CREATE ROLE service_role NOLOGIN;
+        END IF;
+      END
+      $roles$;
+
+      GRANT authenticated TO postgres;
+      GRANT anon TO postgres;
+      GRANT service_role TO postgres;
+
+      GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
+
       -- Grant table privileges to authenticated role (like Supabase does)
       GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO authenticated;
       GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
@@ -93,6 +158,11 @@ export class TestDatabase {
       
       -- user_slot_completions - no INSERT for clients (only via SECURITY DEFINER function)
       REVOKE INSERT, UPDATE, DELETE ON user_slot_completions FROM anon, authenticated;
+
+      -- Re-assert RPC lockdown after broad GRANTs (migrations already set these)
+      REVOKE EXECUTE ON FUNCTION public.award_slot_xp(UUID) FROM PUBLIC, anon, authenticated;
+      GRANT EXECUTE ON FUNCTION public.award_slot_xp(UUID) TO service_role;
+      REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM PUBLIC, anon, authenticated;
     `);
   }
 
@@ -192,14 +262,15 @@ export class TestDatabase {
   }
 
   /**
-   * Award XP for a check-in (as service_role - bypasses ownership check).
-   * For testing the core XP logic without RLS complications.
+   * Award XP for a check-in as service_role (the production ai-server path).
+   * Sets both SET ROLE service_role (EXECUTE grant) and the JWT role claim
+   * (ownership bypass inside the SECURITY DEFINER body).
    */
   async awardSlotXp(checkInId: string): Promise<XpAwardResult> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
-      // Set JWT role claim to service_role to bypass ownership check
+      await client.query('SET LOCAL ROLE service_role');
       await client.query(
         `SELECT set_config('request.jwt.claim.role', 'service_role', true)`
       );
@@ -217,6 +288,77 @@ export class TestDatabase {
     } finally {
       client.release();
     }
+  }
+
+  /**
+   * Try to execute award_slot_xp as a client role (authenticated or anon).
+   */
+  async tryAwardSlotXpAsRole(
+    checkInId: string,
+    role: 'authenticated' | 'anon',
+    userId?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SET LOCAL ROLE ${role}`);
+      if (userId) {
+        await client.query(
+          `SELECT set_config('request.jwt.claim.sub', $1, true)`,
+          [userId]
+        );
+      }
+      await client.query(
+        `SELECT set_config('request.jwt.claim.role', $1, true)`,
+        [role]
+      );
+      await client.query('SELECT * FROM award_slot_xp($1)', [checkInId]);
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      const error = e as Error;
+      return { success: false, error: error.message };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Try to execute rls_auto_enable as a client role.
+   */
+  async tryRlsAutoEnableAsRole(
+    role: 'authenticated' | 'anon'
+  ): Promise<{ success: boolean; error?: string }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SET LOCAL ROLE ${role}`);
+      await client.query('SELECT public.rls_auto_enable()');
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      const error = e as Error;
+      return { success: false, error: error.message };
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * has_function_privilege for a role and function signature.
+   */
+  async hasFunctionPrivilege(
+    role: string,
+    functionSignature: string,
+    privilege: string = 'EXECUTE'
+  ): Promise<boolean> {
+    const result = await this.pool.query(
+      `SELECT has_function_privilege($1, $2::regprocedure, $3) AS allowed`,
+      [role, `public.${functionSignature}`, privilege]
+    );
+    return result.rows[0].allowed === true;
   }
 
   /**
