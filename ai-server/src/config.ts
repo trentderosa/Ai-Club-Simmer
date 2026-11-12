@@ -18,6 +18,45 @@ export interface Config {
     jwtSecret?: string;
     jwksUri?: string;
   };
+  xpAward: {
+    timeoutMs: number;
+  };
+}
+
+type Env = Record<string, string | undefined>;
+
+/**
+ * Parse an optional integer env var within [min, max]. Unset or empty uses the
+ * default; anything else that is not a whole number in range throws, naming
+ * only the variable and the allowed range.
+ */
+export function parseBoundedIntEnv(
+  env: Env,
+  name: string,
+  defaultValue: number,
+  min: number,
+  max: number
+): number {
+  const raw = env[name];
+  if (raw === undefined || raw.trim() === '') return defaultValue;
+  const trimmed = raw.trim();
+  const value = Number(trimmed);
+  if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(value) || value < min || value > max) {
+    throw new Error(`${name} must be a whole number from ${min} to ${max}`);
+  }
+  return value;
+}
+
+export const XP_AWARD_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
+
+export function loadXpAwardTimeoutMs(env: Env = process.env): number {
+  return parseBoundedIntEnv(
+    env,
+    'XP_AWARD_TIMEOUT_MS',
+    XP_AWARD_TIMEOUT_MS.default,
+    XP_AWARD_TIMEOUT_MS.min,
+    XP_AWARD_TIMEOUT_MS.max
+  );
 }
 
 export function loadConfig(): Config {
@@ -43,6 +82,9 @@ export function loadConfig(): Config {
       jwtSecret: process.env.SUPABASE_JWT_SECRET,
       jwksUri: process.env.SUPABASE_JWKS_URI,
     },
+    xpAward: {
+      timeoutMs: loadXpAwardTimeoutMs(),
+    },
   };
 }
 
@@ -66,4 +108,44 @@ export function assertProductionConfig(supabase: Config['supabase']): void {
         'See ai-server/README.md (Production config).'
     );
   }
+}
+
+export const XP_RECONCILE_LOOKBACK_HOURS = { default: 168, min: 1, max: 720 } as const;
+export const XP_RECONCILE_MIN_AGE_SECONDS = { default: 120, min: 0, max: 86400 } as const;
+export const XP_RECONCILE_BATCH_LIMIT = { default: 100, min: 1, max: 1000 } as const;
+
+export interface ReconcileConfig {
+  url: string;
+  serviceRoleKey: string;
+  timeoutMs: number;
+  lookbackHours: number;
+  minAgeSeconds: number;
+  batchLimit: number;
+}
+
+/**
+ * Config for the XP reconcile job (npm run reconcile:xp). Needs the same
+ * SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY as the server; errors name
+ * variables only, never values.
+ */
+export function loadReconcileConfig(env: Env = process.env): ReconcileConfig {
+  const missing: string[] = [];
+  if (!env.SUPABASE_URL) missing.push('SUPABASE_URL');
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY');
+  if (missing.length > 0) {
+    throw new Error(`Missing required config for XP reconcile: ${missing.join(', ')}`);
+  }
+  const bounded = (
+    name: string,
+    range: { default: number; min: number; max: number }
+  ): number => parseBoundedIntEnv(env, name, range.default, range.min, range.max);
+
+  return {
+    url: env.SUPABASE_URL as string,
+    serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY as string,
+    timeoutMs: loadXpAwardTimeoutMs(env),
+    lookbackHours: bounded('XP_RECONCILE_LOOKBACK_HOURS', XP_RECONCILE_LOOKBACK_HOURS),
+    minAgeSeconds: bounded('XP_RECONCILE_MIN_AGE_SECONDS', XP_RECONCILE_MIN_AGE_SECONDS),
+    batchLimit: bounded('XP_RECONCILE_BATCH_LIMIT', XP_RECONCILE_BATCH_LIMIT),
+  };
 }

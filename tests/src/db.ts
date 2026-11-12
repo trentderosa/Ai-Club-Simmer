@@ -601,6 +601,40 @@ export class TestDatabase {
     await this.pool.query(`UPDATE xp_config SET value = 100 WHERE key = 'weekly_repeat_cap'`);
   }
 
+  async backdateCheckIn(checkInId: string, daysAgo: number): Promise<void> {
+    await this.pool.query(
+      `UPDATE check_ins SET created_at = NOW() - make_interval(days => $2) WHERE id = $1`,
+      [checkInId, daysAgo]
+    );
+  }
+
+  /**
+   * SQL twin of the ai-server reconcile scan (ai-server/src/jobs/supabase-reconcile-source.ts),
+   * which runs the same anti-join over PostgREST: check-ins in [from, to] with no
+   * xp_events row, oldest first, at most `limit`.
+   */
+  async findCheckInsMissingXp(
+    from: Date,
+    to: Date,
+    limit: number
+  ): Promise<{ check_in_id: string; slot_id: number; created_at: string }[]> {
+    const result = await this.pool.query(
+      `SELECT c.id AS check_in_id, c.slot_id, c.created_at
+         FROM check_ins c
+        WHERE NOT EXISTS (SELECT 1 FROM xp_events e WHERE e.check_in_id = c.id)
+          AND c.created_at >= $1
+          AND c.created_at <= $2
+        ORDER BY c.created_at ASC, c.id ASC
+        LIMIT $3`,
+      [from, to, limit]
+    );
+    return result.rows.map((row) => ({
+      check_in_id: row.check_in_id,
+      slot_id: row.slot_id,
+      created_at: new Date(row.created_at).toISOString(),
+    }));
+  }
+
   async backdateXpEvent(checkInId: string, daysAgo: number): Promise<void> {
     await this.pool.query(
       `UPDATE xp_events SET created_at = NOW() - make_interval(days => $2) WHERE check_in_id = $1`,
