@@ -25,15 +25,6 @@ export interface XpAwardResult {
   out_capped: boolean;
 }
 
-export interface RunMigrationsOptions {
-  /**
-   * When true (default), stub public.rls_auto_enable() before migrations so
-   * privilege/runtime tests can exercise EXECUTE denials. Set false to prove
-   * the lockdown migration applies on a fresh DB that lacks that function.
-   */
-  stubRlsAutoEnable?: boolean;
-}
-
 export class TestDatabase {
   private pool: PoolType;
 
@@ -56,7 +47,7 @@ export class TestDatabase {
   }
 
   /**
-   * Shared Supabase-like role bootstrap (N1: single helper for stubs + setupRoles).
+   * Shared Supabase-like role bootstrap (N1: single helper for migrations + setupRoles).
    */
   private async ensureSupabaseRoles(): Promise<void> {
     await this.pool.query(`
@@ -82,48 +73,11 @@ export class TestDatabase {
   }
 
   /**
-   * Stub public.rls_auto_enable() for grant/deny tests only.
-   *
-   * N2: Prod's helper may be RETURNS event_trigger (ensure_rls event trigger).
-   * This stub is RETURNS void SECURITY DEFINER so we can call it via SELECT and
-   * assert EXECUTE ACL. We are testing grants, not the prod function body/shape.
-   * Confirm prod with: \\df+ public.rls_auto_enable
-   */
-  async ensureRlsAutoEnableStub(): Promise<void> {
-    await this.pool.query(`
-      CREATE OR REPLACE FUNCTION public.rls_auto_enable()
-      RETURNS void
-      LANGUAGE plpgsql
-      SECURITY DEFINER
-      SET search_path = public
-      AS $fn$
-      BEGIN
-        NULL;
-      END;
-      $fn$;
-      GRANT EXECUTE ON FUNCTION public.rls_auto_enable() TO PUBLIC;
-    `);
-  }
-
-  /**
-   * Create Supabase-like roles and optionally stub rls_auto_enable.
-   * Must run after dropAllTables and before migrations that GRANT TO service_role.
-   */
-  async ensurePlatformStubs(options: { stubRlsAutoEnable?: boolean } = {}): Promise<void> {
-    const stubRlsAutoEnable = options.stubRlsAutoEnable ?? true;
-    await this.ensureSupabaseRoles();
-    if (stubRlsAutoEnable) {
-      await this.ensureRlsAutoEnableStub();
-    }
-  }
-
-  /**
    * N6: Run all migrations from supabase/migrations/ in sorted order.
    * This ensures future migrations are automatically included.
    */
-  async runAllMigrations(options: RunMigrationsOptions = {}): Promise<void> {
-    const stubRlsAutoEnable = options.stubRlsAutoEnable ?? true;
-    await this.ensurePlatformStubs({ stubRlsAutoEnable });
+  async runAllMigrations(): Promise<void> {
+    await this.ensureSupabaseRoles();
 
     const migrationsDir = path.join(__dirname, '../..', 'supabase/migrations');
     const files = fs.readdirSync(migrationsDir)
@@ -148,16 +102,6 @@ export class TestDatabase {
       GRANT ALL ON SCHEMA public TO PUBLIC;
       CREATE EXTENSION IF NOT EXISTS pgcrypto;
     `);
-  }
-
-  /**
-   * Whether public.rls_auto_enable() currently exists.
-   */
-  async hasRlsAutoEnable(): Promise<boolean> {
-    const result = await this.pool.query(
-      `SELECT to_regprocedure('public.rls_auto_enable()') IS NOT NULL AS present`
-    );
-    return result.rows[0].present === true;
   }
 
   /**
@@ -192,17 +136,6 @@ export class TestDatabase {
       -- Re-assert RPC lockdown after broad GRANTs (migrations already set these)
       REVOKE EXECUTE ON FUNCTION public.award_slot_xp(UUID) FROM PUBLIC, anon, authenticated;
       GRANT EXECUTE ON FUNCTION public.award_slot_xp(UUID) TO service_role;
-    `);
-
-    // Match migration guard: only revoke when the function exists
-    await this.pool.query(`
-      DO $$
-      BEGIN
-        IF to_regprocedure('public.rls_auto_enable()') IS NOT NULL THEN
-          REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM PUBLIC, anon, authenticated;
-        END IF;
-      END
-      $$;
     `);
   }
 
@@ -354,29 +287,6 @@ export class TestDatabase {
         [role]
       );
       await client.query('SELECT * FROM award_slot_xp($1)', [checkInId]);
-      await client.query('COMMIT');
-      return { success: true };
-    } catch (e) {
-      await client.query('ROLLBACK');
-      const error = e as Error;
-      return { success: false, error: error.message };
-    } finally {
-      client.release();
-    }
-  }
-
-  /**
-   * Try to execute rls_auto_enable as a client role.
-   */
-  async tryRlsAutoEnableAsRole(
-    role: ClientRole
-  ): Promise<{ success: boolean; error?: string }> {
-    assertClientRole(role);
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(`SET LOCAL ROLE ${role}`);
-      await client.query('SELECT public.rls_auto_enable()');
       await client.query('COMMIT');
       return { success: true };
     } catch (e) {
