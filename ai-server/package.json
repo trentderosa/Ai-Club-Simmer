@@ -8,6 +8,8 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
+    "reconcile:xp": "node dist/jobs/reconcile-xp.js",
+    "reconcile:xp:dev": "tsx src/jobs/reconcile-xp.ts",
     "lint": "eslint src --ext .ts",
     "lint:fix": "eslint src --ext .ts --fix",
     "typecheck": "tsc --noEmit",

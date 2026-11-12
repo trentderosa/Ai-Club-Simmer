@@ -109,3 +109,43 @@ export function assertProductionConfig(supabase: Config['supabase']): void {
     );
   }
 }
+
+export const XP_RECONCILE_LOOKBACK_HOURS = { default: 168, min: 1, max: 720 } as const;
+export const XP_RECONCILE_MIN_AGE_SECONDS = { default: 120, min: 0, max: 86400 } as const;
+export const XP_RECONCILE_BATCH_LIMIT = { default: 100, min: 1, max: 1000 } as const;
+
+export interface ReconcileConfig {
+  url: string;
+  serviceRoleKey: string;
+  timeoutMs: number;
+  lookbackHours: number;
+  minAgeSeconds: number;
+  batchLimit: number;
+}
+
+/**
+ * Config for the XP reconcile job (npm run reconcile:xp). Needs the same
+ * SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY as the server; errors name
+ * variables only, never values.
+ */
+export function loadReconcileConfig(env: Env = process.env): ReconcileConfig {
+  const missing: string[] = [];
+  if (!env.SUPABASE_URL) missing.push('SUPABASE_URL');
+  if (!env.SUPABASE_SERVICE_ROLE_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY');
+  if (missing.length > 0) {
+    throw new Error(`Missing required config for XP reconcile: ${missing.join(', ')}`);
+  }
+  const bounded = (
+    name: string,
+    range: { default: number; min: number; max: number }
+  ): number => parseBoundedIntEnv(env, name, range.default, range.min, range.max);
+
+  return {
+    url: env.SUPABASE_URL as string,
+    serviceRoleKey: env.SUPABASE_SERVICE_ROLE_KEY as string,
+    timeoutMs: loadXpAwardTimeoutMs(env),
+    lookbackHours: bounded('XP_RECONCILE_LOOKBACK_HOURS', XP_RECONCILE_LOOKBACK_HOURS),
+    minAgeSeconds: bounded('XP_RECONCILE_MIN_AGE_SECONDS', XP_RECONCILE_MIN_AGE_SECONDS),
+    batchLimit: bounded('XP_RECONCILE_BATCH_LIMIT', XP_RECONCILE_BATCH_LIMIT),
+  };
+}
