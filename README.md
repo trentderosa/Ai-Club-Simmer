@@ -49,6 +49,10 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/simmer_test npm test
 
 `DATABASE_URL` is for the database tests only (not in `ai-server/.env`) and defaults to that value if unset. Lint and typecheck: `npm run lint` and `npm run typecheck`.
 
+## Database security
+
+Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Privileged functions such as `award_slot_xp` are called only from the AI server with the service role, never from the client.
+
 ## Environment variables
 
 Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Placeholders only — no real keys or production URLs belong in the repo.
