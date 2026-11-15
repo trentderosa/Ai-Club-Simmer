@@ -1,4 +1,4 @@
-import { SLOTS } from './fixtures';
+import { BADGES, SLOTS } from './fixtures';
 import { createMockBackend, mockUserRecipeId } from './mock-backend';
 import { awardXp, derivePlan, deriveSummary } from './mock-plan';
 
@@ -124,5 +124,49 @@ describe('mock backend', () => {
   it('rejects an empty cook-anything query', async () => {
     const b = createMockBackend({ latency: 0, startSignedIn: true });
     await expect(b.cookAnything('   ', 't')).rejects.toMatchObject({ kind: 'validation' });
+  });
+
+  it('lists the recipe book and badges for the demo user', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    const book = await b.getRecipeBook();
+    expect(book.map((e) => e.slot_order)).toEqual([1, 2, 3]);
+    expect(book.map((e) => e.label)).toEqual(['completed', 'completed', 'completed']);
+    expect(book.find((e) => e.slot_id === 2)?.times_cooked).toBe(2);
+    expect(book.find((e) => e.slot_id === 3)?.recipe_title).toMatch(/Pasta/i);
+    expect(book.every((e) => e.user_recipe_id)).toBe(true);
+
+    const badges = await b.getBadges();
+    expect(badges).toHaveLength(BADGES.length);
+    expect(badges.filter((x) => x.earned).map((x) => x.code)).toEqual([
+      'complete_slot_1',
+      'complete_slot_2',
+      'complete_slot_3',
+    ]);
+    expect(badges.find((x) => x.code === 'mastery')?.earned).toBe(false);
+    expect(badges.find((x) => x.code === 'path_weeknight_basics')?.earned).toBe(false);
+  });
+
+  it('adds a mastered entry and the path badge after slot 10', async () => {
+    const b = createMockBackend({ latency: 0 });
+    await b.signUp('grad@simmer.test', 'secret1', 'Sam');
+    const s = await b.getSession();
+    await b.saveOnboarding(s!.userId, {
+      goals: '',
+      experience_level: 'a_little',
+      equipment: ['stove'],
+      budget: 'low',
+      days_per_week: 3,
+      minutes_per_session: 30,
+    });
+    for (const slotId of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+      await b.generateRecipe(slotId, 't');
+      await b.submitCheckIn({ user_recipe_id: mockUserRecipeId(slotId), slot_id: slotId, rating: 'ok' }, 't');
+    }
+    const book = await b.getRecipeBook();
+    expect(book).toHaveLength(10);
+    expect(book.find((e) => e.slot_id === 10)).toMatchObject({ label: 'mastered' });
+    const badges = await b.getBadges();
+    expect(badges.every((x) => x.earned)).toBe(true);
+    expect(badges.find((x) => x.code === 'path_weeknight_basics')?.earned).toBe(true);
   });
 });

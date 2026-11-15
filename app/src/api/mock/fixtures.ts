@@ -6,7 +6,7 @@
  * placeholders in the same shape the ai-server returns; the video ids are
  * made up and never fetched.
  */
-import type { Recipe, Videos } from '../schemas';
+import type { Badge, Recipe, Videos } from '../schemas';
 
 export interface SlotFixture {
   slot_id: number;
@@ -32,7 +32,42 @@ export const SLOTS: readonly SlotFixture[] = [
 ];
 
 /** Signing in (not up) in mock mode lands on this user: 3 slots done, 239 XP. */
-export const DEMO_USER = { email: 'demo@simmer.test', firstName: 'Jordan', completedSlots: 3 } as const;
+export const DEMO_USER = {
+  email: 'demo@simmer.test',
+  firstName: 'Jordan',
+  completedSlots: 3,
+  /** Slot 2 was cooked twice so the book can show a repeat count. */
+  extraCooks: { 2: 1 } as Record<number, number>,
+  /** Matches the Direction A profile mockup ("Cooking since Nov 2"). */
+  createdAt: '2026-11-02T12:00:00.000Z',
+  /**
+   * First-completion dates for the demo book, newest last. Formatted in UTC
+   * so they stay on the calendar day we intend.
+   */
+  addedAt: {
+    1: '2026-11-08T12:00:00.000Z',
+    2: '2026-11-10T12:00:00.000Z',
+    3: '2026-11-12T12:00:00.000Z',
+  } as Record<number, string>,
+} as const;
+
+/**
+ * The 11-badge catalog from migration 20261115000000 (codes and names are
+ * stable; Ian owns the display names).
+ */
+export const BADGES: readonly Omit<Badge, 'earned' | 'earned_at'>[] = [
+  { code: 'complete_slot_1', name: 'Knife Basics Salad', description: 'Cooked Knife Basics Salad and checked in.', kind: 'completion', slot_id: 1, sort_order: 1 },
+  { code: 'complete_slot_2', name: 'Scrambled Eggs', description: 'Cooked Scrambled Eggs and checked in.', kind: 'completion', slot_id: 2, sort_order: 2 },
+  { code: 'complete_slot_3', name: 'Pasta with Sauce', description: 'Cooked Pasta with Sauce and checked in.', kind: 'completion', slot_id: 3, sort_order: 3 },
+  { code: 'complete_slot_4', name: 'Stir-Fry Vegetables', description: 'Cooked Stir-Fry Vegetables and checked in.', kind: 'completion', slot_id: 4, sort_order: 4 },
+  { code: 'complete_slot_5', name: 'Grilled Cheese', description: 'Cooked Grilled Cheese and checked in.', kind: 'completion', slot_id: 5, sort_order: 5 },
+  { code: 'complete_slot_6', name: 'Rice Bowl', description: 'Cooked Rice Bowl and checked in.', kind: 'completion', slot_id: 6, sort_order: 6 },
+  { code: 'complete_slot_7', name: 'Sheet Pan Vegetables', description: 'Cooked Sheet Pan Vegetables and checked in.', kind: 'completion', slot_id: 7, sort_order: 7 },
+  { code: 'complete_slot_8', name: 'Seared Chicken Breast', description: 'Cooked Seared Chicken Breast and checked in.', kind: 'completion', slot_id: 8, sort_order: 8 },
+  { code: 'complete_slot_9', name: 'Simple Soup', description: 'Cooked Simple Soup and checked in.', kind: 'completion', slot_id: 9, sort_order: 9 },
+  { code: 'mastery', name: 'Roast Chicken Mastery', description: 'Passed the mastery challenge: cooked Roast Chicken with the steps hidden.', kind: 'mastery', slot_id: 10, sort_order: 10 },
+  { code: 'path_weeknight_basics', name: 'Weeknight Basics Graduate', description: 'Finished all 10 recipes on the Weeknight basics path.', kind: 'path_milestone', slot_id: null, sort_order: 100 },
+];
 
 export const MOCK_COACH_NOTES: Record<number, string> = {
   4: 'Last time heat control was tricky with the eggs. Here you want it high the whole time, so get everything chopped before the pan goes on.',

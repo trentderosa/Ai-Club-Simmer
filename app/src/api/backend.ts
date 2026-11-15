@@ -7,12 +7,14 @@
  * through `useBackend()`.
  */
 import type {
+  Badge,
   CheckInInput,
   CheckInResponse,
   PlanSlot,
   PlanSummary,
   Profile,
   ProfileInput,
+  RecipeBookEntry,
   RecipeResponse,
   CookAnythingResponse,
 } from './schemas';
@@ -48,6 +50,10 @@ export interface Backend {
   // Plan (F2, F7)
   getPlan(): Promise<PlanSlot[]>;
   getPlanSummary(): Promise<PlanSummary>;
+
+  // Badges (F9) and recipe book (F10)
+  getBadges(): Promise<Badge[]>;
+  getRecipeBook(): Promise<RecipeBookEntry[]>;
 
   // AI server (F3-F7, F9)
   generateRecipe(slotId: number, accessToken: string): Promise<RecipeResponse>;

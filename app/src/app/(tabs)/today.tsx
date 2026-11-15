@@ -9,24 +9,23 @@ import { useCallback, useRef } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import type { PlanSlot, PlanSummary } from '../api';
-import { Button } from '../components/button';
-import { Icon } from '../components/icon';
-import { gutter } from '../components/layout';
-import { PathList } from '../components/path';
-import { EmptyState, ErrorState, LoadingState } from '../components/states';
-import { T } from '../components/text';
-import { formatToday, greetingFor } from '../domain/greeting';
-import { photoForSlot } from '../domain/slot-photos';
-import { useFlowCache } from '../state/flow-cache';
-import { useSession } from '../state/session';
-import { useAsync } from '../state/use-async';
-import { useErrorAction } from '../state/use-error-action';
-import { color, font, radius, space } from '../theme/tokens';
+import type { PlanSlot, PlanSummary } from '../../api';
+import { Icon } from '../../components/icon';
+import { gutter } from '../../components/layout';
+import { PathList } from '../../components/path';
+import { EmptyState, ErrorState, LoadingState } from '../../components/states';
+import { T } from '../../components/text';
+import { formatToday, greetingFor } from '../../domain/greeting';
+import { photoForSlot } from '../../domain/slot-photos';
+import { useFlowCache } from '../../state/flow-cache';
+import { useSession } from '../../state/session';
+import { useAsync } from '../../state/use-async';
+import { useErrorAction } from '../../state/use-error-action';
+import { color, font, radius, space } from '../../theme/tokens';
 
 export default function Today() {
   const router = useRouter();
-  const { backend, session, signOut } = useSession();
+  const { backend, session } = useSession();
   const cache = useFlowCache();
 
   const data = useAsync(async () => {
@@ -78,14 +77,13 @@ export default function Today() {
           <LoadingState title="Laying out your path…" />
         )}
 
-        <View style={[gutter, styles.foot]}>
-          <Button kind="quiet" label="Sign out" onPress={() => void signOut()} />
-          {backend.label !== 'live' ? (
+        {backend.label !== 'live' ? (
+          <View style={[gutter, styles.foot]}>
             <T variant="caption" style={{ textAlign: 'center' }}>
               {backend.label === 'mock' ? 'Mock mode: all data on this screen is fake.' : 'Mock AI mode: recipes and check-ins are fake.'}
             </T>
-          ) : null}
-        </View>
+          </View>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );

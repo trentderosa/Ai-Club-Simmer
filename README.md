@@ -17,12 +17,12 @@ See [PRD.md](PRD.md) for the full MVP requirements, [docs/CLIENT_API.md](docs/CL
 ├── docs/                  # Client API contract, demo runbook, AI reviews
 ├── supabase/migrations/   # Postgres / Supabase schema and XP logic
 ├── tests/                 # Database tests for the schema and XP awards
-└── .github/workflows/     # AI Server CI and Database Tests
+└── .github/workflows/     # App CI, AI Server CI and Database Tests
 ```
 
 ## App
 
-The Expo client covers the core loop: sign up or sign in, onboarding, Today (the plan), recipe, cook mode, check-in and session complete, plus Cook anything from Today. Requires Node.js 22.13 or later (Expo SDK 58 needs it). Mock mode runs it with fake data and no backend:
+The Expo client covers the core loop plus the recipe book, profile, and Cook anything: sign up or sign in, onboarding, Today (the plan), recipe, cook mode, check-in, session complete, the recipe book and the profile (XP, badges, editable onboarding answers, sign-out), and typing a dish from Today. A small bottom bar switches between Today, the recipe book and You. Requires Node.js 22.13 or later (Expo SDK 58 needs it). Mock mode runs it with fake data and no backend:
 
 ```bash
 cd app
