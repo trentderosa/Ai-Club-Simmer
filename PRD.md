@@ -210,7 +210,7 @@ Do **not** build these. They're future work.
 | Backend / DB | **Supabase**: Postgres, Auth (email + password), row-level security so users only see their own data |
 | AI | **Ollama** running a local model (~7–8B, e.g., a Llama or Qwen model) on **one team laptop** |
 | AI server | A small proxy on the same laptop that the app calls. It verifies the user's Supabase login token, calls Ollama with structured JSON output, calls the YouTube API, and writes results to Supabase |
-| Network | Phones reach the AI server over the same Wi-Fi or through a tunnel (ngrok or Cloudflare Tunnel) |
+| Network | Phones reach the AI server over the same Wi-Fi or through a tunnel (ngrok or Cloudflare Tunnel). The Expo web build can call the AI server only from origins in `ALLOWED_ORIGINS` (default: Expo dev/web localhost origins on ports 8081 and 19006). Other origins get no CORS headers, and the allowlist never uses `*`. |
 | Videos | YouTube Data API v3 (search), with results cached in Supabase |
 
 **App mock mode:** `EXPO_PUBLIC_MOCK_MODE=1` runs the app on typed fake data with no Supabase or AI server (any email signs in; signing in loads a demo user 3 dishes in, creating an account starts fresh). `EXPO_PUBLIC_MOCK_MODE=ai` uses the real Supabase but fakes the AI-server calls. `EXPO_PUBLIC_MOCK_XP_STATUS=failed|skipped` previews the other check-in XP outcomes. The fake slots use the real 10 dishes and XP values; everything else in the fixtures is made up.
@@ -219,6 +219,7 @@ Do **not** build these. They're future work.
 - **Timeline:** ~2 months to a working demo. The team is part-time students.
 - **The AI only works while the AI-server laptop is running Ollama and the proxy.** Recipes that are already generated and saved still load without it.
 - **Secrets:** The YouTube API key and Supabase service-role key live only on the AI server, never in the app.
+- **CORS:** The AI server echoes only origins listed in `ALLOWED_ORIGINS`. It never sends `Access-Control-Allow-Origin: *`.
 - **YouTube quota:** The default quota is 10,000 units/day, and each search costs 100 units (about 100 searches/day), so searches must be cached.
 - **Cost:** Use free tiers (Supabase free plan, YouTube free quota, local model).
 

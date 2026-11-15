@@ -17,6 +17,17 @@ npm run lint && npm run typecheck && npm test
 Without Supabase settings, dev mode uses in-memory storage and check-ins return
 `xp: { status: "skipped" }`.
 
+## CORS
+
+The Expo web build is a browser, so the server sends CORS headers only for
+origins in `ALLOWED_ORIGINS` (comma-separated). When that variable is unset or
+empty, the allowlist is the Expo Metro/web dev origins: `http://localhost:8081`,
+`http://127.0.0.1:8081`, `http://localhost:19006`, and `http://127.0.0.1:19006`
+(8081 is Expo SDK 58's default; 19006 is the classic Expo webpack web port).
+Allowed requests get their `Origin` echoed back and `Vary: Origin`. Preflight
+(`OPTIONS`) allows `Authorization`, `Content-Type`, and `Idempotency-Key`.
+Unknown origins get no CORS headers. A wildcard (`*`) is rejected at startup.
+
 ## Production config
 
 Set these in the server's environment (never in the repo, chat, or logs):

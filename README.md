@@ -82,6 +82,7 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `OLLAMA_TIMEOUT_MS` | Ollama timeout in ms (default `60000`) |
 | `PORT` | AI server port (default `3001`) |
 | `HOST` | Bind address (default `127.0.0.1`) |
+| `ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the AI server (Expo web). Default: `http://localhost:8081`, `http://127.0.0.1:8081`, `http://localhost:19006`, `http://127.0.0.1:19006`. Never `*`. |
 | `RATE_LIMIT_WINDOW_MS` | Rate-limit window (default `60000`) |
 | `RATE_LIMIT_MAX_REQUESTS` | Max requests per window (default `10`) |
 | `SUPABASE_URL` | Supabase project URL |
