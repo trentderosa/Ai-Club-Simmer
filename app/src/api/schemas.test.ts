@@ -1,4 +1,4 @@
-import { BadgesSchema, RecipeBookSchema } from './schemas';
+import { BadgesSchema, CheckInInputSchema, RecipeBookSchema } from './schemas';
 
 describe('recipe book and badge schemas', () => {
   it('parses a get_my_recipe_book row, including a null user_recipe_id', () => {
@@ -68,5 +68,36 @@ describe('recipe book and badge schemas', () => {
       },
     ];
     expect(BadgesSchema.parse(rows)).toEqual(rows);
+  });
+});
+
+const pathCheckIn = {
+  user_recipe_id: '00000000-0000-4000-8000-000000000010',
+  slot_id: 10,
+  rating: 'ok' as const,
+};
+
+describe('check-in mastery payload', () => {
+  it('accepts mastery: { hidden_steps, revealed_steps } with revealed ≤ hidden', () => {
+    const body = { ...pathCheckIn, mastery: { hidden_steps: 3, revealed_steps: 1 } };
+    expect(CheckInInputSchema.parse(body)).toEqual(body);
+    expect(CheckInInputSchema.parse({ ...pathCheckIn, mastery: { hidden_steps: 3, revealed_steps: 0 } }).mastery).toEqual({
+      hidden_steps: 3,
+      revealed_steps: 0,
+    });
+    expect(CheckInInputSchema.parse({ ...pathCheckIn, mastery: { hidden_steps: 3, revealed_steps: 3 } }).mastery).toEqual({
+      hidden_steps: 3,
+      revealed_steps: 3,
+    });
+  });
+
+  it('rejects revealed_steps greater than hidden_steps', () => {
+    expect(() => CheckInInputSchema.parse({ ...pathCheckIn, mastery: { hidden_steps: 3, revealed_steps: 4 } })).toThrow(
+      /revealed_steps cannot be more than hidden_steps/,
+    );
+  });
+
+  it('still accepts a path check-in without mastery', () => {
+    expect(CheckInInputSchema.parse(pathCheckIn).mastery).toBeUndefined();
   });
 });

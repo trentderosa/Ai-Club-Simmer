@@ -52,6 +52,33 @@ export const DEMO_USER = {
 } as const;
 
 /**
+ * Mock-mode sign-in shortcut so F8 is reachable without cooking slots 1–9.
+ * Sign in with this email (any password). The default demo user is unchanged.
+ */
+export const MASTERY_USER = {
+  email: 'mastery@simmer.test',
+  firstName: 'Riley',
+  /** Slots 1–9 done; slot 10 (Roast Chicken) is current. */
+  completedSlots: 9,
+  extraCooks: {} as Record<number, number>,
+  createdAt: '2026-10-15T12:00:00.000Z',
+  addedAt: {
+    1: '2026-10-18T12:00:00.000Z',
+    2: '2026-10-20T12:00:00.000Z',
+    3: '2026-10-22T12:00:00.000Z',
+    4: '2026-10-25T12:00:00.000Z',
+    5: '2026-10-27T12:00:00.000Z',
+    6: '2026-10-29T12:00:00.000Z',
+    7: '2026-11-02T12:00:00.000Z',
+    8: '2026-11-05T12:00:00.000Z',
+    9: '2026-11-08T12:00:00.000Z',
+  } as Record<number, string>,
+} as const;
+
+/** First-completion XP for slots 1–9, the starting total for MASTERY_USER. */
+export const MASTERY_USER_XP = 917;
+
+/**
  * The 11-badge catalog from migration 20261115000000 (codes and names are
  * stable; Ian owns the display names).
  */

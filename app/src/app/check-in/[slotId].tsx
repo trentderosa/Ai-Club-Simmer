@@ -26,6 +26,7 @@ import {
   SLOW_CHECK_IN_HINT,
   SLOW_CHECK_IN_HINT_MS,
 } from '../../domain/check-in-retry';
+import { revealedLabel } from '../../domain/mastery';
 import { errorCopy } from '../../domain/error-messages';
 import { isApiError } from '../../api';
 import { useFlowCache } from '../../state/flow-cache';
@@ -57,7 +58,13 @@ export default function CheckIn() {
       </Screen>
     );
   }
-  return <CheckInForm slot={data.data.slot} onBack={back} onDone={() => router.replace({ pathname: '/complete/[slotId]', params: { slotId: String(slotId) } })} />;
+  return (
+    <CheckInForm
+      slot={data.data.slot}
+      onBack={back}
+      onDone={() => router.replace({ pathname: '/complete/[slotId]', params: { slotId: String(slotId) } })}
+    />
+  );
 }
 
 function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => void; onDone: () => void }) {
@@ -70,6 +77,9 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
   const [error, setError] = useState<string | null>(null);
   const [idempotencyKey] = useState(newIdempotencyKey);
   const [slowHint, setSlowHint] = useState(false);
+  // N1: only send mastery when cook mode recorded a real session.
+  // A missing payload earns no badge, so a skipped cook cannot look like a perfect run.
+  const mastery = slot.is_final ? (cache.getMastery(slot.slot_id)?.counts ?? undefined) : undefined;
 
   useEffect(() => {
     if (!saving) return;
@@ -94,6 +104,7 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
           rating,
           went_well: wentWell.trim() || undefined,
           was_hard: wasHard.trim() || undefined,
+          mastery,
           idempotency_key: idempotencyKey,
         },
         session.accessToken,
@@ -109,6 +120,7 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
         summaryAfter: after.status === 'fulfilled' ? after.value : null,
         planAfter,
       });
+      cache.clearMastery(slot.slot_id);
       onDone();
     } catch (e) {
       if (isApiError(e) && e.kind === 'unauthorized') {
@@ -151,6 +163,7 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
         summaryAfter,
         planAfter: plan,
       });
+      cache.clearMastery(slot.slot_id);
       onDone();
       return true;
     } catch {
@@ -169,6 +182,11 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
           <T variant="small" style={{ marginTop: 8 }}>
             Thirty seconds. Your coach uses this to write the next recipe for you.
           </T>
+          {mastery ? (
+            <T variant="caption" style={{ marginTop: 10 }}>
+              Mastery challenge · {revealedLabel(mastery)}
+            </T>
+          ) : null}
           <Segmented options={RATINGS} value={rating} onChange={setRating} />
           <Field label="What went well?" hint="Optional" value={wentWell} onChangeText={setWentWell} multiline maxLength={MAX} placeholder="The rice came out fluffy" />
           <Counter text={wentWell} />

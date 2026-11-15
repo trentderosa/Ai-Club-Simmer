@@ -115,6 +115,13 @@ function Result({ outcome, onHome, onCookAgain }: { outcome: CheckInOutcome; onH
           Badges couldn’t be checked just now. Any you earned will still appear on your profile.
         </T>
       ) : null}
+      {slot.is_final ? (
+        <T variant="small" style={[gutter, styles.center, { marginTop: 16 }]}>
+          {badges.some((b) => b.kind === 'mastery')
+            ? 'You kept every hidden step hidden. That’s the mastery seal.'
+            : 'Reveal a step and you’ll still finish, but the mastery seal needs zero reveals.'}
+        </T>
+      ) : null}
 
       <View style={[gutter, { marginTop: 18 }]}>
         {badges.length === 0 ? <Rule strong style={{ marginBottom: 18 }} /> : null}

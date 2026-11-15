@@ -2,8 +2,10 @@
  * In-memory fake backend for EXPO_PUBLIC_MOCK_MODE. No network, fake data only.
  *
  * - "Sign up" with any email creates a fresh user who goes through onboarding.
- * - "Sign in" with any email/password lands on the demo user (Jordan, 3 of 10
+ * - "Sign in" with most emails lands on the demo user (Jordan, 3 of 10
  *   done, 239 XP) so the Today screen has something to show.
+ * - "Sign in" with mastery@simmer.test lands on a second canned user (Riley,
+ *   9 of 10 done, slot 10 current) so the mastery challenge is reachable.
  * - Check-ins advance the path and award XP like the server does.
  * State resets when the app reloads.
  */
@@ -29,6 +31,7 @@ import {
   CANNED_COOK_ANYTHING_XP,
   cannedCookAnythingRecipe,
   DEMO_USER,
+  MASTERY_USER,
   MOCK_CHECK_IN_REPLIES,
   MOCK_COACH_NOTES,
   RECIPES,
@@ -36,6 +39,7 @@ import {
   VIDEOS,
 } from './fixtures';
 import { normalizeDishName, trimDishQuery, clientDishError } from '../../domain/dish-name';
+import { qualifiesForMasteryBadge } from '../../domain/mastery';
 import { awardXp, derivePlan, deriveSummary } from './mock-plan';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,6 +58,7 @@ interface MockState {
   checkInsByKey: Map<string, CheckInResponse>;
   generatedByName: Map<string, CookAnythingResponse>;
   generatedCompletions: Set<string>;
+  masteryEarnedAt: string | null;
 }
 
 export interface MockOptions {
@@ -85,6 +90,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     checkInsByKey: new Map(),
     generatedByName: new Map(),
     generatedCompletions: new Set(),
+    masteryEarnedAt: null,
   };
 
   function setSession(s: AppSession | null) {
@@ -92,9 +98,12 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     listeners.forEach((l) => l(s));
   }
 
-  function loadDemoUser() {
+  function loadCannedUser(
+    user: typeof DEMO_USER | typeof MASTERY_USER,
+    userId: string,
+  ): AppSession {
     state.profile = {
-      id: 'mock-user-demo',
+      id: userId,
       goals: 'Cook 3 dinners a week; Spend less on takeout',
       experience_level: 'a_little',
       equipment: ['stove', 'oven', 'pan', 'pot', 'knife', 'cutting board'],
@@ -102,29 +111,39 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       days_per_week: 3,
       minutes_per_session: 30,
       onboarding_completed: true,
-      created_at: DEMO_USER.createdAt,
+      created_at: user.createdAt,
     };
     state.completions = {};
     state.firstCompletedAt = {};
     state.recipeSlots = new Set();
     state.totalXp = 0;
+    state.repeatXpThisWeek = 0;
     state.checkInsByKey = new Map();
     state.generatedByName = new Map();
     state.generatedCompletions = new Set();
-    for (const s of SLOTS.slice(0, DEMO_USER.completedSlots)) {
-      const extra = DEMO_USER.extraCooks[s.slot_id] ?? 0;
+    state.masteryEarnedAt = null;
+    for (const s of SLOTS.slice(0, user.completedSlots)) {
+      const extra = user.extraCooks[s.slot_id] ?? 0;
       state.completions[s.slot_id] = 1 + extra;
       state.recipeSlots.add(s.slot_id);
       state.totalXp += s.xp_value;
-      const added = DEMO_USER.addedAt[s.slot_id];
+      const added = user.addedAt[s.slot_id];
       if (added) state.firstCompletedAt[s.slot_id] = added;
     }
     return {
-      userId: 'mock-user-demo',
-      email: DEMO_USER.email,
-      firstName: DEMO_USER.firstName,
+      userId,
+      email: user.email,
+      firstName: user.firstName,
       accessToken: 'mock-access-token',
     } satisfies AppSession;
+  }
+
+  function loadDemoUser() {
+    return loadCannedUser(DEMO_USER, 'mock-user-demo');
+  }
+
+  function loadMasteryUser() {
+    return loadCannedUser(MASTERY_USER, 'mock-user-mastery');
   }
 
   if (opts.startSignedIn) state.session = loadDemoUser();
@@ -138,18 +157,40 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     return derivePlan(SLOTS, state.completions, state.recipeSlots);
   }
 
-  function badgesFor(slotId: number, firstCompletion: boolean): CheckInBadge[] {
-    if (!firstCompletion) return [];
+  function badgesFor(
+    slotId: number,
+    firstCompletion: boolean,
+    mastery: { hidden_steps: number; revealed_steps: number } | undefined,
+  ): CheckInBadge[] {
     const slot = SLOTS.find((s) => s.slot_id === slotId);
     if (!slot) return [];
-    const earned: CheckInBadge[] = [
-      { code: `complete_slot_${slot.slot_order}`, name: slot.dish_name, description: `Cooked ${slot.dish_name} and checked in.`, kind: 'completion' },
-    ];
-    if (slot.is_final) {
-      earned.push({ code: 'mastery', name: 'Roast Chicken Mastery', description: 'Finished the mastery challenge.', kind: 'mastery' });
+    const earned: CheckInBadge[] = [];
+    if (firstCompletion) {
+      earned.push({
+        code: `complete_slot_${slot.slot_order}`,
+        name: slot.dish_name,
+        description: `Cooked ${slot.dish_name} and checked in.`,
+        kind: 'completion',
+      });
     }
-    if (currentPlan().every((p) => p.status === 'done')) {
-      earned.push({ code: 'path_weeknight_basics', name: 'Weeknight Basics Graduate', description: 'Finished every dish on the path.', kind: 'path_milestone' });
+    // Mastery badge: only on a final-slot check-in with revealed_steps = 0.
+    // A missing payload earns no badge. Repeats can still earn it later.
+    if (slot.is_final && qualifiesForMasteryBadge(mastery) && !state.masteryEarnedAt) {
+      state.masteryEarnedAt = new Date().toISOString();
+      earned.push({
+        code: 'mastery',
+        name: 'Roast Chicken Mastery',
+        description: 'Passed the mastery challenge: cooked Roast Chicken with the steps hidden.',
+        kind: 'mastery',
+      });
+    }
+    if (firstCompletion && currentPlan().every((p) => p.status === 'done')) {
+      earned.push({
+        code: 'path_weeknight_basics',
+        name: 'Weeknight Basics Graduate',
+        description: 'Finished every dish on the path.',
+        kind: 'path_milestone',
+      });
     }
     return earned;
   }
@@ -169,7 +210,9 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     async signIn(email) {
       await delay(400);
       if (!email.includes('@')) throw new ApiError('unauthorized', 'Invalid login credentials', 400);
-      setSession(loadDemoUser());
+      const canned =
+        email.trim().toLowerCase() === MASTERY_USER.email ? loadMasteryUser() : loadDemoUser();
+      setSession(canned);
     },
 
     async signUp(email, _password, firstName) {
@@ -184,6 +227,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       state.checkInsByKey = new Map();
       state.generatedByName = new Map();
       state.generatedCompletions = new Set();
+      state.masteryEarnedAt = null;
       setSession({ userId: 'mock-user-new', email, firstName: firstName.trim() || null, accessToken: 'mock-access-token' });
       return { signedIn: true };
     },
@@ -227,7 +271,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     async getBadges() {
       await delay(300);
       requireSession();
-      return deriveMockBadges(state.completions, state.firstCompletedAt);
+      return deriveMockBadges(state.completions, state.firstCompletedAt, state.masteryEarnedAt);
     },
 
     async getRecipeBook() {
@@ -313,6 +357,14 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
         if (existing) return existing;
       }
       if (body.generated_recipe_id) {
+        if (body.mastery) {
+          throw new ApiError(
+            'validation',
+            'mastery is only allowed for the final (mastery challenge) recipe',
+            400,
+            'MASTERY_NOT_ALLOWED',
+          );
+        }
         let found: CookAnythingResponse | undefined;
         for (const saved of state.generatedByName.values()) {
           if (saved.generated_recipe_id === body.generated_recipe_id) found = saved;
@@ -347,6 +399,14 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       }
       const slot = SLOTS.find((s) => s.slot_id === body.slot_id);
       if (!slot) throw new ApiError('invalid_recipe', 'Unknown slot', 400, 'INVALID_RECIPE');
+      if (body.mastery && !slot.is_final) {
+        throw new ApiError(
+          'validation',
+          'mastery is only allowed for the final (mastery challenge) recipe',
+          400,
+          'MASTERY_NOT_ALLOWED',
+        );
+      }
 
       const first = (state.completions[slot.slot_id] ?? 0) === 0;
       state.completions[slot.slot_id] = (state.completions[slot.slot_id] ?? 0) + 1;
@@ -371,7 +431,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
         coach_note: reply.note,
         focus_area: reply.focus,
         xp,
-        badges: { status: 'ok', earned: badgesFor(slot.slot_id, first) },
+        badges: { status: 'ok', earned: badgesFor(slot.slot_id, first, body.mastery) },
         suggest_repeat: body.rating === 'hard',
       };
       if (body.idempotency_key) state.checkInsByKey.set(body.idempotency_key, response);
@@ -380,7 +440,11 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
   };
 }
 
-export function deriveMockBadges(completions: Record<number, number>, firstCompletedAt: Record<number, string>): Badge[] {
+export function deriveMockBadges(
+  completions: Record<number, number>,
+  firstCompletedAt: Record<number, string>,
+  masteryEarnedAt: string | null = null,
+): Badge[] {
   const pathComplete = SLOTS.every((s) => (completions[s.slot_id] ?? 0) > 0);
   const lastAt = pathComplete
     ? SLOTS.reduce((latest, s) => {
@@ -389,8 +453,14 @@ export function deriveMockBadges(completions: Record<number, number>, firstCompl
       }, null as string | null)
     : null;
   return BADGES.map((b) => {
-    const earned = b.kind === 'path_milestone' ? pathComplete : b.slot_id != null && (completions[b.slot_id] ?? 0) > 0;
-    const earned_at = b.kind === 'path_milestone' ? lastAt : b.slot_id != null ? (firstCompletedAt[b.slot_id] ?? null) : null;
+    const earned =
+      b.kind === 'path_milestone'
+        ? pathComplete
+        : b.kind === 'mastery'
+          ? masteryEarnedAt != null
+          : b.slot_id != null && (completions[b.slot_id] ?? 0) > 0;
+    const earned_at =
+      b.kind === 'path_milestone' ? lastAt : b.kind === 'mastery' ? masteryEarnedAt : b.slot_id != null ? (firstCompletedAt[b.slot_id] ?? null) : null;
     return { ...b, earned, earned_at: earned ? earned_at : null };
   });
 }
