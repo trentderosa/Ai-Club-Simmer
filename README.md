@@ -4,7 +4,7 @@ Simmer is the JMU AI Club "Duolingo of cooking" app for new cooks. The MVP is a 
 
 This repo holds the product requirements, the AI server, and the database migrations and tests. The Expo client is not in the repo yet.
 
-See [PRD.md](PRD.md) for the full MVP requirements. Every PR that changes behavior updates `PRD.md` and `README.md` in the same PR.
+See [PRD.md](PRD.md) for the full MVP requirements, [docs/CLIENT_API.md](docs/CLIENT_API.md) for what the app calls on each screen, and [docs/DEMO_SETUP.md](docs/DEMO_SETUP.md) for standing up the demo. Every PR that changes behavior updates `PRD.md` and `README.md` in the same PR.
 
 ## Repo layout
 
@@ -12,7 +12,8 @@ See [PRD.md](PRD.md) for the full MVP requirements. Every PR that changes behavi
 .
 ├── PRD.md                 # Product requirements (MVP)
 ├── README.md
-├── ai-server/             # Express AI server (local Ollama recipes, check-ins)
+├── ai-server/             # Express AI server (local Ollama recipes, videos, check-ins)
+├── docs/                  # Client API contract, demo runbook, AI reviews
 ├── supabase/migrations/   # Postgres / Supabase schema and XP logic
 ├── tests/                 # Database tests for the schema and XP awards
 └── .github/workflows/     # AI Server CI and Database Tests
@@ -51,7 +52,9 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/simmer_test npm test
 
 ## Database security
 
-Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Privileged functions such as `award_slot_xp` are called only from the AI server with the service role, never from the client.
+Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Privileged functions such as `award_slot_xp`, `is_slot_unlocked` and `get_badges_earned_by_check_in` are called only from the AI server with the service role, never from the client.
+
+The plan, badges and recipe book are derived from `check_ins` (migration `20261115000000_plan_badges_recipe_book.sql`). The app reads them through `get_my_plan()`, `get_my_plan_summary()`, `get_my_badges()` and `get_my_recipe_book()`. These take no user id and always use `auth.uid()`. Clients can insert check-ins (RLS-checked) but can't update or delete them, and the `technique_videos` cache is invisible to them.
 
 ## Environment variables
 
@@ -79,6 +82,8 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `XP_RECONCILE_LOOKBACK_HOURS` | Reconcile job: how far back to look for check-ins missing XP (default `168`, range `1`–`720`). |
 | `XP_RECONCILE_MIN_AGE_SECONDS` | Reconcile job: skip check-ins younger than this (default `120`, range `0`–`86400`). |
 | `XP_RECONCILE_BATCH_LIMIT` | Reconcile job: most check-ins handled per run (default `100`, range `1`–`1000`). |
+| `YOUTUBE_API_KEY` | YouTube Data API v3 key for technique videos (F4). Server only. Unset: recipes have no videos. |
+| `YOUTUBE_TIMEOUT_MS` | Timeout for each YouTube search in ms (default `5000`, range `100`–`60000`). |
 
 ### Retrying failed XP awards
 

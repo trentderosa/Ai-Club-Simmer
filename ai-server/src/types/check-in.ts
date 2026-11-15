@@ -1,12 +1,27 @@
 import { z } from 'zod';
 
-export const CheckInInputSchema = z.object({
-  user_recipe_id: z.string().uuid(),
-  slot_id: z.number().int().min(1).max(10),
-  rating: z.enum(['easy', 'ok', 'hard']),
-  went_well: z.string().max(500).optional(),
-  was_hard: z.string().max(500).optional(),
-});
+export const CheckInInputSchema = z
+  .object({
+    user_recipe_id: z.string().uuid(),
+    slot_id: z.number().int().min(1).max(10),
+    rating: z.enum(['easy', 'ok', 'hard']),
+    went_well: z.string().max(500).optional(),
+    was_hard: z.string().max(500).optional(),
+    /**
+     * F8 mastery challenge (final slot only): how many steps started hidden
+     * and how many the user revealed ("Revealed X of Y hidden steps").
+     */
+    mastery: z
+      .object({
+        hidden_steps: z.number().int().min(0).max(30),
+        revealed_steps: z.number().int().min(0).max(30),
+      })
+      .refine((m) => m.revealed_steps <= m.hidden_steps, {
+        message: 'revealed_steps cannot be more than hidden_steps',
+        path: ['revealed_steps'],
+      })
+      .optional(),
+  });
 
 export type CheckInInput = z.infer<typeof CheckInInputSchema>;
 
@@ -35,6 +50,26 @@ export type CoachNote = z.infer<typeof CoachNoteSchema>;
  * - failed: the award call errored; the check-in is still saved and the error is logged
  * - skipped: no XP awarder is configured (dev in-memory mode only)
  */
+/** A badge this check-in earned (F9); empty for repeats. */
+export interface CheckInBadge {
+  code: string;
+  name: string;
+  description: string;
+  kind: 'completion' | 'mastery' | 'path_milestone';
+}
+
+/**
+ * Badges outcome for a check-in.
+ * - ok: `earned` lists badges this check-in earned (show the celebration)
+ * - failed: the lookup errored; the check-in is saved and badges still show
+ *   on the badges screen (they are derived from check-ins)
+ * - skipped: no badge lookup configured (dev in-memory mode only)
+ */
+export type CheckInBadges =
+  | { status: 'ok'; earned: CheckInBadge[] }
+  | { status: 'failed' }
+  | { status: 'skipped' };
+
 export type CheckInXp =
   | { status: 'awarded'; xp_awarded: number; is_first_completion: boolean; capped: boolean }
   | { status: 'failed' }
@@ -45,4 +80,11 @@ export interface CheckInResponse {
   coach_note: string;
   focus_area?: string;
   xp: CheckInXp;
+  badges: CheckInBadges;
+  /**
+   * F6: true when the user rated the session "hard". The app suggests cooking
+   * this recipe again before moving on; the user can accept or skip. The path
+   * never changes either way.
+   */
+  suggest_repeat: boolean;
 }

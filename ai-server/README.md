@@ -1,7 +1,9 @@
 # Simmer AI Server
 
 Local Node/TypeScript server that proxies recipe generation and Coach's notes to Ollama,
-verifies Supabase user JWTs, saves check-ins, and awards XP.
+finds technique videos on YouTube, verifies Supabase user JWTs, enforces path order, saves
+check-ins, awards XP, and reports earned badges. Request and response shapes are in
+[../docs/CLIENT_API.md](../docs/CLIENT_API.md).
 
 ## Development
 
@@ -25,8 +27,23 @@ Set these in the server's environment (never in the repo, chat, or logs):
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. Server-side only. Used to save check-ins and call `award_slot_xp` |
 | `SUPABASE_JWT_SECRET` **or** `SUPABASE_JWKS_URI` | Verifies user access tokens (HS256 secret or RS256 JWKS URL) |
 | `XP_AWARD_TIMEOUT_MS` | Optional. Timeout for each `award_slot_xp` call (default `5000` ms, range `100`–`60000`). An invalid value stops startup |
+| `YOUTUBE_API_KEY` | Optional. Enables technique videos (F4). Server-side only |
+| `YOUTUBE_TIMEOUT_MS` | Optional. Timeout for each YouTube search (default `5000` ms, range `100`–`60000`) |
 
 With `NODE_ENV=production`, the server exits at startup and names any missing variable.
+
+## Recipes: path order and videos
+
+`POST /api/recipes/generate/:slotId` reads the slot and the user's onboarding profile (plus
+their last 3 check-ins, for the Coach's note) from Supabase with the service role
+(`src/repositories/path-repository.ts`). A saved recipe is returned as-is. Otherwise the
+server first calls `is_slot_unlocked` and answers `403 SLOT_LOCKED` for a locked slot.
+
+With `YOUTUBE_API_KEY` set, `src/services/video-finder.ts` runs one YouTube search per
+distinct technique in a new recipe and caches it in `technique_videos`. It caches misses for
+7 days, makes at most 6 new searches per recipe, and stores the results in
+`user_recipes.video_ids`. The response has `videos[techniqueName]`. Video errors are logged
+(`video_search_failed`, `recipe_videos_failed`) and never fail the recipe.
 
 ## XP on check-in
 

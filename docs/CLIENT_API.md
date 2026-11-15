@@ -1,0 +1,199 @@
+# Simmer client API (for the Expo app)
+
+What the app calls for each MVP screen. There are two backends:
+
+- **Supabase** (`supabase-js` with the **anon key** and the user's session): auth, the onboarding profile, and read-only RPCs for the plan, badges and recipe book.
+- **AI server** (`fetch` with `Authorization: Bearer <supabase access token>`): recipe generation, videos, and check-ins (which award XP and badges).
+
+The app never holds the service-role key or the YouTube key, and it never calls `award_slot_xp`.
+
+| Screen | Call |
+| --- | --- |
+| Sign up / log in / log out (F1) | `supabase.auth.signUp / signInWithPassword / signOut` |
+| Onboarding, edit profile (F1) | `profiles` insert / update (own row) |
+| Plan (F2, F7) | `rpc('get_my_plan')` + `rpc('get_my_plan_summary')` |
+| Recipe + cook mode (F3, F4, F5) | AI server `POST /api/recipes/generate/:slotId` |
+| Check-in (F6, F7, F9) | AI server `POST /api/check-ins` |
+| Mastery challenge (F8) | Same two AI-server calls on slot 10, plus `mastery` in the check-in |
+| Badges (F9) | `rpc('get_my_badges')` |
+| Recipe book (F10) | `rpc('get_my_recipe_book')`, then `user_recipes` select for a full recipe |
+
+---
+
+## F1. Sign-up and onboarding
+
+Auth is plain Supabase email + password. After sign-up, insert the profile. RLS allows only your own row.
+
+```ts
+await supabase.from('profiles').upsert({
+  id: session.user.id,
+  goals: 'Cook 3 dinners a week',
+  experience_level: 'never_cooked',       // 'never_cooked' | 'a_little' | 'comfortable'
+  equipment: ['stove', 'pan', 'pot', 'knife', 'cutting board'],
+  budget: 'low',                          // 'low' | 'medium' | 'high'
+  days_per_week: 3,                       // 1-7
+  minutes_per_session: 30,                // > 0
+  onboarding_completed: true,
+});
+```
+
+Routing rule: if `profiles.onboarding_completed` is not `true`, show onboarding. Otherwise go to the plan. The AI server refuses to generate recipes until onboarding is complete (404, "Please complete onboarding first").
+
+## F2. Plan screen
+
+```ts
+const { data: slots } = await supabase.rpc('get_my_plan');
+const { data: [summary] } = await supabase.rpc('get_my_plan_summary');
+```
+
+`get_my_plan()` returns 10 rows in path order:
+
+| Field | Notes |
+| --- | --- |
+| `slot_id`, `slot_order`, `dish_name`, `technique_focus` | |
+| `xp_value` | XP for a first completion |
+| `is_final` | `true` only for slot 10 (mastery challenge) |
+| `status` | `'done'`, `'current'` or `'locked'`. Only `current` and `done` can be opened. |
+| `has_recipe` | A recipe is already generated and saved |
+| `times_completed`, `first_completed_at` | |
+
+`get_my_plan_summary()` returns one row:
+
+| Field | Notes |
+| --- | --- |
+| `total_xp` | Show on the plan screen (F7) |
+| `completed_slots`, `total_slots`, `current_slot_order`, `path_complete` | |
+| `suggested_sessions_per_week` | From the onboarding schedule. `null` until the schedule is set |
+| `estimated_weeks_remaining` | |
+
+Suggested sessions = `floor(days_per_week × minutes_per_session ÷ average cook minutes of the remaining recipes)`, kept between 1 and `days_per_week`. This rule is a proposal (PRD open question 11).
+
+## F3–F5. Recipe and cook mode
+
+```
+POST {AI_SERVER}/api/recipes/generate/:slotId
+Authorization: Bearer <access_token>
+```
+
+The first call generates the recipe with Ollama, which can take 10–60 s, so show a loading state. Later calls return the saved recipe instantly (`cached: true`).
+
+```jsonc
+{
+  "recipe": {
+    "title": "Fluffy Scrambled Eggs",
+    "ingredients": [{ "name": "eggs", "amount": "2" }],
+    "timeEstimateMinutes": 10,
+    "coachNote": "Last time heat control was tricky, so keep the pan on low.", // optional (F6)
+    "steps": [
+      {
+        "instruction": "Whisk the eggs with a pinch of salt.",
+        "whyItMatters": "Air makes them fluffy.",   // optional
+        "isSafetyStep": false,                     // true: red border + "Safety" label (F5)
+        "techniqueName": "Whisk eggs"              // optional, key into videos
+      }
+    ]
+  },
+  "cached": false,
+  "videos": {
+    "Whisk eggs": { "videoId": "abc123XYZ_-", "title": "How to whisk eggs", "channelTitle": "..." }
+  }
+}
+```
+
+- **Videos (F4):** use `videos[step.techniqueName]`. A step with no entry has no video. Play it in-app with `https://www.youtube.com/embed/{videoId}`, for example in a WebView or `react-native-youtube-iframe`. Thumbnail: `https://i.ytimg.com/vi/{videoId}/hqdefault.jpg`. `videos` is `{}` when the server has no YouTube key or the search failed.
+- **Errors:**
+  - `401`: bad or expired token.
+  - `403 { code: "SLOT_LOCKED" }`: the slot isn't unlocked yet.
+  - `404`: unknown slot, or onboarding isn't finished.
+  - `500`: generation failed after 3 tries. Show a **Retry** button (F3).
+  - `429`: rate limited.
+
+## F6, F7, F9. Check-in
+
+```
+POST {AI_SERVER}/api/check-ins
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{
+  "user_recipe_id": "<user_recipes.id>",
+  "slot_id": 2,
+  "rating": "hard",                 // 'easy' | 'ok' | 'hard'
+  "went_well": "Nice texture",      // optional, max 500 chars
+  "was_hard": "Heat control",       // optional, max 500 chars
+  "mastery": { "hidden_steps": 4, "revealed_steps": 1 }   // slot 10 only (F8)
+}
+```
+
+`user_recipe_id`: read it with `supabase.from('user_recipes').select('id').eq('slot_id', slotId).single()` (RLS returns only your rows).
+
+Response `201`:
+
+```jsonc
+{
+  "check_in_id": "...",
+  "coach_note": "Nice work! Next time, try ...",
+  "focus_area": "heat control",
+  "xp": { "status": "awarded", "xp_awarded": 62, "is_first_completion": true, "capped": false },
+  "badges": { "status": "ok", "earned": [
+    { "code": "complete_slot_2", "name": "Scrambled Eggs", "description": "...", "kind": "completion" }
+  ] },
+  "suggest_repeat": true
+}
+```
+
+- **XP (F7):** show `+xp_awarded`. If `capped` is true on a repeat, say that the weekly repeat cap has been reached and this repeat earned 0 XP (or only part of its usual XP). `xp.status: "failed"` means the check-in was saved but the award is retried later. Don't show an error.
+- **Badges (F9):** play a short celebration for each badge in `badges.earned`. A repeat earns nothing new.
+- **Repeat suggestion (F6):** if `suggest_repeat` is true, ask "That one was tough. Cook it again before moving on?" **Cook again** reopens the same slot, which is allowed because done slots stay open. **Skip** goes back to the plan. The path never changes either way.
+- **Errors:**
+  - `400 INVALID_RECIPE`: the recipe doesn't belong to the user or the slot.
+  - `400 MASTERY_NOT_ALLOWED`: `mastery` was sent on a slot other than 10.
+  - `400 VALIDATION_ERROR`
+  - `401`
+  - `429`
+
+After a check-in, re-fetch `get_my_plan` and `get_my_plan_summary`: the next slot is now `current`.
+
+## F8. Mastery challenge (slot 10)
+
+Use the same recipe call. In challenge mode:
+- Start every step hidden except steps with `isSafetyStep: true`, which are always shown.
+- Each hidden step has a **Reveal** button.
+- Show "Revealed X of Y hidden steps".
+
+Send `mastery: { hidden_steps: Y, revealed_steps: X }` with the check-in. Finishing and checking in counts as passing, which earns the `mastery` badge and puts the recipe in the book as Mastered. Finishing slot 10 last also earns `path_weeknight_basics`.
+
+## F9. Badges screen
+
+```ts
+const { data: badges } = await supabase.rpc('get_my_badges');
+// [{ code, name, description, kind: 'completion'|'mastery'|'path_milestone', slot_id, sort_order, earned, earned_at }]
+```
+
+Show `earned: false` badges grayed out.
+
+## F10. Recipe book
+
+```ts
+const { data: book } = await supabase.rpc('get_my_recipe_book');
+// [{ slot_id, slot_order, dish_name, user_recipe_id, recipe_title, label: 'completed'|'mastered', added_at, times_cooked }]
+```
+
+If the list is empty, show: "Cook a recipe and finish the check-in to add it to your recipe book."
+
+Read-only full recipe:
+
+```ts
+const { data } = await supabase
+  .from('user_recipes')
+  .select('recipe_json, video_ids')
+  .eq('id', entry.user_recipe_id)
+  .single();
+// data.recipe_json has the same shape as `recipe` above; data.video_ids the same shape as `videos`
+```
+
+## What the client must not do
+
+- Call `award_slot_xp`, `is_slot_unlocked` or `get_badges_earned_by_check_in`. These are service-role only, and the database refuses them from the app.
+- Write `xp_events`, `user_slot_completions`, `user_recipes`, `badges` or `technique_videos`, or update or delete `check_ins`. All of these are blocked.
+- Ship the service-role key or the YouTube key in the app.

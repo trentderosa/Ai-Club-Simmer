@@ -194,6 +194,11 @@ export class TestDatabase {
       -- Re-assert RPC lockdown after broad GRANTs (migrations already set these)
       REVOKE EXECUTE ON FUNCTION public.award_slot_xp(UUID) FROM PUBLIC, anon, authenticated;
       GRANT EXECUTE ON FUNCTION public.award_slot_xp(UUID) TO service_role;
+
+      -- 20261115000000_plan_badges_recipe_book.sql: re-assert after broad GRANTs
+      REVOKE INSERT, UPDATE, DELETE ON badges FROM anon, authenticated;
+      REVOKE ALL ON technique_videos FROM anon, authenticated;
+      REVOKE UPDATE, DELETE ON check_ins FROM anon, authenticated;
     `);
 
     // Match migration guard: only revoke when the function exists
@@ -211,6 +216,7 @@ export class TestDatabase {
   async cleanupTestData(): Promise<void> {
     await this.pool.query('DELETE FROM xp_events');
     await this.pool.query('DELETE FROM check_ins');
+    await this.pool.query('DELETE FROM technique_videos');
     await this.pool.query('DELETE FROM user_recipes');
     await this.pool.query('DELETE FROM user_slot_completions');
     await this.pool.query('DELETE FROM profiles');

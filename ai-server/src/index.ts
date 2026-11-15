@@ -16,6 +16,13 @@ import { createCoachNoteGenerator } from './services/coach-note.js';
 import { InMemoryCheckInRepository } from './repositories/in-memory-check-in-repository.js';
 import { SupabaseCheckInRepository } from './repositories/supabase-check-in-repository.js';
 import { SupabaseXpAwarder } from './services/xp-awarder.js';
+import { SupabasePathRepository } from './repositories/path-repository.js';
+import {
+  InMemoryTechniqueVideoCache,
+  SupabaseTechniqueVideoCache,
+  VideoFinder,
+  YouTubeSearchClient,
+} from './services/video-finder.js';
 
 const config = loadConfig();
 
@@ -36,6 +43,27 @@ interface ServiceConfig {
   supabase: ReturnType<typeof createSupabaseService>;
   jwtVerifier: JwtVerifier | null;
   checkInService: CheckInService | null;
+  videoFinder: VideoFinder | null;
+}
+
+/**
+ * F4 technique videos: needs YOUTUBE_API_KEY. The cache is the shared
+ * technique_videos table when Supabase is configured, else in memory (dev).
+ */
+function createVideoFinder(): VideoFinder | null {
+  if (!config.youtube.apiKey) {
+    console.warn('No YOUTUBE_API_KEY - recipes will have no technique videos');
+    return null;
+  }
+  const { url, serviceRoleKey } = config.supabase;
+  const cache =
+    url && serviceRoleKey
+      ? new SupabaseTechniqueVideoCache({ url, serviceRoleKey })
+      : new InMemoryTechniqueVideoCache();
+  return new VideoFinder(
+    cache,
+    new YouTubeSearchClient({ apiKey: config.youtube.apiKey, timeoutMs: config.youtube.timeoutMs })
+  );
 }
 
 function createServicesFromConfig(): ServiceConfig {
@@ -53,6 +81,7 @@ function createServicesFromConfig(): ServiceConfig {
       supabase: createSupabaseStub({ allowStubAuth: true }),
       jwtVerifier: null,
       checkInService: null,
+      videoFinder: null,
     };
   }
 
@@ -64,6 +93,7 @@ function createServicesFromConfig(): ServiceConfig {
       supabase: createSupabaseStub({ allowStubAuth: false }),
       jwtVerifier: null,
       checkInService: null,
+      videoFinder: null,
     };
   }
 
@@ -84,13 +114,23 @@ function createServicesFromConfig(): ServiceConfig {
       ? new SupabaseCheckInRepository({ url, serviceRoleKey })
       : new InMemoryCheckInRepository();
 
+  // Path data: slots, onboarding profile, path gating (F2) and badges (F9).
+  const pathRepository =
+    url && serviceRoleKey ? new SupabasePathRepository({ url, serviceRoleKey }) : undefined;
+
   const coachNoteGenerator = createCoachNoteGenerator(ollamaClient);
   // XP is awarded only here, server-side, with the service role (never by the client).
   const xpAwarder =
     url && serviceRoleKey
       ? new SupabaseXpAwarder({ url, serviceRoleKey, timeoutMs: config.xpAward.timeoutMs })
       : null;
-  const checkInService = new CheckInService(checkInRepository, coachNoteGenerator, xpAwarder);
+  const checkInService = new CheckInService(
+    checkInRepository,
+    coachNoteGenerator,
+    xpAwarder,
+    console,
+    { pathRepository }
+  );
 
   if (!url || !serviceRoleKey) {
     console.warn(
@@ -105,9 +145,11 @@ function createServicesFromConfig(): ServiceConfig {
     supabase: createSupabaseService({
       jwtVerifier,
       userRecipeRepository,
+      pathRepository,
     }),
     jwtVerifier,
     checkInService,
+    videoFinder: createVideoFinder(),
   };
 }
 
@@ -117,6 +159,7 @@ const recipeRouter = createRecipeRouter(
   {
     ollamaClient,
     supabase: services.supabase,
+    videoFinder: services.videoFinder,
   },
   {
     enablePreviewRoute: config.enablePreviewRoute,
@@ -152,5 +195,6 @@ app.listen(config.port, config.host, () => {
   console.info(`Ollama endpoint: ${config.ollama.baseUrl}`);
   console.info(`Model: ${config.ollama.model}`);
   console.info(`Preview route: ${config.enablePreviewRoute ? 'ENABLED' : 'disabled'}`);
+  console.info(`Technique videos: ${services.videoFinder ? 'ENABLED' : 'disabled'}`);
   console.info(`Stub auth: ${isStubAuthAllowed() ? 'ENABLED (dev only)' : 'disabled'}`);
 });

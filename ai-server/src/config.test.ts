@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertProductionConfig, loadXpAwardTimeoutMs, parseBoundedIntEnv } from './config.js';
+import { assertProductionConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -57,6 +57,26 @@ describe('parseBoundedIntEnv', () => {
   it('does not echo the bad value in the error', () => {
     expect(() => parseBoundedIntEnv({ X: 'secret-ish' }, 'X', 1, 0, 10)).toThrow(
       /^X must be a whole number from 0 to 10$/
+    );
+  });
+});
+
+describe('loadYouTubeConfig', () => {
+  it('no key: videos disabled, default timeout', () => {
+    expect(loadYouTubeConfig({})).toEqual({ timeoutMs: 5000 });
+    expect(loadYouTubeConfig({ YOUTUBE_API_KEY: '   ' })).toEqual({ timeoutMs: 5000 });
+  });
+
+  it('reads the key and a bounded timeout', () => {
+    expect(loadYouTubeConfig({ YOUTUBE_API_KEY: 'placeholder-key', YOUTUBE_TIMEOUT_MS: '2500' })).toEqual({
+      apiKey: 'placeholder-key',
+      timeoutMs: 2500,
+    });
+  });
+
+  it('rejects an out-of-range timeout, naming only the variable', () => {
+    expect(() => loadYouTubeConfig({ YOUTUBE_API_KEY: 'placeholder-key', YOUTUBE_TIMEOUT_MS: '0' })).toThrow(
+      'YOUTUBE_TIMEOUT_MS must be a whole number from 100 to 60000'
     );
   });
 });

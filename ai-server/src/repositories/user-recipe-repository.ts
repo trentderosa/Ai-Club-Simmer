@@ -1,16 +1,21 @@
 import type { Recipe } from '../schemas/recipe.js';
+import type { RecipeVideos } from '../services/video-finder.js';
 
 export interface SavedRecipe {
   id: string;
   userId: string;
   slotId: number;
   recipe: Recipe;
+  /** Technique videos (F4); null until they have been looked up. */
+  videos: RecipeVideos | null;
   createdAt: Date;
 }
 
 export interface UserRecipeRepository {
   findByUserAndSlot(userId: string, slotId: number): Promise<SavedRecipe | null>;
   save(userId: string, slotId: number, recipe: Recipe): Promise<SavedRecipe>;
+  /** Store the technique videos for a saved recipe (user_recipes.video_ids). */
+  saveVideos(userId: string, slotId: number, videos: RecipeVideos): Promise<void>;
 }
 
 export class InMemoryUserRecipeRepository implements UserRecipeRepository {
@@ -55,6 +60,7 @@ export class InMemoryUserRecipeRepository implements UserRecipeRepository {
         userId,
         slotId,
         recipe,
+        videos: null,
         createdAt: new Date(),
       };
       this.recipes.set(key, saved);
@@ -64,6 +70,14 @@ export class InMemoryUserRecipeRepository implements UserRecipeRepository {
 
     this.locks.set(key, savePromise);
     return savePromise;
+  }
+
+  saveVideos(userId: string, slotId: number, videos: RecipeVideos): Promise<void> {
+    const existing = this.recipes.get(this.makeKey(userId, slotId));
+    if (existing) {
+      existing.videos = videos;
+    }
+    return Promise.resolve();
   }
 
   clear(): void {

@@ -143,6 +143,8 @@ describe('SupabaseCheckInRepository', () => {
         difficulty_rating: 'ok',
         went_well: 'Sauce was great',
         was_hard: 'Timing tricky',
+        hidden_steps: null,
+        revealed_steps: null,
       });
     });
 

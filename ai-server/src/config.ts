@@ -21,6 +21,11 @@ export interface Config {
   xpAward: {
     timeoutMs: number;
   };
+  youtube: {
+    /** YouTube Data API v3 key (server only). Unset: recipes have no videos. */
+    apiKey?: string;
+    timeoutMs: number;
+  };
 }
 
 type Env = Record<string, string | undefined>;
@@ -48,6 +53,21 @@ export function parseBoundedIntEnv(
 }
 
 export const XP_AWARD_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
+export const YOUTUBE_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
+
+export function loadYouTubeConfig(env: Env = process.env): Config['youtube'] {
+  const apiKey = env.YOUTUBE_API_KEY?.trim();
+  return {
+    ...(apiKey ? { apiKey } : {}),
+    timeoutMs: parseBoundedIntEnv(
+      env,
+      'YOUTUBE_TIMEOUT_MS',
+      YOUTUBE_TIMEOUT_MS.default,
+      YOUTUBE_TIMEOUT_MS.min,
+      YOUTUBE_TIMEOUT_MS.max
+    ),
+  };
+}
 
 export function loadXpAwardTimeoutMs(env: Env = process.env): number {
   return parseBoundedIntEnv(
@@ -85,6 +105,7 @@ export function loadConfig(): Config {
     xpAward: {
       timeoutMs: loadXpAwardTimeoutMs(),
     },
+    youtube: loadYouTubeConfig(),
   };
 }
 

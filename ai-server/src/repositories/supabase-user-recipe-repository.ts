@@ -1,6 +1,16 @@
 import type { Recipe } from '../schemas/recipe.js';
 import { RecipeSchema } from '../schemas/recipe.js';
 import type { UserRecipeRepository, SavedRecipe } from './user-recipe-repository.js';
+import { z } from 'zod';
+import type { RecipeVideos } from '../services/video-finder.js';
+
+const RecipeVideosSchema = z.record(
+  z.object({
+    videoId: z.string(),
+    title: z.string().optional(),
+    channelTitle: z.string().optional(),
+  })
+);
 
 export interface SupabaseConfig {
   url: string;
@@ -12,6 +22,7 @@ interface SupabaseUserRecipeRow {
   user_id: string;
   slot_id: number;
   recipe_json: unknown;
+  video_ids?: unknown;
   created_at: string;
 }
 
@@ -46,6 +57,7 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
       userId: row.user_id,
       slotId: row.slot_id,
       recipe: parseResult.data,
+      videos: parseVideos(row.video_ids),
       createdAt: new Date(row.created_at),
     };
   }
@@ -89,6 +101,23 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
     }
 
     return this.parseRecipe(rows[0]);
+  }
+
+  async saveVideos(userId: string, slotId: number, videos: RecipeVideos): Promise<void> {
+    const url = new URL(`${this.baseUrl}/user_recipes`);
+    url.searchParams.set('user_id', `eq.${userId}`);
+    url.searchParams.set('slot_id', `eq.${slotId}`);
+
+    const response = await fetch(url.toString(), {
+      method: 'PATCH',
+      headers: { ...this.headers, 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ video_ids: videos }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Supabase video update failed: ${response.status} ${error}`);
+    }
   }
 
   async save(userId: string, slotId: number, recipe: Recipe): Promise<SavedRecipe> {
@@ -155,4 +184,11 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
 
     return this.parseRecipe(rows[0]);
   }
+}
+
+/** Stored video_ids that don't parse are treated as "not looked up yet". */
+function parseVideos(raw: unknown): RecipeVideos | null {
+  if (raw === null || raw === undefined) return null;
+  const parsed = RecipeVideosSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
 }

@@ -5,6 +5,7 @@ import { generateRecipe, PathSlot } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
+import type { RecipeVideos, VideoFinder } from '../services/video-finder.js';
 import {
   UserProfile,
   UserProfileSchema,
@@ -35,6 +36,8 @@ const PreviewRequestSchema = z.object({
 export interface RecipeRouterDeps {
   ollamaClient: OllamaClient;
   supabase: SupabaseService;
+  /** F4 technique videos. Without it (no YOUTUBE_API_KEY) recipes have no videos. */
+  videoFinder?: VideoFinder | null;
 }
 
 export interface RecipeRouterOptions {
@@ -48,6 +51,7 @@ export interface RecipeRouterOptions {
 interface GenerationResult {
   success: true;
   recipe: Recipe;
+  videos: RecipeVideos;
 }
 
 interface GenerationError {
@@ -93,7 +97,28 @@ export function createRecipeRouter(
     }
 
     const savedRecipe = await deps.supabase.saveRecipe(userId, slot.id, result.recipe);
-    return { success: true, recipe: savedRecipe };
+    const videos = await attachVideos(userId, slot.id, savedRecipe);
+    return { success: true, recipe: savedRecipe, videos };
+  }
+
+  /**
+   * F4: look up technique videos and store them with the recipe. Never fails
+   * the request: on any error the recipe is returned without videos (and the
+   * lookup is retried on the next visit, since nothing was stored).
+   */
+  async function attachVideos(userId: string, slotId: number, recipe: Recipe): Promise<RecipeVideos> {
+    if (!deps.videoFinder) return {};
+    try {
+      const videos = await deps.videoFinder.findForRecipe(recipe);
+      await deps.supabase.saveVideos(userId, slotId, videos);
+      return videos;
+    } catch (error) {
+      console.warn('recipe_videos_failed', {
+        slot_id: slotId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return {};
+    }
   }
 
   async function singleFlightGenerate(
@@ -190,17 +215,33 @@ export function createRecipeRouter(
 
       const existingRecipe = await deps.supabase.getSavedRecipe(userId, slotId);
       if (existingRecipe) {
+        const storedVideos = await deps.supabase.getSavedVideos(userId, slotId);
+        const videos = storedVideos ?? (await attachVideos(userId, slotId, existingRecipe));
         res.json({
           recipe: existingRecipe,
           cached: true,
+          videos,
         });
         return;
       }
+
 
       const slot = await deps.supabase.getPathSlot(slotId);
       if (!slot) {
         res.status(404).json({
           error: `Path slot ${slotId} not found`,
+        });
+        return;
+      }
+
+      // F2: only the current slot (or an already-done one, to repeat it) can
+      // be started. Checked after the cache (saved recipes always load) and
+      // after the slot lookup (an unknown slot is a 404, not locked).
+      const unlocked = await deps.supabase.isSlotUnlocked(userId, slotId);
+      if (!unlocked) {
+        res.status(403).json({
+          error: 'This recipe is locked. Finish the earlier recipes on your path first.',
+          code: 'SLOT_LOCKED',
         });
         return;
       }
@@ -232,6 +273,7 @@ export function createRecipeRouter(
       res.json({
         recipe: result.recipe,
         cached: false,
+        videos: result.videos,
       });
     } catch (error) {
       console.error('Recipe generation error:', error);

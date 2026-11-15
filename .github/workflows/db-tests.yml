@@ -7,12 +7,18 @@ on:
       - 'supabase/**'
       - 'tests/**'
       - '.github/workflows/db-tests.yml'
+      # ai-server modules imported by tests/src/xp-reconcile.test.ts
+      - 'ai-server/src/jobs/reconcile-xp-core.ts'
+      - 'ai-server/src/services/xp-awarder.ts'
   pull_request:
     branches: [main]
     paths:
       - 'supabase/**'
       - 'tests/**'
       - '.github/workflows/db-tests.yml'
+      # ai-server modules imported by tests/src/xp-reconcile.test.ts
+      - 'ai-server/src/jobs/reconcile-xp-core.ts'
+      - 'ai-server/src/services/xp-awarder.ts'
 
 jobs:
   test:
