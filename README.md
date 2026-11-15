@@ -2,7 +2,7 @@
 
 Simmer is the JMU AI Club "Duolingo of cooking" app for new cooks. The MVP is a single fixed path, **"Weeknight basics"**: 10 weeknight dishes in a set order, each teaching a technique, with check-ins, XP, and AI-tailored tips after each cook.
 
-This repo holds the product requirements, the AI server, and the database migrations and tests. The Expo client is not in the repo yet.
+This repo holds the product requirements, the Expo app, the AI server, and the database migrations and tests.
 
 See [PRD.md](PRD.md) for the full MVP requirements, [docs/CLIENT_API.md](docs/CLIENT_API.md) for what the app calls on each screen, and [docs/DEMO_SETUP.md](docs/DEMO_SETUP.md) for standing up the demo. Every PR that changes behavior updates `PRD.md` and `README.md` in the same PR.
 
@@ -12,12 +12,26 @@ See [PRD.md](PRD.md) for the full MVP requirements, [docs/CLIENT_API.md](docs/CL
 .
 ├── PRD.md                 # Product requirements (MVP)
 ├── README.md
+├── app/                   # Expo + TypeScript client (Expo Router), UI Direction A
 ├── ai-server/             # Express AI server (local Ollama recipes, videos, check-ins)
 ├── docs/                  # Client API contract, demo runbook, AI reviews
 ├── supabase/migrations/   # Postgres / Supabase schema and XP logic
 ├── tests/                 # Database tests for the schema and XP awards
 └── .github/workflows/     # AI Server CI and Database Tests
 ```
+
+## App
+
+The Expo client covers the core loop: sign up or sign in, onboarding, Today (the plan), recipe, cook mode, check-in and session complete. Requires Node.js 20 or later. Mock mode runs it with fake data and no backend:
+
+```bash
+cd app
+npm ci
+npm run web:mock       # or: npm run start:mock for Expo Go / a simulator
+npm run check          # typecheck, lint, service-role guard, tests
+```
+
+To use the real backend, copy `app/.env.example` to `app/.env.local` and fill in the `EXPO_PUBLIC_*` values below. The app only ever uses the Supabase anon key. See [app/README.md](app/README.md) for the structure, how each screen maps to the API, and known gaps.
 
 ## AI server
 
@@ -85,6 +99,11 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `YOUTUBE_API_KEY` | YouTube Data API v3 key for technique videos (F4). Server only. Unset: recipes have no videos. |
 | `YOUTUBE_TIMEOUT_MS` | Timeout for each YouTube search in ms (default `5000`, range `100`–`60000`). |
 | `VIDEO_LOOKUP_BUDGET_MS` | Time budget in ms for all of one recipe's YouTube searches together (default `8000`, range `100`–`60000`). Past it, the recipe is returned with the videos found so far and the rest are retried on the next visit. |
+| `EXPO_PUBLIC_SUPABASE_URL` | App: Supabase project URL. In `app/.env.local`; bundled into the app, so public values only. |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | App: Supabase anon (public) key. Never the service-role key. |
+| `EXPO_PUBLIC_AI_SERVER_URL` | App: AI server base URL, reachable from the phone (LAN IP with `HOST=0.0.0.0`, or a tunnel). |
+| `EXPO_PUBLIC_MOCK_MODE` | App: `1` = fake data, no backend; `ai` = real Supabase, fake AI server; unset = live. |
+| `EXPO_PUBLIC_MOCK_XP_STATUS` | App, mock mode only: check-in XP outcome to show (`awarded`, `failed` or `skipped`). |
 
 ### Retrying failed XP awards
 

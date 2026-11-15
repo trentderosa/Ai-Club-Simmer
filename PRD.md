@@ -42,6 +42,8 @@ New users create an account and answer a short onboarding form: cooking goals, e
 - [ ] Answers are saved to the user's profile in Supabase and can be edited later from a settings or profile screen.
 - [ ] A returning user who has finished onboarding goes straight to their plan.
 
+*Client (`app/`, UI Direction A):* sign up and sign in are on one screen (email + password). The first name is saved in auth `user_metadata.first_name` for the greeting, since `profiles` has no name column. Onboarding is steps 2–4 of 4 (about you, your kitchen, your week) and upserts the user's own `profiles` row with `onboarding_completed: true`. The diet question from the mockups is left out because there's no column for it. Users with `onboarding_completed` not `true` are routed to onboarding; everyone else goes straight to Today. Editing the profile later is not built yet.
+
 ### F2. Personalized plan (one fixed path)
 Every user gets the same path, **"Weeknight basics"**: 10 dish slots in a fixed order (e.g., knife basics, eggs, pasta, stir-fry, …, roast chicken as the final mastery challenge). Personalization comes from how the recipes are written for the user (F3) and from a suggested cooking schedule.
 
@@ -53,6 +55,8 @@ Every user gets the same path, **"Weeknight basics"**: 10 dish slots in a fixed 
 - [ ] The final slot is marked as the mastery challenge.
 
 *Server side (PR #11, migration `20261115000000_plan_badges_recipe_book.sql`):* a slot is **done** once the user has at least one check-in for it. **Current** is the first slot that isn't done, and everything after it is **locked**. The app reads this with `get_my_plan()`, and `get_my_plan_summary()` gives total XP and the suggested sessions per week (rule in open question 11). The AI server enforces path order: `POST /api/recipes/generate/:slotId` returns `403 SLOT_LOCKED` for a locked slot. Done slots stay open so they can be repeated, and saved recipes always load. See `docs/CLIENT_API.md`.
+
+*Client (`app/`, UI Direction A):* Today reads `get_my_plan()` and `get_my_plan_summary()` and shows the next dish, the suggested sessions per week, total XP, all 10 slots as done / current / locked, and the final slot as the mastery challenge. Locked slots can't be opened. It re-reads both after a check-in.
 
 ### F3. AI-generated recipes
 When a user opens a path slot for the first time, the app asks the local Ollama model to generate a recipe for that dish, tailored to the user's equipment, budget, and experience. The recipe is saved, and the same saved recipe is used every time after that.
@@ -67,6 +71,8 @@ When a user opens a path slot for the first time, the app asks the local Ollama 
 
 *Server side:* the AI server now reads the slot and the user's onboarding answers from Supabase (these were stubs that returned nothing, so live generation always failed with 404). The prompt also includes the user's last 3 check-ins, which drive the Coach's note (F6).
 
+*Client (`app/`, UI Direction A):* the recipe screen calls `POST /api/recipes/generate/:slotId` with the user's access token, shows a loading state while the recipe is written (with a longer message after a few seconds), and maps each error to a screen: Retry for `500`, sign in again for `401`, back to the path for `403 SLOT_LOCKED`, and finish onboarding for the onboarding `404`. The Coach's note (F6) shows above the ingredients.
+
 ### F4. Technique videos
 Each recipe step with a technique name gets an instructional video found through the YouTube Data API.
 
@@ -80,6 +86,8 @@ Each recipe step with a technique name gets an instructional video found through
 
 *Server side:* the search query is "how to {technique} beginner cooking" (safe search, embeddable videos only). Results, including "no result", are cached per technique in `technique_videos`; a cached "no result" is retried after 7 days. A recipe makes at most 6 new searches, run concurrently under `VIDEO_LOOKUP_BUDGET_MS` (default 8000 ms). Videos are saved in `user_recipes.video_ids` and returned as `videos[techniqueName]`, but only when the lookup is complete: if any search failed, timed out, ran past the budget or was skipped by the cap, `video_ids` stays empty and the lookup runs again on the next visit (searches that worked are already in the shared cache). A genuine "no result" counts as complete. Requires `YOUTUBE_API_KEY` on the AI server; without it, recipes have no videos.
 
+*Client (`app/`, UI Direction A):* a step's video is `videos[step.techniqueName]`; a missing entry just means no video, and `null` is treated as `{}`. Thumbnails come from `i.ytimg.com` and tapping opens YouTube in the in-app browser (`expo-web-browser`) rather than an embedded player.
+
 ### F5. Cook mode
 A step-by-step screen the user follows while cooking.
 
@@ -88,6 +96,8 @@ A step-by-step screen the user follows while cooking.
 - [ ] Each step shows its instruction, its "why it matters" note (if any), and its video (if any).
 - [ ] Safety steps are visually marked (e.g., red border and a "Safety" label).
 - [ ] The final step leads to a "Done cooking" action, which opens the check-in (F6).
+
+*Client (`app/`, UI Direction A):* cook mode shows one step at a time with Next/Back, the step's "why it matters" note, a red-bordered Safety box on safety steps, the step's video, highlighted ingredient words, and an inline countdown timer when the step text names a time (e.g. "about 3 minutes"). The last step's button is Done cooking, which opens the check-in.
 
 ### F6. Feedback check-in and tip adjustment
 After cooking, the user does a quick check-in. The AI uses it to rewrite tips for the next recipe. The path order never changes.
@@ -101,6 +111,8 @@ After cooking, the user does a quick check-in. The AI uses it to rewrite tips fo
 - [ ] Check-ins don't reorder, swap, or remove path slots.
 
 *Server side:* the check-in response includes `suggest_repeat: true` when the rating is "hard". The app offers "cook again" (the slot stays open) or "skip". Nothing on the path changes either way.
+
+*Client (`app/`, UI Direction A):* the check-in screen sends the rating and optional notes (max 500 characters) to `POST /api/check-ins`, after reading `user_recipes.id` for the slot. When `suggest_repeat` is true, the session-complete screen asks "That one was tough. Cook it again before moving on?" with Cook again and Skip.
 
 ### F7. XP with caps
 Users earn XP for finishing recipes. Harder recipes are worth more, and repeating easy recipes is capped so users can't farm XP.
@@ -131,6 +143,8 @@ Users earn XP for finishing recipes. Harder recipes are worth more, and repeatin
 - [ ] Failed or missing awards are retried by the reconcile job (`npm run reconcile:xp` in `ai-server/`). It finds check-ins with no `xp_events` row created in the lookback window (default the last 168 hours, skipping ones younger than 120 seconds, at most 100 per run), oldest first, and re-runs `award_slot_xp` for each with the service role. Running it again, or twice at once, never double-awards: `UNIQUE(check_in_id)` rejects a second award, and the job counts that as already awarded. The job is run by hand for now and isn't scheduled.
 - [ ] Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`, the event-trigger helper owned by Nathan and Ezzeldin. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Approved by Trent on Nov 12, 2026.
 
+*Client (`app/`, UI Direction A):* Today shows total XP. Session complete shows `+xp_awarded` when `xp.status` is `awarded`, explains half-XP repeats and the weekly cap, and shows the totals before and after. When `xp.status` is `failed` it says the check-in is saved and the XP is on its way, with no number; `skipped` says XP isn't set up on that server.
+
 ### F8. Mastery challenge (final path recipe only)
 The user cooks the final recipe with the steps hidden, revealing individual steps only when they need help. Safety steps always stay visible.
 
@@ -143,6 +157,8 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 
 *Server side:* the slot 10 check-in may include `mastery: { hidden_steps, revealed_steps }`. These counts are stored on the check-in, are allowed only on the final slot, and `revealed_steps` can't exceed `hidden_steps`. Passing isn't gated on them yet (open question 4).
 
+*Client (`app/`, UI Direction A):* not built yet. Slot 10 opens in normal cook mode for now, and the check-in doesn't send `mastery`.
+
 ### F9. Badges
 **Acceptance criteria**
 - [ ] **Completion badge:** earned for each of slots 1–9 after cooking it and completing the check-in.
@@ -154,6 +170,8 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 
 *Server side:* `badges` is a fixed catalog: 9 completion badges, 1 mastery badge and 1 path milestone. The badge names are placeholders for Ian (open question 12). Earned badges are derived from each slot's first check-in, so a badge can't be earned twice. `get_my_badges()` lists earned and locked badges, and the check-in response lists `badges.earned` for the celebration.
 
+*Client (`app/`, UI Direction A):* session complete shows a seal for each badge in `badges.earned`. The badges screen isn't built yet.
+
 ### F10. Recipe book
 **Acceptance criteria**
 - [ ] Every recipe the user completes (cooked + check-in done, slots 1–10) is saved to their personal recipe book.
@@ -163,6 +181,8 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 - [ ] An empty recipe book shows a message explaining how to add recipes.
 
 *Server side:* `get_my_recipe_book()` returns one entry per completed slot, labeled `completed`, or `mastered` for slot 10. The full recipe is read from `user_recipes`. Clients can't update or delete check-ins, so the history behind badges and the book can't be rewritten.
+
+*Client (`app/`, UI Direction A):* not built yet.
 
 ## 5. Out of scope (MVP)
 
@@ -186,12 +206,14 @@ Do **not** build these. They're future work.
 
 | Area | Choice |
 |---|---|
-| App | React Native with **Expo** (TypeScript), run through Expo Go or a dev build |
+| App | React Native with **Expo** (TypeScript, Expo Router), run through Expo Go or a dev build. Lives in `app/`; see `app/README.md` |
 | Backend / DB | **Supabase**: Postgres, Auth (email + password), row-level security so users only see their own data |
 | AI | **Ollama** running a local model (~7–8B, e.g., a Llama or Qwen model) on **one team laptop** |
 | AI server | A small proxy on the same laptop that the app calls. It verifies the user's Supabase login token, calls Ollama with structured JSON output, calls the YouTube API, and writes results to Supabase |
 | Network | Phones reach the AI server over the same Wi-Fi or through a tunnel (ngrok or Cloudflare Tunnel) |
 | Videos | YouTube Data API v3 (search), with results cached in Supabase |
+
+**App mock mode:** `EXPO_PUBLIC_MOCK_MODE=1` runs the app on typed fake data with no Supabase or AI server (any email signs in; signing in loads a demo user 3 dishes in, creating an account starts fresh). `EXPO_PUBLIC_MOCK_MODE=ai` uses the real Supabase but fakes the AI-server calls. `EXPO_PUBLIC_MOCK_XP_STATUS=failed|skipped` previews the other check-in XP outcomes. The fake slots use the real 10 dishes and XP values; everything else in the fixtures is made up.
 
 **Constraints**
 - **Timeline:** ~2 months to a working demo. The team is part-time students.
