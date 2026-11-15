@@ -1,5 +1,5 @@
 import { CheckInIdempotencyConflict, type CheckInRecord } from '../types/check-in.js';
-import type { CheckInRepository, CreateCheckInParams } from './check-in-repository.js';
+import type { CheckInRepository, CreateCheckInParams, CreatedCheckIn } from './check-in-repository.js';
 
 export interface SupabaseCheckInConfig {
   url: string;
@@ -60,7 +60,7 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     return Array.isArray(data) && data.length > 0;
   }
 
-  async create(params: CreateCheckInParams): Promise<CheckInRecord> {
+  async create(params: CreateCheckInParams): Promise<CreatedCheckIn> {
     const url = `${this.baseUrl}/check_ins`;
 
     const response = await fetch(url, {
@@ -90,14 +90,14 @@ export class SupabaseCheckInRepository implements CheckInRepository {
 
     const data = (await response.json()) as CheckInRow | CheckInRow[];
     const row: CheckInRow = Array.isArray(data) ? data[0] : data;
-    return this.toRecord(row);
+    return { ...this.toRecord(row), created: true };
   }
 
   /**
    * A 409 on a client-supplied id means the row already exists. Return it when
    * it is the same user's same recipe/slot; otherwise reject the replay.
    */
-  private async resolveIdempotentConflict(params: CreateCheckInParams): Promise<CheckInRecord> {
+  private async resolveIdempotentConflict(params: CreateCheckInParams): Promise<CreatedCheckIn> {
     const existing = await this.getByIdAny(params.id!);
     if (!existing) {
       throw new Error(`Conflict but no existing check-in found for id ${params.id}`);
@@ -107,7 +107,7 @@ export class SupabaseCheckInRepository implements CheckInRepository {
       existing.user_recipe_id === params.user_recipe_id &&
       existing.slot_id === params.slot_id
     ) {
-      return existing;
+      return { ...existing, created: false };
     }
     throw new CheckInIdempotencyConflict();
   }

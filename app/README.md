@@ -26,6 +26,8 @@ npm start
 
 On a phone, `EXPO_PUBLIC_AI_SERVER_URL` must be reachable from the phone. Prefer an HTTPS tunnel (ngrok or Cloudflare Tunnel; see the PRD) so the access token isn't sent over plain HTTP on the LAN, and so iOS release builds aren't blocked by App Transport Security. A LAN URL like `http://192.168.1.20:3001` (start the ai-server with `HOST=0.0.0.0`) is fine for local development. `127.0.0.1` only works in a simulator on the same machine.
 
+The Expo web build can talk to the live AI server from origins in `ALLOWED_ORIGINS` (default: `http://localhost:8081`, `http://127.0.0.1:8081`, `http://localhost:19006`, and `http://127.0.0.1:19006`).
+
 ## Environment
 
 Expo inlines every `EXPO_PUBLIC_*` value into the app bundle, so **only public values go here**. The service-role key and the YouTube key stay on the ai-server.
@@ -94,7 +96,7 @@ Rules of thumb for the next person:
 | Routing | `profiles.onboarding_completed !== true` → onboarding, otherwise Today |
 | Today | `rpc('get_my_plan')` + `rpc('get_my_plan_summary')`, re-read on focus |
 | Recipe, cook mode | ai-server `POST /api/recipes/generate/:slotId` with `Authorization: Bearer <access token>`. `videos[step.techniqueName]`; missing entries mean no video, `null` is treated as `{}`. |
-| Check-in | `user_recipes.select('id').eq('slot_id', …)`, then ai-server `POST /api/check-ins` with a per-attempt `idempotency_key` (reused on Retry). After a timeout, the screen re-reads `get_my_plan()` and skips a second POST if `times_completed` already went up. |
+| Check-in | `user_recipes.select('id').eq('slot_id', …)`, then ai-server `POST /api/check-ins` with a per-attempt `idempotency_key` (reused on Retry; minted with `expo-crypto`). After a timeout, the screen re-reads `get_my_plan()` and skips a second POST if `times_completed` already went up. If the save takes more than about 15 seconds, it shows that the coach is writing a note. |
 | Session complete | The 201 response (`xp`, `badges`, `coach_note`, `focus_area`, `suggest_repeat`), plus `get_my_plan_summary` / `get_my_plan` read right before and after |
 
 XP is shown honestly: `awarded` shows `+N` (and explains repeats and the weekly cap), `failed` says the check-in is saved and the XP is on its way with no number, `skipped` says XP isn't configured on that server.
@@ -112,7 +114,7 @@ Leagues, streaks and the week row, the recipe book, the profile/You screen and t
 
 ## Known gaps
 
-- **Web against the live ai-server:** the ai-server doesn't send CORS headers, so the web build can only call it in mock mode. iOS/Android aren't affected.
+- **Web against the live ai-server:** the web build can use the real backend when the page origin is in the AI server's `ALLOWED_ORIGINS` allowlist (the default is Expo's localhost/127.0.0.1 dev origins on ports 8081 and 19006; see the root README and `ai-server/README.md`). Add a tunnel or production origin to that list if you need it. Other origins get no CORS headers. iOS/Android aren't affected.
 - **`EXPO_PUBLIC_MOCK_MODE=ai`:** recipes and check-ins are fake and nothing is written to Supabase, so the real plan doesn't advance after a mock check-in.
 - Sessions are stored with AsyncStorage (localStorage on web), which isn't encrypted. Supabase's session can exceed SecureStore's size limit; a "large secure store" wrapper is the usual fix if we want encryption at rest.
 - App icon and splash are the Expo template placeholders.

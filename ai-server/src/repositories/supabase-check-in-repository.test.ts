@@ -274,6 +274,7 @@ describe('SupabaseCheckInRepository', () => {
       const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
       expect(JSON.parse(options.body as string).id).toBe(id);
       expect(result.id).toBe(id);
+      expect(result.created).toBe(true);
     });
 
     it('returns the existing row when insert hits 409 for the same check-in', async () => {
@@ -304,6 +305,7 @@ describe('SupabaseCheckInRepository', () => {
       });
 
       expect(result.id).toBe(id);
+      expect(result.created).toBe(false);
       expect(result.went_well).toBe('first write');
       expect(result.difficulty_rating).toBe('ok');
       expect(mockFetch).toHaveBeenCalledTimes(2);

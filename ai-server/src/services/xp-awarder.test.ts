@@ -169,6 +169,59 @@ describe('SupabaseXpAwarder', () => {
     expect(options.headers).toMatchObject({ apikey: KEY, Authorization: `Bearer ${KEY}` });
   });
 
+  it('marks a read-back repeat as capped when xp_awarded is less than the slot\'s half XP', async () => {
+    const checkInId = randomUUID();
+    const slotId = 4;
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        text: () => Promise.resolve(uniqueViolationBody()),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{ xp_awarded: 20, is_first_completion: false, slot_id: slotId }]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{ xp_value: 62 }]),
+      });
+
+    const result = await awarder.award(checkInId);
+
+    expect(result).toEqual({
+      xp_awarded: 20,
+      is_first_completion: false,
+      weekly_repeat_remaining: 0,
+      capped: true,
+    });
+    const [url] = mockFetch.mock.calls[2] as [string, RequestInit];
+    expect(url).toContain('/rest/v1/path_slots');
+    expect(url).toContain(`id=eq.${slotId}`);
+  });
+
+  it('marks a read-back repeat as not capped when xp_awarded is the usual half XP', async () => {
+    const checkInId = randomUUID();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        text: () => Promise.resolve(uniqueViolationBody()),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{ xp_awarded: 31, is_first_completion: false, slot_id: 4 }]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{ xp_value: 62 }]),
+      });
+
+    const result = await awarder.award(checkInId);
+    expect(result.capped).toBe(false);
+    expect(result.xp_awarded).toBe(31);
+  });
+
   it('throws already_awarded when the unique violation row cannot be read back', async () => {
     mockFetch
       .mockResolvedValueOnce({

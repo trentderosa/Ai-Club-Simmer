@@ -6,6 +6,8 @@
  * avoids a blind re-POST after a network/timeout error: it re-reads the plan
  * and, if this slot's times_completed went up, treats the check-in as landed.
  */
+import * as ExpoCrypto from 'expo-crypto';
+
 import type { CheckInResponse, CheckInXp, PlanSlot, PlanSummary, Rating } from '../api/schemas';
 
 /** Matches ai-server defaults: 3 Ollama attempts × OLLAMA_TIMEOUT_MS (60s). */
@@ -27,8 +29,16 @@ export const CHECK_IN_TIMEOUT_MS =
 export const LANDED_WITHOUT_RESPONSE_NOTE =
   "Your check-in was saved. Your coach's note wasn't ready before the connection dropped.";
 
+/** Shown on the check-in screen if the save is still running after this long. */
+export const SLOW_CHECK_IN_HINT_MS = 15_000;
+export const SLOW_CHECK_IN_HINT = 'Saving… your coach is writing a note';
+
+/**
+ * A UUID for one check-in attempt. Uses expo-crypto so it works on Hermes
+ * (React Native has historically had no `crypto.randomUUID`) as well as web.
+ */
 export function newIdempotencyKey(): string {
-  return crypto.randomUUID();
+  return ExpoCrypto.randomUUID();
 }
 
 /** True when the plan shows this slot completed one more time than before the submit. */

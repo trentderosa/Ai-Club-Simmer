@@ -1,3 +1,5 @@
+import * as ExpoCrypto from 'expo-crypto';
+
 import {
   CHECK_IN_TIMEOUT_MS,
   LANDED_WITHOUT_RESPONSE_NOTE,
@@ -38,6 +40,20 @@ describe('check-in retry helpers', () => {
     const b = newIdempotencyKey();
     expect(a).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(a).not.toBe(b);
+  });
+
+  it('uses expo-crypto, not a Node-only crypto.randomUUID global', () => {
+    const fromExpo = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
+    const expoSpy = jest.spyOn(ExpoCrypto, 'randomUUID').mockReturnValue(fromExpo);
+    const nodeSpy = jest.spyOn(globalThis.crypto, 'randomUUID').mockReturnValue('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee');
+    try {
+      expect(newIdempotencyKey()).toBe(fromExpo);
+      expect(expoSpy).toHaveBeenCalledTimes(1);
+      expect(nodeSpy).not.toHaveBeenCalled();
+    } finally {
+      expoSpy.mockRestore();
+      nodeSpy.mockRestore();
+    }
   });
 
   it('detects a landed check-in from times_completed', () => {

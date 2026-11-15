@@ -164,16 +164,19 @@ export class SupabaseXpAwarder implements XpAwarder {
   }
 
   /**
-   * Read the xp_events row written by the first award. `capped` and
-   * `weekly_repeat_remaining` are not stored on that row; `capped` is true
-   * only when a repeat earned 0 XP (the weekly cap was already full).
+   * Read the xp_events row written by the first award. That row does not
+   * store `capped` or `weekly_repeat_remaining`. For a repeat, `capped` is
+   * recovered by comparing `xp_awarded` to the slot's usual half-XP
+   * (`floor(xp_value * 50 / 100)`, same integer math as award_slot_xp).
+   * `weekly_repeat_remaining` is not stored and is not sent to the client;
+   * it is left as 0 here.
    */
   private async fetchExistingAward(
     checkInId: string,
     signal: AbortSignal
   ): Promise<XpAwardResult | null> {
     const url = new URL(`${this.restUrl}/xp_events`);
-    url.searchParams.set('select', 'xp_awarded,is_first_completion');
+    url.searchParams.set('select', 'xp_awarded,is_first_completion,slot_id');
     url.searchParams.set('check_in_id', `eq.${checkInId}`);
     url.searchParams.set('limit', '1');
 
@@ -187,16 +190,55 @@ export class SupabaseXpAwarder implements XpAwarder {
     const data = (await response.json()) as Array<{
       xp_awarded?: unknown;
       is_first_completion?: unknown;
+      slot_id?: unknown;
     }>;
     const row = Array.isArray(data) ? data[0] : undefined;
     if (!row || typeof row.xp_awarded !== 'number' || typeof row.is_first_completion !== 'boolean') {
       return null;
     }
+
+    const capped = row.is_first_completion
+      ? false
+      : await this.repeatWasCapped(row.xp_awarded, row.slot_id, signal);
+
     return {
       xp_awarded: row.xp_awarded,
       is_first_completion: row.is_first_completion,
       weekly_repeat_remaining: 0,
-      capped: !row.is_first_completion && row.xp_awarded === 0,
+      capped,
     };
+  }
+
+  /**
+   * True when a repeat earned less than the usual 50% award, including 0.
+   * If the slot's xp_value can't be read, only a 0-XP repeat is treated as capped
+   * (a partial cap cannot be distinguished from a full half-award).
+   */
+  private async repeatWasCapped(
+    xpAwarded: number,
+    slotId: unknown,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    if (xpAwarded === 0) return true;
+    if (typeof slotId !== 'number') return false;
+
+    const url = new URL(`${this.restUrl}/path_slots`);
+    url.searchParams.set('select', 'xp_value');
+    url.searchParams.set('id', `eq.${slotId}`);
+    url.searchParams.set('limit', '1');
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: this.headers,
+      signal,
+    });
+    if (!response.ok) return false;
+
+    const data = (await response.json()) as Array<{ xp_value?: unknown }>;
+    const xpValue = Array.isArray(data) ? data[0]?.xp_value : undefined;
+    if (typeof xpValue !== 'number') return false;
+
+    const usualRepeatXp = Math.floor((xpValue * 50) / 100);
+    return xpAwarded < usualRepeatXp;
   }
 }

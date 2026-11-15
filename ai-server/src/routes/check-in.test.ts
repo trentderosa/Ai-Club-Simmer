@@ -3,7 +3,7 @@ import request from 'supertest';
 import express from 'express';
 import { randomUUID } from 'crypto';
 import { createCheckInRouter } from './check-in.js';
-import { CheckInService } from '../services/check-in-service.js';
+import { CheckInService, REPLAY_COACH_NOTE } from '../services/check-in-service.js';
 import { InMemoryCheckInRepository } from '../repositories/in-memory-check-in-repository.js';
 import type { JwtVerifier, JwtVerifyResult } from '../services/jwt-verifier.js';
 import type { CoachNoteGenerator } from '../services/coach-note.js';
@@ -618,6 +618,9 @@ describe('Check-in API idempotency_key', () => {
     expect(repository.getAllCheckIns()).toHaveLength(1);
     expect(award).toHaveBeenCalledTimes(2);
     expect(award).toHaveBeenCalledWith(key);
+    expect(first.body.coach_note).toBe('Nice.');
+    expect(retry.body.coach_note).toBe(REPLAY_COACH_NOTE.note);
+    expect(retry.body.focus_area).toBeUndefined();
   });
 
   it('returns 400 when idempotency_key is not a UUID', async () => {

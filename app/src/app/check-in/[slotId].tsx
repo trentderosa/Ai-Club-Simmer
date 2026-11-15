@@ -10,7 +10,7 @@
  * to Complete without posting again.
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 
 import type { PlanSlot, PlanSummary, Rating } from '../../api';
@@ -19,7 +19,13 @@ import { Field, Segmented, type SegmentOption } from '../../components/choice';
 import { gutter, Screen, TopBar } from '../../components/layout';
 import { ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
-import { didCheckInLand, newIdempotencyKey, responseForLandedCheckIn } from '../../domain/check-in-retry';
+import {
+  didCheckInLand,
+  newIdempotencyKey,
+  responseForLandedCheckIn,
+  SLOW_CHECK_IN_HINT,
+  SLOW_CHECK_IN_HINT_MS,
+} from '../../domain/check-in-retry';
 import { errorCopy } from '../../domain/error-messages';
 import { isApiError } from '../../api';
 import { useFlowCache } from '../../state/flow-cache';
@@ -63,10 +69,18 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [idempotencyKey] = useState(newIdempotencyKey);
+  const [slowHint, setSlowHint] = useState(false);
+
+  useEffect(() => {
+    if (!saving) return;
+    const timer = setTimeout(() => setSlowHint(true), SLOW_CHECK_IN_HINT_MS);
+    return () => clearTimeout(timer);
+  }, [saving]);
 
   async function submit() {
     if (!rating) return;
     setSaving(true);
+    setSlowHint(false);
     setError(null);
     let summaryBefore: PlanSummary | null = null;
     try {
@@ -106,6 +120,7 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
         if (recovered) return;
       }
       setError(errorCopy(e).body);
+      setSlowHint(false);
       setSaving(false);
     }
   }
@@ -162,6 +177,11 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
           <T variant="caption" style={{ marginTop: 16 }}>
             If you rate it Hard, we’ll offer to cook it again before moving on. Your path never changes.
           </T>
+          {slowHint ? (
+            <T variant="caption" style={{ marginTop: 16 }} accessibilityLiveRegion="polite">
+              {SLOW_CHECK_IN_HINT}
+            </T>
+          ) : null}
           {error ? (
             <View style={styles.error} accessibilityRole="alert">
               <T variant="small" style={{ color: color.safety }}>

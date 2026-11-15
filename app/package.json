@@ -9,6 +9,7 @@
     "@supabase/supabase-js": "^2.119.0",
     "expo": "~58.0.25",
     "expo-constants": "~58.0.16",
+    "expo-crypto": "~58.0.8",
     "expo-font": "~58.0.12",
     "expo-image": "~58.0.18",
     "expo-linking": "~58.0.17",
@@ -58,6 +59,9 @@
     "preset": "jest-expo",
     "testMatch": [
       "<rootDir>/src/**/*.test.ts?(x)"
-    ]
+    ],
+    "moduleNameMapper": {
+      "^expo-crypto$": "<rootDir>/src/test/expo-crypto.mock.ts"
+    }
   }
 }

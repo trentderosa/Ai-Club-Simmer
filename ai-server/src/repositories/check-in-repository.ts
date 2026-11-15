@@ -1,5 +1,10 @@
 import type { CheckInRecord } from '../types/check-in.js';
 
+/** Result of create(): `created` is false when this was an idempotent replay. */
+export interface CreatedCheckIn extends CheckInRecord {
+  created: boolean;
+}
+
 export interface CreateCheckInParams {
   user_id: string;
   user_recipe_id: string;
@@ -29,7 +34,7 @@ export interface CheckInRepository {
    * but SupabaseCheckInRepository does not (it uses service-role and bypasses RLS).
    * Do not rely on create() to enforce ownership - always validate first.
    */
-  create(params: CreateCheckInParams): Promise<CheckInRecord>;
+  create(params: CreateCheckInParams): Promise<CreatedCheckIn>;
 
   /**
    * Get a check-in by ID.

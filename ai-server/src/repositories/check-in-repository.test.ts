@@ -114,7 +114,9 @@ describe('InMemoryCheckInRepository', () => {
       });
 
       expect(first.id).toBe(id);
+      expect(first.created).toBe(true);
       expect(replay.id).toBe(id);
+      expect(replay.created).toBe(false);
       expect(replay.went_well).toBe('first');
       expect(replay.difficulty_rating).toBe('ok');
       expect(repository.getAllCheckIns()).toHaveLength(1);

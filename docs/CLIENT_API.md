@@ -128,7 +128,7 @@ Content-Type: application/json
 
 `user_recipe_id`: read it with `supabase.from('user_recipes').select('id').eq('slot_id', slotId).single()` (RLS returns only your rows).
 
-`idempotency_key` is a client-generated UUID, unique for one check-in attempt. The server stores it as `check_ins.id` (the existing primary key; no new column). Send the same key if you retry after a timeout or drop: the first write wins, a second POST with that key returns the original check-in and does not insert another row or award XP again (`award_slot_xp` is already `UNIQUE(check_in_id)`). A key that already belongs to a different user, recipe, or slot returns `409 { code: "IDEMPOTENCY_CONFLICT" }`. Older clients that omit the key keep the previous behavior (a new id each time). After a timeout, the client should re-read `get_my_plan()` and only re-POST if this slot's `times_completed` did not go up.
+`idempotency_key` is a client-generated UUID, unique for one check-in attempt. The server stores it as `check_ins.id` (the existing primary key; no new column). Send the same key if you retry after a timeout or drop: the first write wins, a second POST with that key returns the original check-in and does not insert another row or award XP again (`award_slot_xp` is already `UNIQUE(check_in_id)`). A replay also skips a second Coach's note generation and returns a short "already saved" note. A key that already belongs to a different user, recipe, or slot returns `409 { code: "IDEMPOTENCY_CONFLICT" }`. Older clients that omit the key keep the previous behavior (a new id each time). After a timeout, the client should re-read `get_my_plan()` and only re-POST if this slot's `times_completed` did not go up.
 
 Response `201`:
 

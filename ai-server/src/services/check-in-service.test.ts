@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { randomUUID } from 'crypto';
-import { CheckInService, type CheckInLogger } from './check-in-service.js';
+import { CheckInService, REPLAY_COACH_NOTE, type CheckInLogger } from './check-in-service.js';
 import { InMemoryCheckInRepository } from '../repositories/in-memory-check-in-repository.js';
 import type { CoachNoteGenerator } from './coach-note.js';
 import { XpAwardError, type XpAwardResult, type XpAwarder } from './xp-awarder.js';
@@ -204,6 +204,10 @@ describe('CheckInService idempotent retry', () => {
     expect(awards.size).toBe(1);
     const totalXp = [...awards.values()].reduce((sum, a) => sum + a.xp_awarded, 0);
     expect(totalXp).toBe(102);
+    expect(coach.generate).toHaveBeenCalledTimes(1);
+    expect(retry.coach_note).toBe(REPLAY_COACH_NOTE.note);
+    expect(retry.focus_area).toBeUndefined();
+    expect(original.coach_note).toBe('Nice work.');
   });
 
   it('creates two check-ins and two awards when the keys differ (a real repeat)', async () => {
