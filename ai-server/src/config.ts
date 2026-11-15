@@ -28,6 +28,11 @@ export interface Config {
     /** Wall-clock budget for all of one recipe's searches together. */
     lookupBudgetMs: number;
   };
+  /**
+   * Browser origins allowed to call this server (Expo web). Echoed back as
+   * Access-Control-Allow-Origin; never includes *.
+   */
+  allowedOrigins: string[];
 }
 
 type Env = Record<string, string | undefined>;
@@ -57,6 +62,84 @@ export function parseBoundedIntEnv(
 export const XP_AWARD_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
 export const YOUTUBE_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
 export const VIDEO_LOOKUP_BUDGET_MS = { default: 8000, min: 100, max: 60000 } as const;
+
+/**
+ * Default CORS allowlist when ALLOWED_ORIGINS is unset or empty.
+ * Expo SDK 58 (`expo start` and `expo start --web`) serves Metro and the web
+ * app on port 8081. 19006 is the classic Expo webpack web port. localhost and
+ * 127.0.0.1 are both listed because browsers treat them as different origins.
+ */
+export const DEFAULT_ALLOWED_ORIGINS: readonly string[] = [
+  'http://localhost:8081',
+  'http://127.0.0.1:8081',
+  'http://localhost:19006',
+  'http://127.0.0.1:19006',
+];
+
+/**
+ * Parse ALLOWED_ORIGINS (comma-separated). Unset or empty uses the Expo
+ * dev/web defaults. Entries must be origins (scheme + host, optional port,
+ * no path). A wildcard is rejected so Access-Control-Allow-Origin is never *.
+ */
+export function parseAllowedOrigins(env: Env = process.env): string[] {
+  const raw = env.ALLOWED_ORIGINS;
+  if (raw === undefined || raw.trim() === '') {
+    return [...DEFAULT_ALLOWED_ORIGINS];
+  }
+  const entries = raw
+    .split(',')
+    .map((part) => part.trim().replace(/\/+$/, ''))
+    .filter((part) => part.length > 0);
+  if (entries.some((entry) => entry === '*')) {
+    throw new Error(
+      'ALLOWED_ORIGINS must not include * (wildcard). List explicit origins instead.'
+    );
+  }
+  if (entries.length === 0) {
+    throw new Error(
+      'ALLOWED_ORIGINS is set but contains no origins. List explicit origins, or unset it to use the defaults.'
+    );
+  }
+  return entries.map((entry) => {
+    const canonical = canonicalizeOrigin(entry);
+    if (!canonical) {
+      throw new Error(
+        'ALLOWED_ORIGINS entries must be origins like http://localhost:8081 (scheme + host, optional port, no path)'
+      );
+    }
+    return canonical;
+  });
+}
+
+/**
+ * Returns the origin in the form browsers send (default ports omitted), or
+ * null if the value is not a scheme+host origin.
+ */
+function canonicalizeOrigin(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (
+      (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+      url.hostname.length === 0 ||
+      url.pathname !== '/' ||
+      url.search !== '' ||
+      url.hash !== '' ||
+      url.username !== '' ||
+      url.password !== ''
+    ) {
+      return null;
+    }
+    const canonical = `${url.protocol}//${url.host}`;
+    const defaultPort = url.protocol === 'https:' ? '443' : '80';
+    const withDefaultPort = url.port === '' ? `${url.protocol}//${url.hostname}:${defaultPort}` : canonical;
+    if (value !== canonical && value !== withDefaultPort) {
+      return null;
+    }
+    return canonical;
+  } catch {
+    return null;
+  }
+}
 
 export function loadYouTubeConfig(env: Env = process.env): Config['youtube'] {
   const apiKey = env.YOUTUBE_API_KEY?.trim();
@@ -116,6 +199,7 @@ export function loadConfig(): Config {
       timeoutMs: loadXpAwardTimeoutMs(),
     },
     youtube: loadYouTubeConfig(),
+    allowedOrigins: parseAllowedOrigins(),
   };
 }
 

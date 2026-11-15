@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertProductionConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseBoundedIntEnv } from './config.js';
+import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -88,5 +88,54 @@ describe('loadYouTubeConfig', () => {
         'VIDEO_LOOKUP_BUDGET_MS must be a whole number from 100 to 60000'
       );
     }
+  });
+});
+
+describe('parseAllowedOrigins', () => {
+  it('defaults to the Expo dev and web origins when unset or empty', () => {
+    expect(parseAllowedOrigins({})).toEqual([...DEFAULT_ALLOWED_ORIGINS]);
+    expect(parseAllowedOrigins({ ALLOWED_ORIGINS: '' })).toEqual([...DEFAULT_ALLOWED_ORIGINS]);
+    expect(parseAllowedOrigins({ ALLOWED_ORIGINS: '   ' })).toEqual([...DEFAULT_ALLOWED_ORIGINS]);
+    expect(DEFAULT_ALLOWED_ORIGINS).toEqual([
+      'http://localhost:8081',
+      'http://127.0.0.1:8081',
+      'http://localhost:19006',
+      'http://127.0.0.1:19006',
+    ]);
+  });
+
+  it('parses a comma-separated list, trimming whitespace and trailing slashes', () => {
+    expect(
+      parseAllowedOrigins({
+        ALLOWED_ORIGINS: ' https://app.example:443/, http://localhost:8081 ',
+      })
+    ).toEqual(['https://app.example', 'http://localhost:8081']);
+  });
+
+  it('rejects a wildcard without echoing the value', () => {
+    expect(() => parseAllowedOrigins({ ALLOWED_ORIGINS: '*' })).toThrow(
+      'ALLOWED_ORIGINS must not include * (wildcard). List explicit origins instead.'
+    );
+    expect(() => parseAllowedOrigins({ ALLOWED_ORIGINS: 'http://localhost:8081, *' })).toThrow(
+      'ALLOWED_ORIGINS must not include * (wildcard). List explicit origins instead.'
+    );
+  });
+
+  it('rejects entries that are not origins, without echoing them', () => {
+    expect(() => parseAllowedOrigins({ ALLOWED_ORIGINS: 'localhost:8081' })).toThrow(
+      'ALLOWED_ORIGINS entries must be origins like http://localhost:8081 (scheme + host, optional port, no path)'
+    );
+    expect(() => parseAllowedOrigins({ ALLOWED_ORIGINS: 'http://localhost:8081/app' })).toThrow(
+      'ALLOWED_ORIGINS entries must be origins like http://localhost:8081 (scheme + host, optional port, no path)'
+    );
+    expect(() => parseAllowedOrigins({ ALLOWED_ORIGINS: 'ftp://localhost' })).toThrow(
+      'ALLOWED_ORIGINS entries must be origins like http://localhost:8081 (scheme + host, optional port, no path)'
+    );
+  });
+
+  it('rejects a list that has no origins after trimming', () => {
+    expect(() => parseAllowedOrigins({ ALLOWED_ORIGINS: ' , , ' })).toThrow(
+      'ALLOWED_ORIGINS is set but contains no origins. List explicit origins, or unset it to use the defaults.'
+    );
   });
 });
