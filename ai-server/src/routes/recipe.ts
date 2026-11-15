@@ -225,21 +225,23 @@ export function createRecipeRouter(
         return;
       }
 
-      // F2: only the current slot (or an already-done one, to repeat it) can
-      // be started. Checked after the cache so saved recipes always load.
-      const unlocked = await deps.supabase.isSlotUnlocked(userId, slotId);
-      if (!unlocked) {
-        res.status(403).json({
-          error: 'This recipe is locked. Finish the earlier recipes on your path first.',
-          code: 'SLOT_LOCKED',
-        });
-        return;
-      }
 
       const slot = await deps.supabase.getPathSlot(slotId);
       if (!slot) {
         res.status(404).json({
           error: `Path slot ${slotId} not found`,
+        });
+        return;
+      }
+
+      // F2: only the current slot (or an already-done one, to repeat it) can
+      // be started. Checked after the cache (saved recipes always load) and
+      // after the slot lookup (an unknown slot is a 404, not locked).
+      const unlocked = await deps.supabase.isSlotUnlocked(userId, slotId);
+      if (!unlocked) {
+        res.status(403).json({
+          error: 'This recipe is locked. Finish the earlier recipes on your path first.',
+          code: 'SLOT_LOCKED',
         });
         return;
       }

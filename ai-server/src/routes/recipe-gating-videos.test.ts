@@ -187,3 +187,16 @@ describe('F4 technique videos', () => {
     expect(res.body.videos).toEqual({});
   });
 });
+
+describe('F2 gating order', () => {
+  it('an unknown slot is 404, not SLOT_LOCKED', async () => {
+    const { app } = setup({
+      pathRepository: pathRepo({
+        getPathSlot: vi.fn().mockResolvedValue(null),
+        isSlotUnlocked: vi.fn().mockResolvedValue(false),
+      }),
+    });
+    const res = await request(app).post('/api/recipes/generate/99').set('Authorization', `Bearer ${token()}`);
+    expect(res.status).toBe(404);
+  });
+});
