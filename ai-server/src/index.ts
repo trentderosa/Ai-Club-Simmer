@@ -1,5 +1,6 @@
 import express from 'express';
 import { assertProductionConfig, loadConfig } from './config.js';
+import { createCorsMiddleware } from './middleware/cors.js';
 import { createOllamaClient } from './services/ollama-client.js';
 import {
   createSupabaseService,
@@ -35,6 +36,8 @@ if (process.env.TRUST_PROXY === 'true') {
   app.set('trust proxy', 1);
 }
 
+// CORS first so browser preflight (OPTIONS) never hits auth or rate limits.
+app.use(createCorsMiddleware(config.allowedOrigins));
 app.use(express.json());
 
 const ollamaClient = createOllamaClient(config.ollama);
@@ -200,4 +203,5 @@ app.listen(config.port, config.host, () => {
   console.info(`Preview route: ${config.enablePreviewRoute ? 'ENABLED' : 'disabled'}`);
   console.info(`Technique videos: ${services.videoFinder ? 'ENABLED' : 'disabled'}`);
   console.info(`Stub auth: ${isStubAuthAllowed() ? 'ENABLED (dev only)' : 'disabled'}`);
+  console.info(`CORS origins: ${config.allowedOrigins.join(', ')}`);
 });
