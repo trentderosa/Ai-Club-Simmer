@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
+import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -137,5 +137,34 @@ describe('parseAllowedOrigins', () => {
     expect(() => parseAllowedOrigins({ ALLOWED_ORIGINS: ' , , ' })).toThrow(
       'ALLOWED_ORIGINS is set but contains no origins. List explicit origins, or unset it to use the defaults.'
     );
+  });
+});
+
+describe('loadCookAnythingConfig', () => {
+  it('defaults to 80 characters and 5 uncached generations per hour', () => {
+    expect(loadCookAnythingConfig({})).toEqual({
+      maxDishLength: 80,
+      generationRateLimit: { windowMs: 3_600_000, maxGenerations: 5 },
+    });
+  });
+
+  it('reads bounded overrides', () => {
+    expect(
+      loadCookAnythingConfig({
+        COOK_ANYTHING_MAX_DISH_LENGTH: '120',
+        COOK_ANYTHING_RATE_LIMIT_WINDOW_MS: '60000',
+        COOK_ANYTHING_RATE_LIMIT_MAX: '2',
+      })
+    ).toEqual({
+      maxDishLength: 120,
+      generationRateLimit: { windowMs: 60_000, maxGenerations: 2 },
+    });
+  });
+
+  it('rejects an out-of-range max length, naming only the variable', () => {
+    expect(() => loadCookAnythingConfig({ COOK_ANYTHING_MAX_DISH_LENGTH: '9' })).toThrow(
+      /COOK_ANYTHING_MAX_DISH_LENGTH/
+    );
+    expect(() => loadCookAnythingConfig({ COOK_ANYTHING_MAX_DISH_LENGTH: '9' })).not.toThrow(/9/);
   });
 });

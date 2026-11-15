@@ -20,8 +20,22 @@ import {
   type ProfileInput,
   type RecipeBookEntry,
   type RecipeResponse,
+  type CookAnythingResponse,
 } from '../schemas';
-import { BADGES, DEMO_USER, MOCK_CHECK_IN_REPLIES, MOCK_COACH_NOTES, RECIPES, SLOTS, VIDEOS } from './fixtures';
+import {
+  BADGES,
+  CANNED_COOK_ANYTHING_COUNTS,
+  CANNED_COOK_ANYTHING_VIDEOS,
+  CANNED_COOK_ANYTHING_XP,
+  cannedCookAnythingRecipe,
+  DEMO_USER,
+  MOCK_CHECK_IN_REPLIES,
+  MOCK_COACH_NOTES,
+  RECIPES,
+  SLOTS,
+  VIDEOS,
+} from './fixtures';
+import { normalizeDishName, trimDishQuery, clientDishError } from '../../domain/dish-name';
 import { awardXp, derivePlan, deriveSummary } from './mock-plan';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -38,6 +52,8 @@ interface MockState {
   totalXp: number;
   repeatXpThisWeek: number;
   checkInsByKey: Map<string, CheckInResponse>;
+  generatedByName: Map<string, CookAnythingResponse>;
+  generatedCompletions: Set<string>;
 }
 
 export interface MockOptions {
@@ -67,6 +83,8 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     totalXp: 0,
     repeatXpThisWeek: 0,
     checkInsByKey: new Map(),
+    generatedByName: new Map(),
+    generatedCompletions: new Set(),
   };
 
   function setSession(s: AppSession | null) {
@@ -91,6 +109,8 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     state.recipeSlots = new Set();
     state.totalXp = 0;
     state.checkInsByKey = new Map();
+    state.generatedByName = new Map();
+    state.generatedCompletions = new Set();
     for (const s of SLOTS.slice(0, DEMO_USER.completedSlots)) {
       const extra = DEMO_USER.extraCooks[s.slot_id] ?? 0;
       state.completions[s.slot_id] = 1 + extra;
@@ -162,6 +182,8 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       state.totalXp = 0;
       state.repeatXpThisWeek = 0;
       state.checkInsByKey = new Map();
+      state.generatedByName = new Map();
+      state.generatedCompletions = new Set();
       setSession({ userId: 'mock-user-new', email, firstName: firstName.trim() || null, accessToken: 'mock-access-token' });
       return { signedIn: true };
     },
@@ -239,6 +261,49 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       return mockUserRecipeId(slotId);
     },
 
+    async cookAnything(dish): Promise<CookAnythingResponse> {
+      requireSession();
+      const error = clientDishError(dish);
+      if (error) throw new ApiError('validation', error, 400, 'INVALID_DISH');
+      const dishQuery = trimDishQuery(dish);
+      const normalized = normalizeDishName(dishQuery);
+      const existing = state.generatedByName.get(normalized);
+      if (existing) {
+        await delay(200);
+        return { ...existing, cached: true };
+      }
+      await delay(1400);
+      if (!opts.skipGating && !state.profile?.onboarding_completed) {
+        throw new ApiError('onboarding_required', 'User profile not found. Please complete onboarding first.', 404);
+      }
+      const pretty = dishQuery
+        .split(' ')
+        .map((word) => (word ? word[0].toUpperCase() + word.slice(1) : word))
+        .join(' ');
+      const id = `10000000-0000-4000-8000-${String(state.generatedByName.size + 1).padStart(12, '0')}`;
+      const response: CookAnythingResponse = {
+        generated_recipe_id: id,
+        dish_query: dishQuery,
+        normalized_dish_name: normalized,
+        recipe: cannedCookAnythingRecipe(pretty),
+        cached: false,
+        videos: CANNED_COOK_ANYTHING_VIDEOS,
+        xp_value: CANNED_COOK_ANYTHING_XP,
+        counts: { ...CANNED_COOK_ANYTHING_COUNTS },
+      };
+      state.generatedByName.set(normalized, response);
+      return response;
+    },
+
+    async getGeneratedRecipe(id) {
+      await delay(150);
+      requireSession();
+      for (const saved of state.generatedByName.values()) {
+        if (saved.generated_recipe_id === id) return { ...saved, cached: true };
+      }
+      throw new ApiError('not_found', 'No saved recipe for that dish yet.');
+    },
+
     async submitCheckIn(input): Promise<CheckInResponse> {
       await delay(900);
       requireSession();
@@ -247,7 +312,37 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
         const existing = state.checkInsByKey.get(body.idempotency_key);
         if (existing) return existing;
       }
-      if (body.user_recipe_id !== mockUserRecipeId(body.slot_id) || (!opts.skipGating && !state.recipeSlots.has(body.slot_id))) {
+      if (body.generated_recipe_id) {
+        let found: CookAnythingResponse | undefined;
+        for (const saved of state.generatedByName.values()) {
+          if (saved.generated_recipe_id === body.generated_recipe_id) found = saved;
+        }
+        if (!found) throw new ApiError('invalid_recipe', 'Invalid generated_recipe_id', 400, 'INVALID_RECIPE');
+        const first = !state.generatedCompletions.has(found.normalized_dish_name);
+        if (first) state.generatedCompletions.add(found.normalized_dish_name);
+        let xp: CheckInResponse['xp'];
+        const xpStatus = opts.xpStatus ?? 'awarded';
+        if (xpStatus === 'awarded') {
+          const amount = first ? found.xp_value : Math.floor((found.xp_value * 50) / 100);
+          state.totalXp += amount;
+          if (!first) state.repeatXpThisWeek += amount;
+          xp = { status: 'awarded', xp_awarded: amount, is_first_completion: first, capped: false };
+        } else {
+          xp = { status: xpStatus };
+        }
+        const reply = MOCK_CHECK_IN_REPLIES[body.rating];
+        const response: CheckInResponse = {
+          check_in_id: body.idempotency_key ?? `mock-check-in-${Date.now()}`,
+          coach_note: reply.note,
+          focus_area: reply.focus,
+          xp,
+          badges: { status: 'ok', earned: [] },
+          suggest_repeat: body.rating === 'hard',
+        };
+        if (body.idempotency_key) state.checkInsByKey.set(body.idempotency_key, response);
+        return response;
+      }
+      if (!body.slot_id || !body.user_recipe_id || body.user_recipe_id !== mockUserRecipeId(body.slot_id) || (!opts.skipGating && !state.recipeSlots.has(body.slot_id))) {
         throw new ApiError('invalid_recipe', 'Invalid user_recipe_id or slot_id mismatch', 400, 'INVALID_RECIPE');
       }
       const slot = SLOTS.find((s) => s.slot_id === body.slot_id);

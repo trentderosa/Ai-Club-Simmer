@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { ZodError } from 'zod';
-import { CheckInIdempotencyConflict, CheckInInputSchema } from '../types/check-in.js';
+import { CheckInIdempotencyConflict, CheckInInputSchema, isGeneratedCheckIn, isPathCheckIn } from '../types/check-in.js';
 import type { CheckInService } from '../services/check-in-service.js';
 import type { JwtVerifier } from '../services/jwt-verifier.js';
 import { createAuthMiddleware } from '../middleware/authenticate.js';
@@ -90,15 +90,17 @@ export function createCheckInRouter(
 
       const input = CheckInInputSchema.parse(req.body);
 
-      const isValidRecipe = await deps.checkInService.validateUserRecipe(
-        userId,
-        input.user_recipe_id,
-        input.slot_id
-      );
+      const isValidRecipe = isGeneratedCheckIn(input)
+        ? await deps.checkInService.validateGeneratedRecipe(userId, input.generated_recipe_id)
+        : isPathCheckIn(input)
+          ? await deps.checkInService.validateUserRecipe(userId, input.user_recipe_id, input.slot_id)
+          : false;
 
       if (!isValidRecipe) {
         res.status(400).json({ 
-          error: 'Invalid user_recipe_id or slot_id mismatch',
+          error: isGeneratedCheckIn(input)
+            ? 'Invalid generated_recipe_id'
+            : 'Invalid user_recipe_id or slot_id mismatch',
           code: 'INVALID_RECIPE'
         });
         return;

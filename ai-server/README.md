@@ -2,7 +2,7 @@
 
 Local Node/TypeScript server that proxies recipe generation and Coach's notes to Ollama,
 finds technique videos on YouTube, verifies Supabase user JWTs, enforces path order, saves
-check-ins, awards XP, and reports earned badges. Request and response shapes are in
+check-ins, awards XP (path slots and Cook anything), and reports earned badges. Request and response shapes are in
 [../docs/CLIENT_API.md](../docs/CLIENT_API.md).
 
 ## Development
@@ -35,7 +35,7 @@ Set these in the server's environment (never in the repo, chat, or logs):
 | Variable | Purpose |
 | --- | --- |
 | `SUPABASE_URL` | Project URL, e.g. `https://<project-ref>.supabase.co` |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. Server-side only. Used to save check-ins and call `award_slot_xp` |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. Server-side only. Used to save check-ins and call `award_slot_xp` / `award_generated_recipe_xp` |
 | `SUPABASE_JWT_SECRET` **or** `SUPABASE_JWKS_URI` | Verifies user access tokens (HS256 secret or RS256 JWKS URL) |
 | `XP_AWARD_TIMEOUT_MS` | Optional. Timeout for each `award_slot_xp` call (default `5000` ms, range `100`–`60000`). An invalid value stops startup |
 | `YOUTUBE_API_KEY` | Optional. Enables technique videos (F4). Server-side only |
@@ -68,6 +68,30 @@ the recipe loads. Video problems never fail the recipe. They are logged as
 If a profile can't be used for generation, the server logs `user_profile_invalid` with the
 failing field paths only (no values). Equipment is cleaned first (trimmed, empty and duplicate
 items dropped, items cut to 100 chars, at most 50 items), so messy equipment never blocks a user.
+
+
+## Cook anything
+
+`POST /api/recipes/cook-anything` accepts `{ "dish": "..." }`. The dish is trimmed and
+capped (`COOK_ANYTHING_MAX_DISH_LENGTH`, default 80), and empty, junk, or injection-like
+input is rejected (`400 INVALID_DISH`). The name is normalized (lowercase, trimmed,
+collapsed whitespace, punctuation stripped). A saved row in `user_generated_recipes` for
+that user and normalized name is returned as `cached: true` and does not count against the
+per-user generation rate limit (`COOK_ANYTHING_RATE_LIMIT_*`, default 5 uncached
+generations per hour). Otherwise the server generates through the existing Ollama recipe
+path, looks up videos the same way as a path slot, clamps the XP *counts* (not the
+saved recipe body) to `FREEFORM_COUNT_BOUNDS` (1–10 / 1–12 / 1–45), and stores the
+frozen `xp_value`. A later save of the same dish cannot raise those counts. A fully
+clamped recipe has `xp_value` 177, below roast chicken (181). The daily cap
+(default 200) still applies when today's slot + free-form XP would exceed it.
+
+The per-user generation limiter is in-memory per process: it resets on restart, is not
+shared across instances, and does not prune old user keys. That is enough for the demo.
+
+`POST /api/check-ins` with `generated_recipe_id` awards XP via `award_generated_recipe_xp`
+(service role only). It uses the same slot formula, 50% repeats keyed on the normalized
+dish name, the shared 100 XP/week repeat cap, and a daily cap (`freeform_daily_cap`,
+default 200) that counts today's slot XP and free-form XP together.
 
 ## XP on check-in
 

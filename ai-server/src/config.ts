@@ -1,3 +1,8 @@
+import {
+  COOK_ANYTHING_MAX_DISH_LENGTH,
+  COOK_ANYTHING_RATE_LIMIT,
+} from './cook-anything/constants.js';
+
 export interface Config {
   port: number;
   host: string;
@@ -33,6 +38,13 @@ export interface Config {
    * Access-Control-Allow-Origin; never includes *.
    */
   allowedOrigins: string[];
+  cookAnything: {
+    maxDishLength: number;
+    generationRateLimit: {
+      windowMs: number;
+      maxGenerations: number;
+    };
+  };
 }
 
 type Env = Record<string, string | undefined>;
@@ -200,6 +212,35 @@ export function loadConfig(): Config {
     },
     youtube: loadYouTubeConfig(),
     allowedOrigins: parseAllowedOrigins(),
+    cookAnything: loadCookAnythingConfig(),
+  };
+}
+
+export function loadCookAnythingConfig(env: Env = process.env): Config['cookAnything'] {
+  return {
+    maxDishLength: parseBoundedIntEnv(
+      env,
+      'COOK_ANYTHING_MAX_DISH_LENGTH',
+      COOK_ANYTHING_MAX_DISH_LENGTH,
+      10,
+      200
+    ),
+    generationRateLimit: {
+      windowMs: parseBoundedIntEnv(
+        env,
+        'COOK_ANYTHING_RATE_LIMIT_WINDOW_MS',
+        COOK_ANYTHING_RATE_LIMIT.windowMs.default,
+        COOK_ANYTHING_RATE_LIMIT.windowMs.min,
+        COOK_ANYTHING_RATE_LIMIT.windowMs.max
+      ),
+      maxGenerations: parseBoundedIntEnv(
+        env,
+        'COOK_ANYTHING_RATE_LIMIT_MAX',
+        COOK_ANYTHING_RATE_LIMIT.maxGenerations.default,
+        COOK_ANYTHING_RATE_LIMIT.maxGenerations.min,
+        COOK_ANYTHING_RATE_LIMIT.maxGenerations.max
+      ),
+    },
   };
 }
 

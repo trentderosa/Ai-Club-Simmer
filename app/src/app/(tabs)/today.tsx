@@ -70,7 +70,7 @@ export default function Today() {
         </View>
 
         {data.data ? (
-          <PlanBody plan={data.data.plan} summary={data.data.summary} onOpen={open} />
+          <PlanBody plan={data.data.plan} summary={data.data.summary} onOpen={open} onCookAnything={() => router.push('/cook-anything')} />
         ) : data.status === 'error' ? (
           <ErrorState error={data.error} onAction={onError} />
         ) : (
@@ -89,7 +89,7 @@ export default function Today() {
   );
 }
 
-function PlanBody({ plan, summary, onOpen }: { plan: PlanSlot[]; summary: PlanSummary; onOpen: (s: PlanSlot) => void }) {
+function PlanBody({ plan, summary, onOpen, onCookAnything }: { plan: PlanSlot[]; summary: PlanSummary; onOpen: (s: PlanSlot) => void; onCookAnything: () => void }) {
   if (plan.length === 0) {
     return <EmptyState title="No path yet" body="The path’s dishes haven’t been set up on the server. Ask the team to run the migrations." />;
   }
@@ -104,6 +104,8 @@ function PlanBody({ plan, summary, onOpen }: { plan: PlanSlot[]; summary: PlanSu
       </View>
 
       {current ? <NextUp slot={current} total={summary.total_slots} onOpen={() => onOpen(current)} /> : <PathDone summary={summary} />}
+
+      <CookAnythingCard onOpen={onCookAnything} />
 
       <View style={[gutter, styles.pathHead]}>
         <T variant="h2" accessibilityRole="header">
@@ -123,6 +125,32 @@ function PlanBody({ plan, summary, onOpen }: { plan: PlanSlot[]; summary: PlanSu
         </T>
       ) : null}
     </>
+  );
+}
+
+function CookAnythingCard({ onOpen }: { onOpen: () => void }) {
+  return (
+    <Pressable
+      onPress={onOpen}
+      accessibilityRole="button"
+      accessibilityLabel="Cook anything. Type a dish and we’ll write a recipe for your kitchen."
+      style={({ pressed }) => [styles.cookAnything, pressed && { opacity: 0.85 }]}
+    >
+      <View style={{ flex: 1 }}>
+        <T variant="overline" color="ink3">
+          Outside the path
+        </T>
+        <T variant="h3" style={{ marginTop: 6 }}>
+          Cook anything
+        </T>
+        <T variant="caption" style={{ marginTop: 4 }}>
+          Type a dish and we’ll write a recipe for your kitchen.
+        </T>
+      </View>
+      <View style={styles.goSmall}>
+        <Icon name="arrow" color="#FFFFFF" size={20} />
+      </View>
+    </Pressable>
   );
 }
 
@@ -194,6 +222,8 @@ const styles = StyleSheet.create({
   meta: { flexDirection: 'row', alignItems: 'flex-end', marginTop: 14, gap: 12 },
   nextTitle: { fontSize: 28, lineHeight: 32 },
   go: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.tomato, alignItems: 'center', justifyContent: 'center' },
+  cookAnything: { marginTop: 22, marginHorizontal: space.gutter, paddingVertical: 16, paddingHorizontal: 16, borderWidth: 1, borderColor: color.ink, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: color.sheet },
+  goSmall: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.tomato, alignItems: 'center', justifyContent: 'center' },
   pathHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 34, marginBottom: 4 },
   xpStrong: { fontFamily: font.bodyBold, color: color.ink },
   foot: { marginTop: space.s8, gap: 4 },

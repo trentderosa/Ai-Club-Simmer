@@ -11,7 +11,10 @@ import {
   PlanSummaryRowsSchema,
   ProfileInputSchema,
   ProfileSchema,
+  CookAnythingResponseSchema,
   RecipeBookSchema,
+  RecipeSchema,
+  VideosSchema,
 } from './schemas';
 import { createSupabaseClient } from './supabase';
 
@@ -146,5 +149,34 @@ export function createLiveBackend(opts: {
     },
 
     submitCheckIn: (input, token) => ai.submitCheckIn(input, token),
+
+    cookAnything: (dish, token) => ai.cookAnything(dish, token),
+
+    async getGeneratedRecipe(id) {
+      const { data, error } = await supabase
+        .from('user_generated_recipes')
+        .select('id, dish_query, normalized_dish_name, recipe_json, video_ids, step_count, ingredient_count, time_estimate_minutes, xp_value')
+        .eq('id', id)
+        .maybeSingle();
+      if (error) throw fromSupabaseError(error);
+      if (!data) throw new ApiError('not_found', 'No saved recipe for that dish yet.');
+      const recipe = RecipeSchema.safeParse(data.recipe_json);
+      if (!recipe.success) throw new ApiError('bad_response', 'Unexpected generated recipe from Supabase.');
+      const videos = VideosSchema.parse(data.video_ids ?? {});
+      return CookAnythingResponseSchema.parse({
+        generated_recipe_id: data.id,
+        dish_query: data.dish_query,
+        normalized_dish_name: data.normalized_dish_name,
+        recipe: recipe.data,
+        cached: true,
+        videos,
+        xp_value: data.xp_value,
+        counts: {
+          steps: data.step_count,
+          ingredients: data.ingredient_count,
+          minutes: data.time_estimate_minutes,
+        },
+      });
+    },
   };
 }

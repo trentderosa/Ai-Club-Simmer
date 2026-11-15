@@ -141,6 +141,8 @@ export const VideoSchema = z.object({
   videoId: z.string().min(1),
   title: z.string(),
   channelTitle: z.string().optional(),
+  /** Official YouTube URL when the server validated it. */
+  url: z.string().optional(),
 });
 export type Video = z.infer<typeof VideoSchema>;
 
@@ -161,20 +163,50 @@ export const RecipeResponseSchema = z.object({
 });
 export type RecipeResponse = z.infer<typeof RecipeResponseSchema>;
 
+export const CookAnythingCountsSchema = z.object({
+  steps: z.number().int().min(1),
+  ingredients: z.number().int().min(1),
+  minutes: z.number().int().min(1),
+});
+
+export const CookAnythingResponseSchema = z.object({
+  generated_recipe_id: z.string(),
+  dish_query: z.string(),
+  normalized_dish_name: z.string(),
+  recipe: RecipeSchema,
+  cached: z.boolean(),
+  videos: VideosSchema,
+  xp_value: z.number().int().min(1),
+  counts: CookAnythingCountsSchema,
+});
+export type CookAnythingResponse = z.infer<typeof CookAnythingResponseSchema>;
+
 // ---------- AI server: check-in (F6, F7, F9) ----------
 
 export const RATINGS = ['easy', 'ok', 'hard'] as const;
 export type Rating = (typeof RATINGS)[number];
 
-export const CheckInInputSchema = z.object({
-  user_recipe_id: z.string().uuid(),
-  slot_id: z.number().int().min(1).max(10),
-  rating: z.enum(RATINGS),
-  went_well: z.string().max(500).optional(),
-  was_hard: z.string().max(500).optional(),
-  /** Client-generated UUID, unique per check-in attempt; reused on retry. */
-  idempotency_key: z.string().uuid().optional(),
-});
+export const CheckInInputSchema = z
+  .object({
+    user_recipe_id: z.string().uuid().optional(),
+    slot_id: z.number().int().min(1).max(10).optional(),
+    generated_recipe_id: z.string().uuid().optional(),
+    rating: z.enum(RATINGS),
+    went_well: z.string().max(500).optional(),
+    was_hard: z.string().max(500).optional(),
+    /** Client-generated UUID, unique per check-in attempt; reused on retry. */
+    idempotency_key: z.string().uuid().optional(),
+  })
+  .superRefine((val, ctx) => {
+    const path = val.user_recipe_id !== undefined && val.slot_id !== undefined;
+    const gen = val.generated_recipe_id !== undefined;
+    if (path === gen) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide either a path slot or a cook-anything recipe, not both',
+      });
+    }
+  });
 export type CheckInInput = z.infer<typeof CheckInInputSchema>;
 
 export const CheckInXpSchema = z.discriminatedUnion('status', [

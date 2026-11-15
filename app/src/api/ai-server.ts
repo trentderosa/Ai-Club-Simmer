@@ -12,9 +12,11 @@ import {
   ApiErrorBodySchema,
   CheckInResponseSchema,
   RecipeResponseSchema,
+  CookAnythingResponseSchema,
   type CheckInInput,
   type CheckInResponse,
   type RecipeResponse,
+  type CookAnythingResponse,
 } from './schemas';
 
 export { CHECK_IN_TIMEOUT_MS, RECIPE_TIMEOUT_MS };
@@ -22,6 +24,7 @@ export { CHECK_IN_TIMEOUT_MS, RECIPE_TIMEOUT_MS };
 export interface AiServerClient {
   generateRecipe(slotId: number, accessToken: string): Promise<RecipeResponse>;
   submitCheckIn(input: CheckInInput, accessToken: string): Promise<CheckInResponse>;
+  cookAnything(dish: string, accessToken: string): Promise<CookAnythingResponse>;
 }
 
 type FetchFn = typeof fetch;
@@ -60,6 +63,8 @@ export function createAiServerClient(baseUrl: string, fetchFn: FetchFn = fetch):
       post(`/api/recipes/generate/${slotId}`, {}, token, RecipeResponseSchema, 'recipe', RECIPE_TIMEOUT_MS),
     submitCheckIn: (input, token) =>
       post('/api/check-ins', input, token, CheckInResponseSchema, 'check-in', CHECK_IN_TIMEOUT_MS),
+    cookAnything: (dish, token) =>
+      post('/api/recipes/cook-anything', { dish }, token, CookAnythingResponseSchema, 'recipe', RECIPE_TIMEOUT_MS),
   };
 }
 

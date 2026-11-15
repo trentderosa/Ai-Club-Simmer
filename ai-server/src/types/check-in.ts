@@ -1,9 +1,25 @@
 import { z } from 'zod';
 
+const MasterySchema = z
+  .object({
+    hidden_steps: z.number().int().min(0).max(30),
+    revealed_steps: z.number().int().min(0).max(30),
+  })
+  .refine((m) => m.revealed_steps <= m.hidden_steps, {
+    message: 'revealed_steps cannot be more than hidden_steps',
+    path: ['revealed_steps'],
+  });
+
+/**
+ * Path check-in (slot 1-10) or a cook-anything check-in (generated_recipe_id).
+ * Exactly one of those two shapes is allowed. Idempotency key is reused on
+ * retry for both, stored as the check-in row's primary key.
+ */
 export const CheckInInputSchema = z
   .object({
-    user_recipe_id: z.string().uuid(),
-    slot_id: z.number().int().min(1).max(10),
+    user_recipe_id: z.string().uuid().optional(),
+    slot_id: z.number().int().min(1).max(10).optional(),
+    generated_recipe_id: z.string().uuid().optional(),
     rating: z.enum(['easy', 'ok', 'hard']),
     went_well: z.string().max(500).optional(),
     was_hard: z.string().max(500).optional(),
@@ -11,26 +27,63 @@ export const CheckInInputSchema = z
      * F8 mastery challenge (final slot only): how many steps started hidden
      * and how many the user revealed ("Revealed X of Y hidden steps").
      */
-    mastery: z
-      .object({
-        hidden_steps: z.number().int().min(0).max(30),
-        revealed_steps: z.number().int().min(0).max(30),
-      })
-      .refine((m) => m.revealed_steps <= m.hidden_steps, {
-        message: 'revealed_steps cannot be more than hidden_steps',
-        path: ['revealed_steps'],
-      })
-      .optional(),
+    mastery: MasterySchema.optional(),
     /**
      * Client-generated UUID, unique for one check-in attempt. Reused on retry
      * so a timed-out POST cannot insert a second row or award XP twice.
-     * Stored as check_ins.id (the existing primary key); no migration needed.
-     * First write wins. Optional so older clients keep working.
+     * Stored as the check-in row's id. First write wins. Optional so older
+     * clients keep working.
      */
     idempotency_key: z.string().uuid().optional(),
+  })
+  .superRefine((val, ctx) => {
+    const hasPath = val.user_recipe_id !== undefined && val.slot_id !== undefined;
+    const hasGenerated = val.generated_recipe_id !== undefined;
+    const partialPath =
+      (val.user_recipe_id !== undefined) !== (val.slot_id !== undefined);
+    if (hasPath && hasGenerated) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide either a path slot or a cook-anything recipe, not both',
+      });
+    } else if (partialPath) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'user_recipe_id and slot_id are both required for a path check-in',
+      });
+    } else if (!hasPath && !hasGenerated) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Provide user_recipe_id and slot_id, or generated_recipe_id',
+      });
+    }
+    if (hasGenerated && val.mastery !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['mastery'],
+        message: 'mastery is only allowed for the path mastery challenge',
+      });
+    }
   });
 
 export type CheckInInput = z.infer<typeof CheckInInputSchema>;
+
+export type PathCheckInInput = CheckInInput & {
+  user_recipe_id: string;
+  slot_id: number;
+};
+
+export type GeneratedCheckInInput = CheckInInput & {
+  generated_recipe_id: string;
+};
+
+export function isGeneratedCheckIn(input: CheckInInput): input is GeneratedCheckInInput {
+  return input.generated_recipe_id !== undefined;
+}
+
+export function isPathCheckIn(input: CheckInInput): input is PathCheckInInput {
+  return input.user_recipe_id !== undefined && input.slot_id !== undefined;
+}
 
 export interface CheckInRecord {
   id: string;

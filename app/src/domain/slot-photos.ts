@@ -26,3 +26,9 @@ export const placeholderVideoThumb: number = require('../../assets/photos/board.
 export function photoForSlot(slotOrder: number): SlotPhoto | null {
   return PHOTOS[slotOrder] ?? null;
 }
+
+/** Generic kitchen photo for free-form dishes (no slot photo). */
+export const cookAnythingPhoto: SlotPhoto = {
+  source: require('../../assets/photos/board.jpg'),
+  credit: 'Photo: Webvilla, CC0',
+};
