@@ -1,4 +1,4 @@
-import { BADGES, SLOTS } from './fixtures';
+import { BADGES, MASTERY_USER, MASTERY_USER_XP, SLOTS } from './fixtures';
 import { createMockBackend, mockUserRecipeId } from './mock-backend';
 import { awardXp, derivePlan, deriveSummary } from './mock-plan';
 
@@ -168,5 +168,104 @@ describe('mock backend', () => {
     const badges = await b.getBadges();
     expect(badges.every((x) => x.earned)).toBe(true);
     expect(badges.find((x) => x.code === 'path_weeknight_basics')?.earned).toBe(true);
+  });
+});
+
+describe('mock mastery account and check-in payload', () => {
+  it('keeps the default demo user on startSignedIn and on a normal sign-in', async () => {
+    const started = createMockBackend({ latency: 0, startSignedIn: true });
+    const plan = await started.getPlan();
+    expect((await started.getSession())?.email).toBe('demo@simmer.test');
+    expect(plan.find((s) => s.status === 'current')?.slot_order).toBe(4);
+    expect((await started.getPlanSummary()).total_xp).toBe(239);
+
+    const signed = createMockBackend({ latency: 0 });
+    await signed.signIn('anyone@simmer.test', 'secret');
+    expect((await signed.getSession())?.firstName).toBe('Jordan');
+    expect((await signed.getPlan()).find((s) => s.status === 'current')?.slot_order).toBe(4);
+  });
+
+  it('signs in mastery@simmer.test already at slot 10', async () => {
+    const b = createMockBackend({ latency: 0 });
+    await b.signIn(MASTERY_USER.email, 'any-password');
+    const session = await b.getSession();
+    expect(session?.email).toBe('mastery@simmer.test');
+    expect(session?.firstName).toBe('Riley');
+    const plan = await b.getPlan();
+    expect(plan.filter((s) => s.status === 'done')).toHaveLength(9);
+    expect(plan.find((s) => s.status === 'current')).toMatchObject({ slot_order: 10, is_final: true });
+    expect((await b.getPlanSummary()).total_xp).toBe(MASTERY_USER_XP);
+    expect((await b.getBadges()).find((x) => x.code === 'mastery')?.earned).toBe(false);
+  });
+
+  it('accepts a slot 10 mastery payload and still awards the badge no matter how many steps were revealed', async () => {
+    const allRevealed = createMockBackend({ latency: 0 });
+    await allRevealed.signIn(MASTERY_USER.email, 'x');
+    await allRevealed.generateRecipe(10, 't');
+    const withReveals = await allRevealed.submitCheckIn(
+      {
+        user_recipe_id: mockUserRecipeId(10),
+        slot_id: 10,
+        rating: 'ok',
+        mastery: { hidden_steps: 3, revealed_steps: 3 },
+      },
+      't',
+    );
+    expect(withReveals.xp).toEqual({ status: 'awarded', xp_awarded: 181, is_first_completion: true, capped: false });
+    expect(withReveals.badges).toMatchObject({
+      status: 'ok',
+      earned: expect.arrayContaining([
+        expect.objectContaining({ code: 'mastery', kind: 'mastery' }),
+        expect.objectContaining({ code: 'path_weeknight_basics' }),
+      ]),
+    });
+
+    const noneRevealed = createMockBackend({ latency: 0 });
+    await noneRevealed.signIn(MASTERY_USER.email, 'x');
+    await noneRevealed.generateRecipe(10, 't');
+    const zero = await noneRevealed.submitCheckIn(
+      {
+        user_recipe_id: mockUserRecipeId(10),
+        slot_id: 10,
+        rating: 'ok',
+        mastery: { hidden_steps: 3, revealed_steps: 0 },
+      },
+      't',
+    );
+    expect(zero.badges).toMatchObject({
+      status: 'ok',
+      earned: expect.arrayContaining([expect.objectContaining({ code: 'mastery' })]),
+    });
+  });
+
+  it('rejects mastery on a non-final slot and when revealed exceeds hidden', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    await b.generateRecipe(4, 't');
+    await expect(
+      b.submitCheckIn(
+        {
+          user_recipe_id: mockUserRecipeId(4),
+          slot_id: 4,
+          rating: 'ok',
+          mastery: { hidden_steps: 3, revealed_steps: 1 },
+        },
+        't',
+      ),
+    ).rejects.toMatchObject({ kind: 'validation', code: 'MASTERY_NOT_ALLOWED', status: 400 });
+
+    const mastery = createMockBackend({ latency: 0 });
+    await mastery.signIn(MASTERY_USER.email, 'x');
+    await mastery.generateRecipe(10, 't');
+    await expect(
+      mastery.submitCheckIn(
+        {
+          user_recipe_id: mockUserRecipeId(10),
+          slot_id: 10,
+          rating: 'ok',
+          mastery: { hidden_steps: 3, revealed_steps: 4 },
+        },
+        't',
+      ),
+    ).rejects.toThrow(/revealed_steps cannot be more than hidden_steps/);
   });
 });

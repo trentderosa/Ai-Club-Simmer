@@ -173,7 +173,7 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 
 *Server side:* the slot 10 check-in may include `mastery: { hidden_steps, revealed_steps }`. These counts are stored on the check-in, are allowed only on the final slot, and `revealed_steps` can't exceed `hidden_steps`. Passing isn't gated on them yet (open question 4).
 
-*Client (`app/`, UI Direction A):* not built yet. Slot 10 opens in normal cook mode for now, and the check-in doesn't send `mastery`.
+*Client (`app/`, UI Direction A):* slot 10 (`is_final`) opens cook mode as a mastery challenge. Steps with `isSafetyStep: true` stay visible; every other step starts hidden, with a Reveal control and a "Revealed X of Y hidden steps" indicator. The check-in sends `mastery: { hidden_steps, revealed_steps }`. Finishing and checking in counts as passing; the badge is not gated on how many steps were revealed (open question 4). Mock mode has a second sign-in (`mastery@simmer.test`) already at slot 10; the default demo user is unchanged.
 
 ### F9. Badges
 **Acceptance criteria**

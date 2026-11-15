@@ -3,6 +3,7 @@
  * words highlighted, a "why it matters" line, a safety box on safety steps,
  * the step's video (if any), and an inline timer when the step names a time.
  * The last step's button is "Done cooking", which opens the check-in (F6).
+ * Slot 10 (is_final) opens F8 mastery mode: non-safety steps start hidden.
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { StyleSheet, View } from 'react-native';
@@ -11,6 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { IconButton } from '../../components/button';
 import { CookSteps } from '../../components/cook-steps';
 import { ErrorState, LoadingState } from '../../components/states';
+import { useFlowCache } from '../../state/flow-cache';
 import { useErrorAction } from '../../state/use-error-action';
 import { useSlotRecipe } from '../../state/use-slot-recipe';
 import { color } from '../../theme/tokens';
@@ -20,6 +22,7 @@ export default function CookMode() {
   const slotId = Number(raw);
   const router = useRouter();
   const data = useSlotRecipe(slotId);
+  const cache = useFlowCache();
   const onError = useErrorAction(data.reload);
   const close = () => (router.canGoBack() ? router.back() : router.replace('/today'));
 
@@ -37,6 +40,8 @@ export default function CookMode() {
     <CookSteps
       recipe={data.data.recipe.recipe}
       videos={data.data.recipe.videos}
+      challenge={data.data.slot.is_final}
+      onMasteryChange={data.data.slot.is_final ? (counts) => cache.setMastery(slotId, counts) : undefined}
       onClose={close}
       onDone={() => router.replace({ pathname: '/check-in/[slotId]', params: { slotId: String(slotId) } })}
     />

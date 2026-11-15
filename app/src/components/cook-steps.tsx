@@ -1,5 +1,7 @@
 /**
  * Shared cook-mode stepper used by path slots and free-form generated recipes.
+ * When `challenge` is set (slot 10, F8), non-safety steps start hidden and
+ * can be revealed one at a time. Safety steps (`isSafetyStep`) stay visible.
  */
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -8,6 +10,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Recipe, RecipeStep, Videos } from '../api';
 import { color, font, radius, space } from '../theme/tokens';
 import { highlightIngredients } from '../domain/highlight';
+import { isHiddenMasteryStep, masteryCountsFromReveals, revealedLabel, type MasteryCounts } from '../domain/mastery';
 import { createTimer, parseStepDurationSeconds, type TimerState } from '../domain/timer';
 import { useSession } from '../state/session';
 import { Button, IconButton } from './button';
@@ -16,11 +19,27 @@ import { T } from './text';
 import { TimerCard } from './timer-card';
 import { VideoRow } from './video';
 
-export function CookSteps({ recipe, videos, onClose, onDone }: { recipe: Recipe; videos: Videos; onClose: () => void; onDone: () => void }) {
+export function CookSteps({
+  recipe,
+  videos,
+  onClose,
+  onDone,
+  challenge = false,
+  onMasteryChange,
+}: {
+  recipe: Recipe;
+  videos: Videos;
+  onClose: () => void;
+  onDone: () => void;
+  /** Final path slot: hide non-safety steps until the user reveals them. */
+  challenge?: boolean;
+  onMasteryChange?: (counts: MasteryCounts) => void;
+}) {
   const insets = useSafeAreaInsets();
   const { backend } = useSession();
   const [index, setIndex] = useState(0);
   const [showIngredients, setShowIngredients] = useState(false);
+  const [revealed, setRevealed] = useState<Set<number>>(() => new Set());
   // One timer per step that names a duration; they keep running when you move between steps.
   const [timers, setTimers] = useState<Record<number, TimerState>>(() => {
     const out: Record<number, TimerState> = {};
@@ -36,6 +55,15 @@ export function CookSteps({ recipe, videos, onClose, onDone }: { recipe: Recipe;
   const total = recipe.steps.length;
   const last = index === total - 1;
   const video = step.techniqueName ? videos[step.techniqueName] : undefined;
+  const counts = useMemo(() => masteryCountsFromReveals(recipe.steps, revealed), [recipe.steps, revealed]);
+  const hidden = challenge && isHiddenMasteryStep(step) && !revealed.has(index);
+
+  const revealStep = () => {
+    const next = new Set(revealed);
+    next.add(index);
+    setRevealed(next);
+    onMasteryChange?.(masteryCountsFromReveals(recipe.steps, next));
+  };
 
   return (
     <SafeAreaView edges={['top']} style={styles.fill}>
@@ -52,6 +80,17 @@ export function CookSteps({ recipe, videos, onClose, onDone }: { recipe: Recipe;
         ))}
       </View>
 
+      {challenge ? (
+        <View style={styles.challengeHead} accessibilityLabel={revealedLabel(counts)}>
+          <T variant="overline" color="ink3">
+            Mastery challenge
+          </T>
+          <T variant="caption" style={{ marginTop: 4 }}>
+            {revealedLabel(counts)}
+          </T>
+        </View>
+      ) : null}
+
       <ScrollView contentContainerStyle={styles.body}>
         {showIngredients ? (
           <IngredientsPanel recipe={recipe} />
@@ -61,6 +100,10 @@ export function CookSteps({ recipe, videos, onClose, onDone }: { recipe: Recipe;
               <T variant="stepNumber">{index + 1}</T>
               <T style={styles.of}>of {total}</T>
             </View>
+            {hidden ? (
+              <HiddenStep index={index} total={total} onReveal={revealStep} />
+            ) : (
+              <>
             <Instruction step={step} recipe={recipe} />
             {step.whyItMatters ? (
               <View style={styles.why}>
@@ -83,6 +126,8 @@ export function CookSteps({ recipe, videos, onClose, onDone }: { recipe: Recipe;
             ) : null}
             {video ? <VideoRow compact video={video} placeholder={backend.label !== 'live'} caption={backend.label !== 'live' ? 'Placeholder video' : 'YouTube'} /> : null}
             {timers[index] ? <TimerCard timer={timers[index]} onChange={(t) => setTimer(index, t)} /> : null}
+              </>
+            )}
           </>
         )}
       </ScrollView>
@@ -107,13 +152,35 @@ export function CookSteps({ recipe, videos, onClose, onDone }: { recipe: Recipe;
           trailingIcon={last ? 'check' : 'arrow'}
           onPress={() => {
             setShowIngredients(false);
-            if (last) onDone();
-            else setIndex(index + 1);
+            if (last) {
+              if (challenge) onMasteryChange?.(counts);
+              onDone();
+            } else setIndex(index + 1);
           }}
           style={{ flex: 1 }}
         />
       </View>
     </SafeAreaView>
+  );
+}
+
+function HiddenStep({ index, total, onReveal }: { index: number; total: number; onReveal: () => void }) {
+  return (
+    <View style={styles.hidden}>
+      <T variant="overline" color="ink3">
+        Hidden step
+      </T>
+      <T variant="body" style={{ marginTop: 8 }}>
+        This step starts hidden. Reveal it only if you need a reminder.
+      </T>
+      <Button
+        kind="outline"
+        label="Reveal"
+        onPress={onReveal}
+        accessibilityHint={`Reveal step ${index + 1} of ${total}`}
+        style={{ marginTop: 16, alignSelf: 'flex-start' }}
+      />
+    </View>
   );
 }
 
@@ -160,6 +227,8 @@ const styles = StyleSheet.create({
   tick: { flex: 1, height: 4, borderRadius: 2, backgroundColor: color.rule },
   tickDone: { backgroundColor: color.ink },
   tickOn: { backgroundColor: color.tomato },
+  challengeHead: { paddingHorizontal: space.gutter, paddingTop: 16 },
+  hidden: { marginTop: 20, borderWidth: 1, borderColor: color.ink, borderRadius: radius.md, paddingVertical: 16, paddingHorizontal: 16, backgroundColor: color.paper },
   body: { paddingHorizontal: space.gutter, paddingTop: 30, paddingBottom: 24 },
   stepNum: { flexDirection: 'row', alignItems: 'baseline', gap: 10 },
   of: { fontFamily: font.bodySemi, fontSize: 15, color: color.ink3 },

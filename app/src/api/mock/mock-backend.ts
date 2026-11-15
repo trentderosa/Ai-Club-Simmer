@@ -2,8 +2,10 @@
  * In-memory fake backend for EXPO_PUBLIC_MOCK_MODE. No network, fake data only.
  *
  * - "Sign up" with any email creates a fresh user who goes through onboarding.
- * - "Sign in" with any email/password lands on the demo user (Jordan, 3 of 10
+ * - "Sign in" with most emails lands on the demo user (Jordan, 3 of 10
  *   done, 239 XP) so the Today screen has something to show.
+ * - "Sign in" with mastery@simmer.test lands on a second canned user (Riley,
+ *   9 of 10 done, slot 10 current) so the mastery challenge is reachable.
  * - Check-ins advance the path and award XP like the server does.
  * State resets when the app reloads.
  */
@@ -29,6 +31,7 @@ import {
   CANNED_COOK_ANYTHING_XP,
   cannedCookAnythingRecipe,
   DEMO_USER,
+  MASTERY_USER,
   MOCK_CHECK_IN_REPLIES,
   MOCK_COACH_NOTES,
   RECIPES,
@@ -92,9 +95,12 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     listeners.forEach((l) => l(s));
   }
 
-  function loadDemoUser() {
+  function loadCannedUser(
+    user: typeof DEMO_USER | typeof MASTERY_USER,
+    userId: string,
+  ): AppSession {
     state.profile = {
-      id: 'mock-user-demo',
+      id: userId,
       goals: 'Cook 3 dinners a week; Spend less on takeout',
       experience_level: 'a_little',
       equipment: ['stove', 'oven', 'pan', 'pot', 'knife', 'cutting board'],
@@ -102,29 +108,38 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       days_per_week: 3,
       minutes_per_session: 30,
       onboarding_completed: true,
-      created_at: DEMO_USER.createdAt,
+      created_at: user.createdAt,
     };
     state.completions = {};
     state.firstCompletedAt = {};
     state.recipeSlots = new Set();
     state.totalXp = 0;
+    state.repeatXpThisWeek = 0;
     state.checkInsByKey = new Map();
     state.generatedByName = new Map();
     state.generatedCompletions = new Set();
-    for (const s of SLOTS.slice(0, DEMO_USER.completedSlots)) {
-      const extra = DEMO_USER.extraCooks[s.slot_id] ?? 0;
+    for (const s of SLOTS.slice(0, user.completedSlots)) {
+      const extra = user.extraCooks[s.slot_id] ?? 0;
       state.completions[s.slot_id] = 1 + extra;
       state.recipeSlots.add(s.slot_id);
       state.totalXp += s.xp_value;
-      const added = DEMO_USER.addedAt[s.slot_id];
+      const added = user.addedAt[s.slot_id];
       if (added) state.firstCompletedAt[s.slot_id] = added;
     }
     return {
-      userId: 'mock-user-demo',
-      email: DEMO_USER.email,
-      firstName: DEMO_USER.firstName,
+      userId,
+      email: user.email,
+      firstName: user.firstName,
       accessToken: 'mock-access-token',
     } satisfies AppSession;
+  }
+
+  function loadDemoUser() {
+    return loadCannedUser(DEMO_USER, 'mock-user-demo');
+  }
+
+  function loadMasteryUser() {
+    return loadCannedUser(MASTERY_USER, 'mock-user-mastery');
   }
 
   if (opts.startSignedIn) state.session = loadDemoUser();
@@ -169,7 +184,9 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     async signIn(email) {
       await delay(400);
       if (!email.includes('@')) throw new ApiError('unauthorized', 'Invalid login credentials', 400);
-      setSession(loadDemoUser());
+      const canned =
+        email.trim().toLowerCase() === MASTERY_USER.email ? loadMasteryUser() : loadDemoUser();
+      setSession(canned);
     },
 
     async signUp(email, _password, firstName) {
@@ -313,6 +330,14 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
         if (existing) return existing;
       }
       if (body.generated_recipe_id) {
+        if (body.mastery) {
+          throw new ApiError(
+            'validation',
+            'mastery is only allowed for the final (mastery challenge) recipe',
+            400,
+            'MASTERY_NOT_ALLOWED',
+          );
+        }
         let found: CookAnythingResponse | undefined;
         for (const saved of state.generatedByName.values()) {
           if (saved.generated_recipe_id === body.generated_recipe_id) found = saved;
@@ -347,6 +372,14 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       }
       const slot = SLOTS.find((s) => s.slot_id === body.slot_id);
       if (!slot) throw new ApiError('invalid_recipe', 'Unknown slot', 400, 'INVALID_RECIPE');
+      if (body.mastery && !slot.is_final) {
+        throw new ApiError(
+          'validation',
+          'mastery is only allowed for the final (mastery challenge) recipe',
+          400,
+          'MASTERY_NOT_ALLOWED',
+        );
+      }
 
       const first = (state.completions[slot.slot_id] ?? 0) === 0;
       state.completions[slot.slot_id] = (state.completions[slot.slot_id] ?? 0) + 1;

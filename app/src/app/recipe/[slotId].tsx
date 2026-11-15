@@ -75,7 +75,7 @@ export default function RecipeScreen() {
           </T>
           {slot.is_final ? (
             <T variant="small" style={{ marginTop: 10 }}>
-              The last dish on the path. The from-memory mastery challenge is coming in a later update; for now, cook it step by step.
+              The last dish on the path. Cook it from memory: non-safety steps start hidden, and you can reveal one if you need a reminder.
             </T>
           ) : null}
         </View>

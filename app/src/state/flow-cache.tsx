@@ -6,7 +6,7 @@
  */
 import { createContext, useContext, useMemo, useRef, type ReactNode } from 'react';
 
-import type { CheckInResponse, CookAnythingResponse, PlanSlot, PlanSummary, RecipeResponse } from '../api';
+import type { CheckInResponse, CookAnythingResponse, MasteryCounts, PlanSlot, PlanSummary, RecipeResponse } from '../api';
 
 export interface CheckInOutcome {
   slot: PlanSlot;
@@ -31,6 +31,8 @@ export interface FlowCache {
   setGenerated(id: string, r: CookAnythingResponse): void;
   getGeneratedOutcome(id: string): GeneratedCheckInOutcome | null;
   setGeneratedOutcome(o: GeneratedCheckInOutcome): void;
+  getMastery(slotId: number): MasteryCounts | null;
+  setMastery(slotId: number, counts: MasteryCounts): void;
   /** Drop everything (sign-out). */
   clear(): void;
 }
@@ -52,6 +54,7 @@ export function FlowCacheProvider({ children }: { children: ReactNode }) {
     outcomes: new Map<number, CheckInOutcome>(),
     generated: new Map<string, CookAnythingResponse>(),
     generatedOutcomes: new Map<string, GeneratedCheckInOutcome>(),
+    mastery: new Map<number, MasteryCounts>(),
   });
   const cache = useMemo<FlowCache>(() => {
     const c = ref.current;
@@ -68,6 +71,8 @@ export function FlowCacheProvider({ children }: { children: ReactNode }) {
       setGenerated: (id, r) => void c.generated.set(id, r),
       getGeneratedOutcome: (id) => c.generatedOutcomes.get(id) ?? null,
       setGeneratedOutcome: (o) => void c.generatedOutcomes.set(o.recipe.generated_recipe_id, o),
+      getMastery: (id) => c.mastery.get(id) ?? null,
+      setMastery: (id, counts) => void c.mastery.set(id, counts),
       clear: () => {
         c.plan = null;
         c.summary = null;
@@ -75,6 +80,7 @@ export function FlowCacheProvider({ children }: { children: ReactNode }) {
         c.outcomes.clear();
         c.generated.clear();
         c.generatedOutcomes.clear();
+        c.mastery.clear();
       },
     };
   }, []);

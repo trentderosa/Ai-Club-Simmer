@@ -186,6 +186,18 @@ export type CookAnythingResponse = z.infer<typeof CookAnythingResponseSchema>;
 export const RATINGS = ['easy', 'ok', 'hard'] as const;
 export type Rating = (typeof RATINGS)[number];
 
+/** F8: reveal counts for the final-slot mastery challenge. revealed ≤ hidden. */
+export const MasteryCountsSchema = z
+  .object({
+    hidden_steps: z.number().int().min(0).max(30),
+    revealed_steps: z.number().int().min(0).max(30),
+  })
+  .refine((m) => m.revealed_steps <= m.hidden_steps, {
+    message: 'revealed_steps cannot be more than hidden_steps',
+    path: ['revealed_steps'],
+  });
+export type MasteryCounts = z.infer<typeof MasteryCountsSchema>;
+
 export const CheckInInputSchema = z
   .object({
     user_recipe_id: z.string().uuid().optional(),
@@ -194,6 +206,8 @@ export const CheckInInputSchema = z
     rating: z.enum(RATINGS),
     went_well: z.string().max(500).optional(),
     was_hard: z.string().max(500).optional(),
+    /** Slot 10 only (F8). The server rejects this on any other slot. */
+    mastery: MasteryCountsSchema.optional(),
     /** Client-generated UUID, unique per check-in attempt; reused on retry. */
     idempotency_key: z.string().uuid().optional(),
   })

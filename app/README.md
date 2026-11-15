@@ -1,6 +1,6 @@
 # Simmer app (Expo)
 
-The Expo + TypeScript client for Simmer. It covers the **core loop** (sign up or sign in → onboarding → Today → recipe → cook mode → check-in → session complete) plus **Cook anything** from Today, the **recipe book** and the **profile**, with a small bottom bar to switch between Today, the book and You. It implements UI **Direction A, "editorial kitchen"** from the design proposal.
+The Expo + TypeScript client for Simmer. It covers the **core loop** (sign up or sign in → onboarding → Today → recipe → cook mode → check-in → session complete) plus the **mastery challenge** on slot 10, **Cook anything** from Today, the **recipe book** and the **profile**, with a small bottom bar to switch between Today, the book and You. It implements UI **Direction A, "editorial kitchen"** from the design proposal.
 
 Nathan owns UI/UX (Ian and Ezzeldin help). Treat this as a handoff-ready starting point: the screens follow the mockups, but every visual decision is theirs to change. The backend contract is [`../docs/CLIENT_API.md`](../docs/CLIENT_API.md).
 
@@ -15,7 +15,7 @@ npm run web:mock        # fake data in the browser, no Supabase or ai-server nee
 npm run start:mock      # same, for Expo Go / a simulator (press i / a, or scan the QR code)
 ```
 
-In mock mode any email works. **Sign in** loads a demo cook (Jordan, 3 of 10 dishes done, 239 XP, three recipes in the book, three badges). **Create account** starts a fresh user who goes through onboarding. Mock state lives in memory and resets on reload.
+In mock mode any email works. **Sign in** loads a demo cook (Jordan, 3 of 10 dishes done, 239 XP, three recipes in the book, three badges). Sign in as `mastery@simmer.test` (any password) loads a second canned user (Riley, 9 of 10 done, 917 XP) already at the Roast Chicken mastery challenge. **Create account** starts a fresh user who goes through onboarding. Mock state lives in memory and resets on reload.
 
 Against the real backend:
 
@@ -103,9 +103,9 @@ Rules of thumb for the next person:
 | Today | `rpc('get_my_plan')` + `rpc('get_my_plan_summary')`, re-read on focus. "Cook anything" opens `/cook-anything`. |
 | Recipe book | `rpc('get_my_recipe_book')` + `get_my_plan` (for technique names and "Still to come"). Tapping an entry opens the existing recipe screen for that slot. Repeats earn 50% XP, which the book and a done recipe both say. |
 | Profile / You | First name from auth `user_metadata.first_name`. `rpc('get_my_plan_summary')` for XP and path progress, `rpc('get_my_badges')` for the shelf (unearned seals are grayed out), `profiles` for onboarding answers and `created_at` ("Cooking since …"). Edit reuses the onboarding steps and upserts the same columns. Sign-out lives here. |
-| Recipe, cook mode | ai-server `POST /api/recipes/generate/:slotId` with `Authorization: Bearer <access token>`. `videos[step.techniqueName]`; missing entries mean no video, `null` is treated as `{}`. |
+| Recipe, cook mode | ai-server `POST /api/recipes/generate/:slotId` with `Authorization: Bearer <access token>`. `videos[step.techniqueName]`; missing entries mean no video, `null` is treated as `{}`. Slot 10 (`is_final`) opens mastery cook mode: non-safety steps (`isSafetyStep: false`) start hidden, with Reveal and "Revealed X of Y hidden steps." |
 | Cook anything | ai-server `POST /api/recipes/cook-anything` with `{ dish }`. Cache hits reuse the first recipe for that normalized name (`xp_value` frozen; the mock canned recipe is 84). Then `user_generated_recipes` select for later visits, and the generated recipe / cook / check-in / complete screens. A later check-in awards that `xp_value` subject to the daily cap (default 200). |
-| Check-in | Path: `user_recipes.select('id').eq('slot_id', …)`, then ai-server `POST /api/check-ins` with `user_recipe_id` + `slot_id`. Free-form: `POST /api/check-ins` with `generated_recipe_id`. Both use a per-attempt `idempotency_key` (reused on Retry; minted with `expo-crypto`). After a path-check-in timeout, the screen re-reads `get_my_plan()` and skips a second POST if `times_completed` already went up. If the save takes more than about 15 seconds, it shows that the coach is writing a note. |
+| Check-in | Path: `user_recipes.select('id').eq('slot_id', …)`, then ai-server `POST /api/check-ins` with `user_recipe_id` + `slot_id`. For slot 10, also send `mastery: { hidden_steps, revealed_steps }` (revealed ≤ hidden). Free-form: `POST /api/check-ins` with `generated_recipe_id`. Both use a per-attempt `idempotency_key` (reused on Retry; minted with `expo-crypto`). After a path-check-in timeout, the screen re-reads `get_my_plan()` and skips a second POST if `times_completed` already went up. If the save takes more than about 15 seconds, it shows that the coach is writing a note. |
 | Session complete | The 201 response (`xp`, `badges`, `coach_note`, `focus_area`, `suggest_repeat`), plus `get_my_plan_summary` / `get_my_plan` read right before and after |
 
 XP is shown honestly: `awarded` shows `+N` (and explains repeats and the weekly cap), `failed` says the check-in is saved and the XP is on its way with no number, `skipped` says XP isn't configured on that server.
@@ -119,7 +119,7 @@ XP is shown honestly: `awarded` shows `+N` (and explains repeats and the weekly 
 
 ## Not in this PR
 
-Leagues, streaks and the week row, cooking levels (L1–L4; the profile shows experience level, XP and path progress instead), the mastery challenge (slot 10 cooks with normal cook mode for now) and step ordering, and hands-free/voice cook mode. The bottom bar is a minimal handoff for Nathan: restyle `src/components/tab-bar.tsx`.
+Leagues, streaks and the week row, cooking levels (L1–L4; the profile shows experience level, XP and path progress instead), step ordering, and hands-free/voice cook mode. The bottom bar is a minimal handoff for Nathan: restyle `src/components/tab-bar.tsx`. Whether the mastery badge should require a reveal limit is still open (PRD question 4).
 
 ## Known gaps
 
