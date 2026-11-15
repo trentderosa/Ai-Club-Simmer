@@ -3,6 +3,7 @@ import { RecipeSchema } from '../schemas/recipe.js';
 import type { UserRecipeRepository, SavedRecipe } from './user-recipe-repository.js';
 import { z } from 'zod';
 import type { RecipeVideos } from '../services/video-finder.js';
+import { DEFAULT_SUPABASE_REST_TIMEOUT_MS } from '../services/supabase-rest.js';
 
 const RecipeVideosSchema = z.record(
   z.object({
@@ -15,6 +16,8 @@ const RecipeVideosSchema = z.record(
 export interface SupabaseConfig {
   url: string;
   serviceRoleKey: string;
+  /** Abort the video update after this many ms (default 5000, like SupabaseRest). */
+  timeoutMs?: number;
 }
 
 interface SupabaseUserRecipeRow {
@@ -29,6 +32,7 @@ interface SupabaseUserRecipeRow {
 export class SupabaseUserRecipeRepository implements UserRecipeRepository {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
+  private readonly timeoutMs: number;
   private inFlightSaves: Map<string, Promise<SavedRecipe>> = new Map();
 
   constructor(config: SupabaseConfig) {
@@ -39,6 +43,7 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
       'Content-Type': 'application/json',
       'Prefer': 'return=representation',
     };
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_SUPABASE_REST_TIMEOUT_MS;
   }
 
   private makeKey(userId: string, slotId: number): string {
@@ -108,15 +113,27 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
     url.searchParams.set('user_id', `eq.${userId}`);
     url.searchParams.set('slot_id', `eq.${slotId}`);
 
-    const response = await fetch(url.toString(), {
-      method: 'PATCH',
-      headers: { ...this.headers, 'Prefer': 'return=minimal' },
-      body: JSON.stringify({ video_ids: videos }),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      const response = await fetch(url.toString(), {
+        method: 'PATCH',
+        headers: { ...this.headers, 'Prefer': 'return=minimal' },
+        body: JSON.stringify({ video_ids: videos }),
+        signal: controller.signal,
+      });
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw new Error(`Supabase video update failed: ${response.status} ${error}`);
+      if (!response.ok) {
+        const error = await response.text();
+        throw new Error(`Supabase video update failed: ${response.status} ${error}`);
+      }
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`Supabase video update timed out after ${this.timeoutMs}ms`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
   }
 

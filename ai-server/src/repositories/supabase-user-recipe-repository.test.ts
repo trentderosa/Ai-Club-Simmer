@@ -219,4 +219,43 @@ describe('SupabaseUserRecipeRepository', () => {
       });
     });
   });
+
+  describe('saveVideos', () => {
+    it('PATCHes video_ids for the user and slot with an abort signal', async () => {
+      const mockFetch = createMockFetch([{ status: 204 }]);
+      globalThis.fetch = mockFetch;
+      const repo = new SupabaseUserRecipeRepository(TEST_CONFIG);
+
+      await repo.saveVideos('user-123', 2, { 'Whisk eggs': { videoId: 'whisk01' } });
+
+      const [url, init] = vi.mocked(mockFetch).mock.calls[0] as [string, RequestInit];
+      const parsed = new URL(url);
+      expect(parsed.pathname).toBe('/rest/v1/user_recipes');
+      expect(parsed.searchParams.get('user_id')).toBe('eq.user-123');
+      expect(parsed.searchParams.get('slot_id')).toBe('eq.2');
+      expect(init.method).toBe('PATCH');
+      expect(JSON.parse(init.body as string)).toEqual({ video_ids: { 'Whisk eggs': { videoId: 'whisk01' } } });
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('throws on a non-OK response', async () => {
+      globalThis.fetch = createMockFetch([{ status: 500, body: { message: 'boom' } }]);
+      const repo = new SupabaseUserRecipeRepository(TEST_CONFIG);
+      await expect(repo.saveVideos('user-123', 2, {})).rejects.toThrow(/video update failed: 500/);
+    });
+
+    it('times out a hung request without leaking the key (N1)', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          })
+      );
+      const repo = new SupabaseUserRecipeRepository({ ...TEST_CONFIG, timeoutMs: 20 });
+      const error = await repo.saveVideos('user-123', 2, {}).catch((e: unknown) => e as Error);
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('Supabase video update timed out after 20ms');
+      expect((error as Error).message).not.toContain(TEST_CONFIG.serviceRoleKey);
+    });
+  });
 });
