@@ -8,8 +8,16 @@ import type { Recipe } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 import { InMemoryGeneratedRecipeRepository } from '../repositories/in-memory-generated-recipe-repository.js';
 import { computeFreeformXp } from '../cook-anything/clamp.js';
+import { FREEFORM_COUNT_BOUNDS } from '../cook-anything/constants.js';
 
 const userId = '550e8400-e29b-41d4-a716-446655440000';
+
+const maxCounts = {
+  steps: FREEFORM_COUNT_BOUNDS.steps.max,
+  ingredients: FREEFORM_COUNT_BOUNDS.ingredients.max,
+  minutes: FREEFORM_COUNT_BOUNDS.minutes.max,
+};
+const maxFreeformXp = computeFreeformXp(maxCounts.steps, maxCounts.ingredients, maxCounts.minutes);
 
 const validRecipe: Recipe = {
   title: 'Pad Thai',
@@ -149,15 +157,16 @@ describe('POST /api/recipes/cook-anything', () => {
     expect(res.body.recipe.steps).toHaveLength(50);
     expect(res.body.recipe.ingredients).toHaveLength(80);
     expect(res.body.recipe.timeEstimateMinutes).toBe(999);
-    expect(res.body.counts).toEqual({ steps: 15, ingredients: 20, minutes: 120 });
-    expect(res.body.xp_value).toBe(378);
+    expect(maxFreeformXp).toBe(177);
+    expect(res.body.counts).toEqual(maxCounts);
+    expect(res.body.xp_value).toBe(maxFreeformXp);
     const saved = await repo.findByUserAndNormalizedName(userId, 'mega stew');
     expect(saved?.recipe.steps).toHaveLength(50);
     expect(saved?.recipe.ingredients).toHaveLength(80);
     expect(saved?.recipe.timeEstimateMinutes).toBe(999);
-    expect(saved?.stepCount).toBe(15);
-    expect(saved?.ingredientCount).toBe(20);
-    expect(saved?.timeEstimateMinutes).toBe(120);
+    expect(saved?.stepCount).toBe(maxCounts.steps);
+    expect(saved?.ingredientCount).toBe(maxCounts.ingredients);
+    expect(saved?.timeEstimateMinutes).toBe(maxCounts.minutes);
   });
 
   it('reuses the cached recipe for the same normalized dish and does not call Ollama again', async () => {

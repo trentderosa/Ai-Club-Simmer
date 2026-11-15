@@ -656,9 +656,9 @@ export class TestDatabase {
   async resetXpConfig(): Promise<void> {
     await this.pool.query(`UPDATE xp_config SET value = 50 WHERE key = 'repeat_xp_percent'`);
     await this.pool.query(`UPDATE xp_config SET value = 100 WHERE key = 'weekly_repeat_cap'`);
-    await this.pool.query(`UPDATE xp_config SET value = 15 WHERE key = 'freeform_max_steps'`);
-    await this.pool.query(`UPDATE xp_config SET value = 20 WHERE key = 'freeform_max_ingredients'`);
-    await this.pool.query(`UPDATE xp_config SET value = 120 WHERE key = 'freeform_max_minutes'`);
+    await this.pool.query(`UPDATE xp_config SET value = 10 WHERE key = 'freeform_max_steps'`);
+    await this.pool.query(`UPDATE xp_config SET value = 12 WHERE key = 'freeform_max_ingredients'`);
+    await this.pool.query(`UPDATE xp_config SET value = 45 WHERE key = 'freeform_max_minutes'`);
     await this.pool.query(`UPDATE xp_config SET value = 1 WHERE key = 'freeform_min_steps'`);
     await this.pool.query(`UPDATE xp_config SET value = 1 WHERE key = 'freeform_min_ingredients'`);
     await this.pool.query(`UPDATE xp_config SET value = 1 WHERE key = 'freeform_min_minutes'`);

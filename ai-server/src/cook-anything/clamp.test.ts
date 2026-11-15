@@ -3,6 +3,13 @@ import type { Recipe } from '../schemas/recipe.js';
 import { FREEFORM_COUNT_BOUNDS } from './constants.js';
 import { clampRecipeCounts, computeFreeformXp } from './clamp.js';
 
+/** Max xp_value implied by FREEFORM_COUNT_BOUNDS and the slot formula. */
+const MAX_FREEFORM_XP = computeFreeformXp(
+  FREEFORM_COUNT_BOUNDS.steps.max,
+  FREEFORM_COUNT_BOUNDS.ingredients.max,
+  FREEFORM_COUNT_BOUNDS.minutes.max
+);
+
 function inflatedRecipe(): Recipe {
   return {
     title: 'Inflated',
@@ -19,11 +26,11 @@ function inflatedRecipe(): Recipe {
 }
 
 describe('FREEFORM_COUNT_BOUNDS', () => {
-  it('is the explicit clamp constant: steps 1–15, ingredients 1–20, minutes 1–120', () => {
+  it('is the explicit clamp constant: steps 1–10, ingredients 1–12, minutes 1–45', () => {
     expect(FREEFORM_COUNT_BOUNDS).toEqual({
-      steps: { min: 1, max: 15 },
-      ingredients: { min: 1, max: 20 },
-      minutes: { min: 1, max: 120 },
+      steps: { min: 1, max: 10 },
+      ingredients: { min: 1, max: 12 },
+      minutes: { min: 1, max: 45 },
     });
   });
 });
@@ -36,17 +43,18 @@ describe('clampRecipeCounts', () => {
     expect(clamped.recipe.steps).toHaveLength(50);
     expect(clamped.recipe.ingredients).toHaveLength(80);
     expect(clamped.recipe.timeEstimateMinutes).toBe(999);
-    expect(clamped.stepCount).toBe(15);
-    expect(clamped.ingredientCount).toBe(20);
-    expect(clamped.timeEstimateMinutes).toBe(120);
+    expect(clamped.stepCount).toBe(FREEFORM_COUNT_BOUNDS.steps.max);
+    expect(clamped.ingredientCount).toBe(FREEFORM_COUNT_BOUNDS.ingredients.max);
+    expect(clamped.timeEstimateMinutes).toBe(FREEFORM_COUNT_BOUNDS.minutes.max);
   });
 
   it('yields the capped XP for those clamped counts', () => {
+    // (10*0.45 + 12*0.35 + 45*0.2)*10 = 177, below roast chicken (181)
+    expect(MAX_FREEFORM_XP).toBe(177);
     const clamped = clampRecipeCounts(inflatedRecipe());
-    // (15*0.45 + 20*0.35 + 120*0.2)*10 = (6.75 + 7 + 24)*10 = 377.5 → 378
     expect(
       computeFreeformXp(clamped.stepCount, clamped.ingredientCount, clamped.timeEstimateMinutes)
-    ).toBe(378);
+    ).toBe(MAX_FREEFORM_XP);
   });
 
   it('does not invent extra steps when the recipe is already small', () => {

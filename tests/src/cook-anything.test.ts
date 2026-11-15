@@ -7,9 +7,9 @@ import { TestDatabase, TestUser } from './db';
  * Formula (same as slots, from xp_config):
  *   XP = max(1, round((steps*0.45 + ingredients*0.35 + minutes*0.2) * 10))
  *
- * Clamp bounds (xp_config / FREEFORM_COUNT_BOUNDS): steps 1–15, ingredients 1–20, minutes 1–120.
+ * Clamp bounds (xp_config / FREEFORM_COUNT_BOUNDS): steps 1–10, ingredients 1–12, minutes 1–45.
  * Example: 5 steps, 6 ingredients, 20 minutes → 83.5 → 84 (mock canned recipe).
- * Inflated: 50/80/999 → clamped to 15/20/120 → 377.5 → 378.
+ * Inflated: 50/80/999 → clamped to 10/12/45 → 177 (below roast chicken, 181).
  */
 describe('Cook anything (free-form XP, cache, caps)', () => {
   let db: TestDatabase;
@@ -53,7 +53,7 @@ describe('Cook anything (free-form XP, cache, caps)', () => {
       expect(result.out_capped).toBe(false);
     });
 
-    it('clamps an inflated insert (50 steps, 80 ingredients, 999 minutes) to xp_value 378, then the daily cap limits the award to 200', async () => {
+    it('clamps an inflated insert (50 steps, 80 ingredients, 999 minutes) to xp_value 177 and awards 177 (under the 200 daily cap)', async () => {
       const recipe = await db.createGeneratedRecipe(user.id, {
         dishQuery: 'Mega Stew',
         normalizedDishName: 'mega stew',
@@ -61,15 +61,15 @@ describe('Cook anything (free-form XP, cache, caps)', () => {
         ingredientCount: 80,
         timeEstimateMinutes: 999,
       });
-      expect(recipe.step_count).toBe(15);
-      expect(recipe.ingredient_count).toBe(20);
-      expect(recipe.time_estimate_minutes).toBe(120);
-      expect(recipe.xp_value).toBe(378);
+      expect(recipe.step_count).toBe(10);
+      expect(recipe.ingredient_count).toBe(12);
+      expect(recipe.time_estimate_minutes).toBe(45);
+      expect(recipe.xp_value).toBe(177);
       const checkIn = await db.createGeneratedCheckIn(user.id, recipe.id);
       const result = await db.awardGeneratedRecipeXp(checkIn);
-      // Default freeform_daily_cap is 200, so a single award cannot pay out 378.
-      expect(result.out_xp_awarded).toBe(200);
-      expect(result.out_capped).toBe(true);
+      // 177 is under the default freeform_daily_cap of 200, so this lone award is not capped.
+      expect(result.out_xp_awarded).toBe(177);
+      expect(result.out_capped).toBe(false);
       expect(result.out_is_first_completion).toBe(true);
     });
   });

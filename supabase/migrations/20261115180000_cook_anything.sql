@@ -7,12 +7,12 @@
 -- This is a NEW migration. It does not edit merged migrations or core_schema.
 -- Kai applies this to prod only after this PR is merged.
 --
--- XP (pending Ian's OK on the clamp bounds and the daily cap):
+-- XP (clamp bounds decided by Trent; daily cap stays at 200):
 --   Same formula as path slots, reading weights/scale from xp_config:
 --     XP = max(1, round((steps*steps_weight + ingredients*ingredients_weight
 --                        + minutes*cook_minutes_weight) * xp_multiplier))
 --   Counts are taken from the validated recipe arrays, then clamped to
---   bounds in xp_config (defaults: steps 1-15, ingredients 1-20, minutes 1-120)
+--   bounds in xp_config (steps 1-10, ingredients 1-12, minutes 1-45; max xp_value 177)
 --   and stored on user_generated_recipes. Those stored counts and xp_value
 --   are frozen at first insert for that (user, normalized dish name): a later
 --   update or regeneration cannot raise them.
@@ -25,12 +25,12 @@
 
 -- -----------------------------------------------------------------------------
 -- Config: clamp bounds and the daily cap. Weights / repeat % / weekly cap
--- already live in xp_config. Defaults flagged in the PR for Ian/Trent.
+-- already live in xp_config. Clamp bounds decided by Trent (max xp_value 177).
 -- -----------------------------------------------------------------------------
 INSERT INTO xp_config (key, value, description) VALUES
-    ('freeform_max_steps', 15, 'Cook-anything clamp: max steps counted for XP (needs Ian/Trent OK)'),
-    ('freeform_max_ingredients', 20, 'Cook-anything clamp: max ingredients counted for XP (needs Ian/Trent OK)'),
-    ('freeform_max_minutes', 120, 'Cook-anything clamp: max cook minutes counted for XP (needs Ian/Trent OK)'),
+    ('freeform_max_steps', 10, 'Cook-anything clamp: max steps counted for XP (Trent: 10; max xp_value 177)'),
+    ('freeform_max_ingredients', 12, 'Cook-anything clamp: max ingredients counted for XP (Trent: 12; max xp_value 177)'),
+    ('freeform_max_minutes', 45, 'Cook-anything clamp: max cook minutes counted for XP (Trent: 45; max xp_value 177)'),
     ('freeform_min_steps', 1, 'Cook-anything clamp: min steps counted for XP'),
     ('freeform_min_ingredients', 1, 'Cook-anything clamp: min ingredients counted for XP'),
     ('freeform_min_minutes', 1, 'Cook-anything clamp: min cook minutes counted for XP'),
@@ -104,11 +104,11 @@ BEGIN
     v_cook_minutes_weight := COALESCE(v_cook_minutes_weight, 0.2);
     v_multiplier := COALESCE(v_multiplier, 10);
     v_min_steps := COALESCE(v_min_steps, 1);
-    v_max_steps := COALESCE(v_max_steps, 15);
+    v_max_steps := COALESCE(v_max_steps, 10);
     v_min_ingredients := COALESCE(v_min_ingredients, 1);
-    v_max_ingredients := COALESCE(v_max_ingredients, 20);
+    v_max_ingredients := COALESCE(v_max_ingredients, 12);
     v_min_minutes := COALESCE(v_min_minutes, 1);
-    v_max_minutes := COALESCE(v_max_minutes, 120);
+    v_max_minutes := COALESCE(v_max_minutes, 45);
 
     NEW.step_count := LEAST(GREATEST(NEW.step_count, v_min_steps), v_max_steps);
     NEW.ingredient_count := LEAST(GREATEST(NEW.ingredient_count, v_min_ingredients), v_max_ingredients);

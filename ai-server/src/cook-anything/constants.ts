@@ -3,14 +3,15 @@
  *
  * Clamp bounds are the anti-farming limit on LLM-reported recipe size.
  * They are also seeded in xp_config (migration 20261115180000_cook_anything.sql)
- * so award_generated_recipe_xp re-clamps at insert time. Keep these in sync.
+ * so the insert trigger re-clamps at write time. Keep these in sync.
  *
- * Needs Ian/Trent OK.
+ * Trent: steps 1–10, ingredients 1–12, minutes 1–45. Max xp_value is 177,
+ * below roast chicken (181). Daily cap stays at 200.
  */
 export const FREEFORM_COUNT_BOUNDS = {
-  steps: { min: 1, max: 15 },
-  ingredients: { min: 1, max: 20 },
-  minutes: { min: 1, max: 120 },
+  steps: { min: 1, max: 10 },
+  ingredients: { min: 1, max: 12 },
+  minutes: { min: 1, max: 45 },
 } as const;
 
 export type FreeformCountBounds = typeof FREEFORM_COUNT_BOUNDS;
