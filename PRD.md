@@ -52,6 +52,8 @@ Every user gets the same path, **"Weeknight basics"**: 10 dish slots in a fixed 
 - [ ] The plan shows a suggested number of cooking sessions per week based on the user's onboarding schedule.
 - [ ] The final slot is marked as the mastery challenge.
 
+*Server side (branch `claude/eloquent-dijkstra-x1qp33`, migration `20261115000000_plan_badges_recipe_book.sql`):* a slot is **done** once the user has at least one check-in for it. **Current** is the first slot that isn't done, and everything after it is **locked**. The app reads this with `get_my_plan()`, and `get_my_plan_summary()` gives total XP and the suggested sessions per week (rule in open question 11). The AI server enforces path order: `POST /api/recipes/generate/:slotId` returns `403 SLOT_LOCKED` for a locked slot. Done slots stay open so they can be repeated, and saved recipes always load. See `docs/CLIENT_API.md`.
+
 ### F3. AI-generated recipes
 When a user opens a path slot for the first time, the app asks the local Ollama model to generate a recipe for that dish, tailored to the user's equipment, budget, and experience. The recipe is saved, and the same saved recipe is used every time after that.
 
@@ -63,6 +65,8 @@ When a user opens a path slot for the first time, the app asks the local Ollama 
 - [ ] Steps involving heat, knives, boiling water, raw meat, or hot oil are flagged as safety steps.
 - [ ] Generation shows a loading state, and the user can't start cooking until the recipe has loaded.
 
+*Server side:* the AI server now reads the slot and the user's onboarding answers from Supabase (these were stubs that returned nothing, so live generation always failed with 404). The prompt also includes the user's last 3 check-ins, which drive the Coach's note (F6).
+
 ### F4. Technique videos
 Each recipe step with a technique name gets an instructional video found through the YouTube Data API.
 
@@ -71,6 +75,8 @@ Each recipe step with a technique name gets an instructional video found through
 - [ ] Video results are cached per technique so the same search isn't repeated for other users (this saves API quota).
 - [ ] In cook mode, a step with a video shows a thumbnail or button that plays the video inside the app.
 - [ ] If the search fails or returns nothing, the step still shows without a video and the recipe keeps working.
+
+*Server side:* the search query is "how to {technique} beginner cooking" (safe search, embeddable videos only). Results, including "no result", are cached per technique in `technique_videos`; a cached "no result" is retried after 7 days. A recipe makes at most 6 new searches. Videos are saved in `user_recipes.video_ids` and returned as `videos[techniqueName]`. Requires `YOUTUBE_API_KEY` on the AI server; without it, recipes have no videos.
 
 ### F5. Cook mode
 A step-by-step screen the user follows while cooking.
@@ -91,6 +97,8 @@ After cooking, the user does a quick check-in. The AI uses it to rewrite tips fo
 - [ ] When the next recipe is generated (F3), the prompt includes the user's recent check-ins, and the recipe includes a short "Coach's note" at the top that references them (e.g., "Last time heat control was tricky, so watch for…").
 - [ ] If the user rated the session "hard," the app suggests repeating that recipe before moving on. The user can accept or skip.
 - [ ] Check-ins don't reorder, swap, or remove path slots.
+
+*Server side:* the check-in response includes `suggest_repeat: true` when the rating is "hard". The app offers "cook again" (the slot stays open) or "skip". Nothing on the path changes either way.
 
 ### F7. XP with caps
 Users earn XP for finishing recipes. Harder recipes are worth more, and repeating easy recipes is capped so users can't farm XP.
@@ -131,6 +139,8 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 - [ ] Finishing the challenge and completing the check-in counts as **passing**. No photo is required.
 - [ ] Passing awards the slot's XP and the mastery badge (F9), and adds the recipe to the recipe book (F10) labeled Mastered.
 
+*Server side:* the slot 10 check-in may include `mastery: { hidden_steps, revealed_steps }`. These counts are stored on the check-in, are allowed only on the final slot, and `revealed_steps` can't exceed `hidden_steps`. Passing isn't gated on them yet (open question 4).
+
 ### F9. Badges
 **Acceptance criteria**
 - [ ] **Completion badge:** earned for each of slots 1–9 after cooking it and completing the check-in.
@@ -140,6 +150,8 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 - [ ] Earning a badge shows a short celebration on screen.
 - [ ] Each badge can only be earned once.
 
+*Server side:* `badges` is a fixed catalog: 9 completion badges, 1 mastery badge and 1 path milestone. The badge names are placeholders for Ian (open question 12). Earned badges are derived from each slot's first check-in, so a badge can't be earned twice. `get_my_badges()` lists earned and locked badges, and the check-in response lists `badges.earned` for the celebration.
+
 ### F10. Recipe book
 **Acceptance criteria**
 - [ ] Every recipe the user completes (cooked + check-in done, slots 1–10) is saved to their personal recipe book.
@@ -147,6 +159,8 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 - [ ] The recipe book lists saved recipes, and tapping one opens the full recipe (ingredients, steps, videos) in a read-only view.
 - [ ] A recipe appears only once, even if the user cooks it again.
 - [ ] An empty recipe book shows a message explaining how to add recipes.
+
+*Server side:* `get_my_recipe_book()` returns one entry per completed slot, labeled `completed`, or `mastered` for slot 10. The full recipe is read from `user_recipes`. Clients can't update or delete check-ins, so the history behind badges and the book can't be rewritten.
 
 ## 5. Out of scope (MVP)
 
@@ -203,4 +217,7 @@ Do **not** build these. They're future work.
 7. **Video accuracy.** Taking the top YouTube result may sometimes return off-target or low-quality videos. Is that acceptable, or should someone check the cached videos for the 10 slots?
 8. **User testing.** Should we test with people outside the team before the showcase, and what targets should we set (e.g., 5 testers, 2 recipes each)?
 9. **The 10 path dishes.** The proposal names 5 (knife basics, eggs, pasta, stir-fry, roast chicken). Which 5 go in between, and in what order?
-10. **Week for a retried XP award.** `award_slot_xp` applies the weekly repeat cap to the week the award runs (UTC), not the week of the check-in. A repeat check-in whose award is retried by the reconcile job in a later week counts toward that later week's 100 XP cap. Is that acceptable, or should the cap use the check-in's week? (Gamification owner: Ian.)
+10. **Week for a retried XP award.** `award_slot_xp` applies the weekly repeat cap to the week the award runs (UTC), not the week of the check-in. A repeat check-in whose award is retried by the reconcile job in a later week counts toward that later week's 100 XP cap. Is that acceptable, or should the cap use the check-in's week? (Gamification owner: Ian.) A related edge case: if a check-in's live award fails and a later check-in for the same slot is awarded first, the later one counts as the first completion and the retried one as a repeat. The total XP is the same.
+11. **Suggested sessions per week (F2).** Proposed rule: floor(days_per_week × minutes_per_session ÷ average cook minutes of the remaining recipes), kept between 1 and days_per_week. For example, 3 days × 30 min gives 2 sessions/week. Does the team agree?
+12. **Badge names (F9).** Completion badges are currently named after their dish ("Scrambled Eggs"). The mastery badge is "Roast Chicken Mastery" and the milestone is "Weeknight Basics Graduate". Ian to confirm or rename (codes stay the same).
+13. **Branch protection with AI review.** PRs are reviewed by AI, but GitHub doesn't count an approval from the PR's own author account. Should "1 approval" come from a teammate, or from a separate review-bot account?
