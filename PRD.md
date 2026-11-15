@@ -186,7 +186,7 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 
 *Server side:* `badges` is a fixed catalog: 9 completion badges, 1 mastery badge and 1 path milestone. The badge names are placeholders for Ian (open question 12). Earned badges are derived from each slot's first check-in, so a badge can't be earned twice. `get_my_badges()` lists earned and locked badges, and the check-in response lists `badges.earned` for the celebration.
 
-*Client (`app/`, UI Direction A):* session complete shows a seal for each badge in `badges.earned`. The profile lists every badge from `get_my_badges()`, with unearned seals grayed out.
+*Client (`app/`, UI Direction A):* session complete shows a seal for each badge in `badges.earned`. The profile lists every badge from `get_my_badges()`, with unearned seals grayed out. Mock check-ins use that same catalog: a completion seal for slots 1–9 only, never a slot-10 completion seal, and the mastery seal only when `revealed_steps` is 0.
 
 ### F10. Recipe book
 **Acceptance criteria**
