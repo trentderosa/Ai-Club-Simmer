@@ -4,6 +4,7 @@ import {
   hiddenStepIndices,
   isValidMasteryCounts,
   masteryCountsFromReveals,
+  qualifiesForMasteryBadge,
   revealedLabel,
 } from './mastery';
 
@@ -52,5 +53,15 @@ describe('isValidMasteryCounts', () => {
     expect(isValidMasteryCounts({ hidden_steps: 3, revealed_steps: 4 })).toBe(false);
     expect(isValidMasteryCounts({ hidden_steps: -1, revealed_steps: 0 })).toBe(false);
     expect(isValidMasteryCounts({ hidden_steps: 1.5, revealed_steps: 0 })).toBe(false);
+  });
+});
+
+describe('qualifiesForMasteryBadge', () => {
+  it('is true only for a present payload with zero reveals', () => {
+    expect(qualifiesForMasteryBadge({ hidden_steps: 3, revealed_steps: 0 })).toBe(true);
+    expect(qualifiesForMasteryBadge({ hidden_steps: 0, revealed_steps: 0 })).toBe(true);
+    expect(qualifiesForMasteryBadge({ hidden_steps: 3, revealed_steps: 1 })).toBe(false);
+    expect(qualifiesForMasteryBadge(undefined)).toBe(false);
+    expect(qualifiesForMasteryBadge(null)).toBe(false);
   });
 });

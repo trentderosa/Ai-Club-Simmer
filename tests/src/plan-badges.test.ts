@@ -275,9 +275,9 @@ describe('plan, badges and recipe book', () => {
       expect(badges.filter((b) => b.earned).map((b) => b.code)).toEqual(['complete_slot_1']);
     });
 
-    it('slot 10 earns mastery and, as the last slot, the path milestone', async () => {
+    it('slot 10 with zero reveals earns mastery and, as the last slot, the path milestone', async () => {
       const ids = await cookThrough(user, 9);
-      const last = await cook(user, 10, { hidden: 2, revealed: 1, at: '2026-11-10T12:00:00Z' });
+      const last = await cook(user, 10, { hidden: 3, revealed: 0, at: '2026-11-10T12:00:00Z' });
 
       const earned = await asRole<{ code: string }>('service_role', 'SELECT code FROM get_badges_earned_by_check_in($1)', [last]);
       expect(earned.map((b) => b.code)).toEqual(['mastery', 'path_weeknight_basics']);
@@ -287,6 +287,43 @@ describe('plan, badges and recipe book', () => {
 
       const badges = await asUser<Badge>(user.id, 'SELECT * FROM get_my_badges()');
       expect(badges.every((b) => b.earned)).toBe(true);
+    });
+
+    it('slot 10 with 1+ reveals completes the path but does not award mastery', async () => {
+      await cookThrough(user, 9);
+      const last = await cook(user, 10, { hidden: 3, revealed: 1, at: '2026-11-10T12:00:00Z' });
+
+      const earned = await asRole<{ code: string }>('service_role', 'SELECT code FROM get_badges_earned_by_check_in($1)', [last]);
+      expect(earned.map((b) => b.code)).toEqual(['path_weeknight_basics']);
+
+      const badges = await asUser<Badge>(user.id, 'SELECT * FROM get_my_badges()');
+      expect(badges.find((b) => b.code === 'path_weeknight_basics')?.earned).toBe(true);
+      expect(badges.find((b) => b.code === 'mastery')?.earned).toBe(false);
+    });
+
+    it('a missing mastery payload on slot 10 earns no mastery badge', async () => {
+      await cookThrough(user, 9);
+      const last = await cook(user, 10, { at: '2026-11-10T12:00:00Z' });
+
+      const earned = await asRole<{ code: string }>('service_role', 'SELECT code FROM get_badges_earned_by_check_in($1)', [last]);
+      expect(earned.map((b) => b.code)).toEqual(['path_weeknight_basics']);
+
+      const badges = await asUser<Badge>(user.id, 'SELECT * FROM get_my_badges()');
+      expect(badges.find((b) => b.code === 'mastery')?.earned).toBe(false);
+    });
+
+    it('a later zero-reveal check-in can still earn the mastery badge', async () => {
+      await cookThrough(user, 9);
+      const first = await cook(user, 10, { hidden: 3, revealed: 1, at: '2026-11-10T12:00:00Z' });
+      const firstCodes = await asRole<{ code: string }>('service_role', 'SELECT code FROM get_badges_earned_by_check_in($1)', [first]);
+      expect(firstCodes.map((b) => b.code)).toEqual(['path_weeknight_basics']);
+
+      const later = await cook(user, 10, { hidden: 3, revealed: 0, at: '2026-11-11T12:00:00Z' });
+      const laterCodes = await asRole<{ code: string }>('service_role', 'SELECT code FROM get_badges_earned_by_check_in($1)', [later]);
+      expect(laterCodes.map((b) => b.code)).toEqual(['mastery']);
+
+      const badges = await asUser<Badge>(user.id, 'SELECT * FROM get_my_badges()');
+      expect(badges.find((b) => b.code === 'mastery')?.earned).toBe(true);
     });
 
     it('badges are per user', async () => {

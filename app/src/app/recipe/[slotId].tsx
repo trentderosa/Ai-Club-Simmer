@@ -75,7 +75,7 @@ export default function RecipeScreen() {
           </T>
           {slot.is_final ? (
             <T variant="small" style={{ marginTop: 10 }}>
-              The last dish on the path. Cook it from memory: non-safety steps start hidden, and you can reveal one if you need a reminder.
+              The last dish on the path. Cook it from memory: non-safety steps start hidden. Reveal a step and you’ll still finish, but the mastery seal needs zero reveals.
             </T>
           ) : null}
         </View>

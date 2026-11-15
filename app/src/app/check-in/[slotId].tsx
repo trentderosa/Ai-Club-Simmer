@@ -13,7 +13,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 
-import type { PlanSlot, PlanSummary, Rating, Recipe } from '../../api';
+import type { PlanSlot, PlanSummary, Rating } from '../../api';
 import { Button, IconButton } from '../../components/button';
 import { Field, Segmented, type SegmentOption } from '../../components/choice';
 import { gutter, Screen, TopBar } from '../../components/layout';
@@ -26,7 +26,7 @@ import {
   SLOW_CHECK_IN_HINT,
   SLOW_CHECK_IN_HINT_MS,
 } from '../../domain/check-in-retry';
-import { masteryCountsFromReveals, revealedLabel } from '../../domain/mastery';
+import { revealedLabel } from '../../domain/mastery';
 import { errorCopy } from '../../domain/error-messages';
 import { isApiError } from '../../api';
 import { useFlowCache } from '../../state/flow-cache';
@@ -61,14 +61,13 @@ export default function CheckIn() {
   return (
     <CheckInForm
       slot={data.data.slot}
-      recipe={data.data.recipe.recipe}
       onBack={back}
       onDone={() => router.replace({ pathname: '/complete/[slotId]', params: { slotId: String(slotId) } })}
     />
   );
 }
 
-function CheckInForm({ slot, recipe, onBack, onDone }: { slot: PlanSlot; recipe: Recipe; onBack: () => void; onDone: () => void }) {
+function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => void; onDone: () => void }) {
   const { backend, requireSession, signOut } = useSession();
   const cache = useFlowCache();
   const [rating, setRating] = useState<Rating | null>(null);
@@ -78,9 +77,9 @@ function CheckInForm({ slot, recipe, onBack, onDone }: { slot: PlanSlot; recipe:
   const [error, setError] = useState<string | null>(null);
   const [idempotencyKey] = useState(newIdempotencyKey);
   const [slowHint, setSlowHint] = useState(false);
-  const mastery = slot.is_final
-    ? (cache.getMastery(slot.slot_id) ?? masteryCountsFromReveals(recipe.steps, []))
-    : undefined;
+  // N1: only send mastery when cook mode recorded a real session.
+  // A missing payload earns no badge, so a skipped cook cannot look like a perfect run.
+  const mastery = slot.is_final ? (cache.getMastery(slot.slot_id)?.counts ?? undefined) : undefined;
 
   useEffect(() => {
     if (!saving) return;
@@ -121,6 +120,7 @@ function CheckInForm({ slot, recipe, onBack, onDone }: { slot: PlanSlot; recipe:
         summaryAfter: after.status === 'fulfilled' ? after.value : null,
         planAfter,
       });
+      cache.clearMastery(slot.slot_id);
       onDone();
     } catch (e) {
       if (isApiError(e) && e.kind === 'unauthorized') {
@@ -163,6 +163,7 @@ function CheckInForm({ slot, recipe, onBack, onDone }: { slot: PlanSlot; recipe:
         summaryAfter,
         planAfter: plan,
       });
+      cache.clearMastery(slot.slot_id);
       onDone();
       return true;
     } catch {

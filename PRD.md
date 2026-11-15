@@ -168,17 +168,17 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 - [ ] Only the final path slot (slot 10) is a mastery challenge.
 - [ ] In challenge mode, all steps start hidden except safety steps, which are always shown (proposal Figure 3).
 - [ ] Each hidden step has a Reveal button, and the screen shows "Revealed X of Y hidden steps."
-- [ ] Finishing the challenge and completing the check-in counts as **passing**. No photo is required.
-- [ ] Passing awards the slot's XP and the mastery badge (F9), and adds the recipe to the recipe book (F10) labeled Mastered.
+- [ ] Finishing the challenge and completing the check-in completes slot 10. No photo is required. This awards the slot's XP and adds the recipe to the recipe book (F10) labeled Mastered. Path completion and the graduate badge are unchanged, no matter how many steps were revealed.
+- [ ] The mastery badge (F9) is awarded only when the final-slot check-in has `revealed_steps = 0`. A missing `mastery` payload earns no badge. XP is not affected.
 
-*Server side:* the slot 10 check-in may include `mastery: { hidden_steps, revealed_steps }`. These counts are stored on the check-in, are allowed only on the final slot, and `revealed_steps` can't exceed `hidden_steps`. Passing isn't gated on them yet (open question 4).
+*Server side:* the slot 10 check-in may include `mastery: { hidden_steps, revealed_steps }`. These counts are stored on the check-in, are allowed only on the final slot, and `revealed_steps` can't exceed `hidden_steps`. `get_badges_for_user` awards the mastery badge only when a final-slot check-in has a payload and `revealed_steps = 0` (migration `20261115210000_mastery_badge_zero_reveals.sql`). A missing payload earns no badge. Those reveal counts are **client-reported**, so anyone can send `revealed_steps: 0` straight to the server and earn the mastery badge without cooking blind. XP is not affected. The planned follow-up is to serve hidden step text only on reveal. Badge rules are Ian's area; Ian still needs to OK the zero-reveals rule (Trent decided it on Nov 15, 2026).
 
-*Client (`app/`, UI Direction A):* slot 10 (`is_final`) opens cook mode as a mastery challenge. Steps with `isSafetyStep: true` stay visible; every other step starts hidden, with a Reveal control and a "Revealed X of Y hidden steps" indicator. The check-in sends `mastery: { hidden_steps, revealed_steps }`. Finishing and checking in counts as passing; the badge is not gated on how many steps were revealed (open question 4). Mock mode has a second sign-in (`mastery@simmer.test`) already at slot 10; the default demo user is unchanged.
+*Client (`app/`, UI Direction A):* slot 10 (`is_final`) opens cook mode as a mastery challenge. Steps with `isSafetyStep: true` stay visible; every other step starts hidden, with a Reveal control and a "Revealed X of Y hidden steps" indicator. Cook mode and the complete screen say that revealing a step still finishes the challenge, but the mastery seal needs zero reveals. The check-in sends `mastery: { hidden_steps, revealed_steps }` only when cook mode recorded a real session; if the reveal state is unknown, `mastery` is omitted so a skipped cook cannot earn the badge. Mock mode has a second sign-in (`mastery@simmer.test`) already at slot 10; the default demo user is unchanged.
 
 ### F9. Badges
 **Acceptance criteria**
 - [ ] **Completion badge:** earned for each of slots 1–9 after cooking it and completing the check-in.
-- [ ] **Mastery badge:** earned for passing the mastery challenge (F8).
+- [ ] **Mastery badge:** earned for a final-slot check-in with `revealed_steps = 0` (F8). A missing payload or any reveals does not award it.
 - [ ] **Path milestone badge:** earned for finishing all 10 slots of "Weeknight basics."
 - [ ] A badges screen shows earned badges and locked (grayed-out) ones.
 - [ ] Earning a badge shows a short celebration on screen.
@@ -252,7 +252,7 @@ Do **not** build these. They're future work.
 1. **Exact demo date.** The proposal still says `[demo date]`. We're assuming about 2 months from 2026-11-02.
 2. **Back-end/database owner.** The proposal lists this as TBD (Matthew?). Someone also needs to own the AI-server laptop setup.
 3. **Team hours per week.** Not yet known. This affects whether everything in F1–F10 fits.
-4. **Mastery pass threshold.** Right now finishing the challenge counts as passing, no matter how many steps were revealed. Should there be a reveal limit (e.g., at most 2 reveals)?
+4. **Mastery pass threshold.** Resolved, pending Ian's OK. Trent decided on Nov 15, 2026 that the mastery badge is awarded only when the final-slot check-in has `revealed_steps = 0`. Finishing with any reveals (or with no `mastery` payload) still completes slot 10: normal XP, path completion, and the graduate badge are unchanged. XP is not affected. Those reveal counts are **client-reported**, so anyone can send `revealed_steps: 0` straight to the server and earn the mastery badge without cooking blind. The planned follow-up fix is to serve hidden step text only on reveal. Badge rules are Ian's area; Ian still needs to OK this zero-reveals rule.
 5. **XP numbers.** Resolved. Slot XP uses the approved formula in F7, XP = max(1, round((steps×0.45 + ingredients×0.35 + cook_minutes×0.2)×10)), with the weights and ×10 multiplier in `xp_config`. Current `path_slots` inputs and XP are listed in F7 (102, 62, 75, 143, 65, 105, 137, 80, 148, 181). Repeats earn 50%, capped at 100 XP per week (confirmed in Ian's final XP spec (gamification owner), relayed Nov 10, 2026; implemented in PR #5 (merged ca3deff, migration 20261110210000_xp_formula_weights.sql)). `award_slot_xp` is EXECUTE-granted to `service_role` only (PR #6, merged as `7fb5b24`); the client never calls it, and only the ai-server awards XP.
 6. **Local model quality and safety.** Small models make more mistakes in recipes and safety flags. Should the team review the generated recipes for the 10 slots before the demo, and which exact model should we use?
 7. **Video accuracy.** Taking the top YouTube result may sometimes return off-target or low-quality videos. Is that acceptable, or should someone check the cached videos for the 10 slots?

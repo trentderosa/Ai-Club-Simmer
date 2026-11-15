@@ -3,8 +3,10 @@
  * `isSafetyStep` (CLIENT_API / RecipeSchema). Hidden steps are every
  * other step; they start hidden and may be revealed one at a time.
  *
- * Passing is finishing the cook and checking in. Reveal counts are
- * recorded but do not gate the badge (open question 4).
+ * Finishing the cook and checking in completes the slot (XP and path
+ * progress are unchanged). The mastery badge is awarded only when the
+ * check-in has revealed_steps = 0. A missing payload earns no badge.
+ * Reveal counts are client-reported.
  */
 
 export interface MasteryCounts {
@@ -53,4 +55,9 @@ export function isValidMasteryCounts(counts: MasteryCounts): boolean {
 /** Caption shown in cook mode, e.g. "Revealed 1 of 3 hidden steps." */
 export function revealedLabel(counts: MasteryCounts): string {
   return `Revealed ${counts.revealed_steps} of ${counts.hidden_steps} hidden steps.`;
+}
+
+/** True only when a payload is present and revealed_steps is 0. */
+export function qualifiesForMasteryBadge(counts: MasteryCounts | null | undefined): boolean {
+  return counts != null && isValidMasteryCounts(counts) && counts.revealed_steps === 0;
 }

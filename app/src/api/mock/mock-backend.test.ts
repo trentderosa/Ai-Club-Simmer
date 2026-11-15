@@ -166,8 +166,9 @@ describe('mock backend', () => {
     expect(book).toHaveLength(10);
     expect(book.find((e) => e.slot_id === 10)).toMatchObject({ label: 'mastered' });
     const badges = await b.getBadges();
-    expect(badges.every((x) => x.earned)).toBe(true);
     expect(badges.find((x) => x.code === 'path_weeknight_basics')?.earned).toBe(true);
+    // No mastery payload → no mastery badge.
+    expect(badges.find((x) => x.code === 'mastery')?.earned).toBe(false);
   });
 });
 
@@ -198,32 +199,11 @@ describe('mock mastery account and check-in payload', () => {
     expect((await b.getBadges()).find((x) => x.code === 'mastery')?.earned).toBe(false);
   });
 
-  it('accepts a slot 10 mastery payload and still awards the badge no matter how many steps were revealed', async () => {
-    const allRevealed = createMockBackend({ latency: 0 });
-    await allRevealed.signIn(MASTERY_USER.email, 'x');
-    await allRevealed.generateRecipe(10, 't');
-    const withReveals = await allRevealed.submitCheckIn(
-      {
-        user_recipe_id: mockUserRecipeId(10),
-        slot_id: 10,
-        rating: 'ok',
-        mastery: { hidden_steps: 3, revealed_steps: 3 },
-      },
-      't',
-    );
-    expect(withReveals.xp).toEqual({ status: 'awarded', xp_awarded: 181, is_first_completion: true, capped: false });
-    expect(withReveals.badges).toMatchObject({
-      status: 'ok',
-      earned: expect.arrayContaining([
-        expect.objectContaining({ code: 'mastery', kind: 'mastery' }),
-        expect.objectContaining({ code: 'path_weeknight_basics' }),
-      ]),
-    });
-
-    const noneRevealed = createMockBackend({ latency: 0 });
-    await noneRevealed.signIn(MASTERY_USER.email, 'x');
-    await noneRevealed.generateRecipe(10, 't');
-    const zero = await noneRevealed.submitCheckIn(
+  it('awards the mastery badge only on revealed_steps = 0', async () => {
+    const zero = createMockBackend({ latency: 0 });
+    await zero.signIn(MASTERY_USER.email, 'x');
+    await zero.generateRecipe(10, 't');
+    const perfect = await zero.submitCheckIn(
       {
         user_recipe_id: mockUserRecipeId(10),
         slot_id: 10,
@@ -232,10 +212,48 @@ describe('mock mastery account and check-in payload', () => {
       },
       't',
     );
-    expect(zero.badges).toMatchObject({
+    expect(perfect.xp).toEqual({ status: 'awarded', xp_awarded: 181, is_first_completion: true, capped: false });
+    expect(perfect.badges).toMatchObject({
       status: 'ok',
-      earned: expect.arrayContaining([expect.objectContaining({ code: 'mastery' })]),
+      earned: expect.arrayContaining([
+        expect.objectContaining({ code: 'mastery', kind: 'mastery' }),
+        expect.objectContaining({ code: 'path_weeknight_basics' }),
+      ]),
     });
+    expect((await zero.getBadges()).find((x) => x.code === 'mastery')?.earned).toBe(true);
+  });
+
+  it('completes slot 10 with 1+ reveals or a missing payload without the mastery badge', async () => {
+    const revealed = createMockBackend({ latency: 0 });
+    await revealed.signIn(MASTERY_USER.email, 'x');
+    await revealed.generateRecipe(10, 't');
+    const withReveals = await revealed.submitCheckIn(
+      {
+        user_recipe_id: mockUserRecipeId(10),
+        slot_id: 10,
+        rating: 'ok',
+        mastery: { hidden_steps: 3, revealed_steps: 1 },
+      },
+      't',
+    );
+    expect(withReveals.xp).toEqual({ status: 'awarded', xp_awarded: 181, is_first_completion: true, capped: false });
+    const codes = withReveals.badges.status === 'ok' ? withReveals.badges.earned.map((b) => b.code) : [];
+    expect(codes).toContain('path_weeknight_basics');
+    expect(codes).not.toContain('mastery');
+    expect((await revealed.getBadges()).find((x) => x.code === 'mastery')?.earned).toBe(false);
+
+    const missing = createMockBackend({ latency: 0 });
+    await missing.signIn(MASTERY_USER.email, 'x');
+    await missing.generateRecipe(10, 't');
+    const noPayload = await missing.submitCheckIn(
+      { user_recipe_id: mockUserRecipeId(10), slot_id: 10, rating: 'ok' },
+      't',
+    );
+    const missingCodes = noPayload.badges.status === 'ok' ? noPayload.badges.earned.map((b) => b.code) : [];
+    expect(noPayload.xp).toMatchObject({ status: 'awarded', xp_awarded: 181, is_first_completion: true });
+    expect(missingCodes).toContain('path_weeknight_basics');
+    expect(missingCodes).not.toContain('mastery');
+    expect((await missing.getBadges()).find((x) => x.code === 'mastery')?.earned).toBe(false);
   });
 
   it('rejects mastery on a non-final slot and when revealed exceeds hidden', async () => {

@@ -216,7 +216,7 @@ Use the same recipe call. In challenge mode:
 - Each hidden step has a **Reveal** button.
 - Show "Revealed X of Y hidden steps".
 
-Send `mastery: { hidden_steps: Y, revealed_steps: X }` with the check-in. Finishing and checking in counts as passing, which earns the `mastery` badge and puts the recipe in the book as Mastered. Finishing slot 10 last also earns `path_weeknight_basics`.
+Send `mastery: { hidden_steps: Y, revealed_steps: X }` with the check-in only when cook mode recorded those counts. If the reveal state is unknown, omit `mastery`. Finishing and checking in completes the slot (XP and the book entry labeled Mastered are unchanged). The `mastery` badge is awarded only when `revealed_steps` is 0; a missing payload earns no badge. Finishing slot 10 last also earns `path_weeknight_basics`. Reveal counts are client-reported.
 
 ## F9. Badges screen
 

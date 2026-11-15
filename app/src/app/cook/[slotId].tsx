@@ -41,7 +41,8 @@ export default function CookMode() {
       recipe={data.data.recipe.recipe}
       videos={data.data.recipe.videos}
       challenge={data.data.slot.is_final}
-      onMasteryChange={data.data.slot.is_final ? (counts) => cache.setMastery(slotId, counts) : undefined}
+      initialRevealed={data.data.slot.is_final ? (cache.getMastery(slotId)?.revealedIndices ?? []) : undefined}
+      onMasteryChange={data.data.slot.is_final ? (session) => cache.setMastery(slotId, session) : undefined}
       onClose={close}
       onDone={() => router.replace({ pathname: '/check-in/[slotId]', params: { slotId: String(slotId) } })}
     />

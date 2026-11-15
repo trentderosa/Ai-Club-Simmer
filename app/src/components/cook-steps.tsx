@@ -10,7 +10,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Recipe, RecipeStep, Videos } from '../api';
 import { color, font, radius, space } from '../theme/tokens';
 import { highlightIngredients } from '../domain/highlight';
-import { isHiddenMasteryStep, masteryCountsFromReveals, revealedLabel, type MasteryCounts } from '../domain/mastery';
+import { isHiddenMasteryStep, masteryCountsFromReveals, revealedLabel } from '../domain/mastery';
+import type { MasterySession } from '../state/flow-cache';
 import { createTimer, parseStepDurationSeconds, type TimerState } from '../domain/timer';
 import { useSession } from '../state/session';
 import { Button, IconButton } from './button';
@@ -25,6 +26,7 @@ export function CookSteps({
   onClose,
   onDone,
   challenge = false,
+  initialRevealed,
   onMasteryChange,
 }: {
   recipe: Recipe;
@@ -33,13 +35,15 @@ export function CookSteps({
   onDone: () => void;
   /** Final path slot: hide non-safety steps until the user reveals them. */
   challenge?: boolean;
-  onMasteryChange?: (counts: MasteryCounts) => void;
+  /** Revealed step indices from a previous visit in this session (N1). */
+  initialRevealed?: readonly number[];
+  onMasteryChange?: (session: MasterySession) => void;
 }) {
   const insets = useSafeAreaInsets();
   const { backend } = useSession();
   const [index, setIndex] = useState(0);
   const [showIngredients, setShowIngredients] = useState(false);
-  const [revealed, setRevealed] = useState<Set<number>>(() => new Set());
+  const [revealed, setRevealed] = useState<Set<number>>(() => new Set(initialRevealed ?? []));
   // One timer per step that names a duration; they keep running when you move between steps.
   const [timers, setTimers] = useState<Record<number, TimerState>>(() => {
     const out: Record<number, TimerState> = {};
@@ -58,11 +62,18 @@ export function CookSteps({
   const counts = useMemo(() => masteryCountsFromReveals(recipe.steps, revealed), [recipe.steps, revealed]);
   const hidden = challenge && isHiddenMasteryStep(step) && !revealed.has(index);
 
+  const reportMastery = (indices: ReadonlySet<number>) => {
+    onMasteryChange?.({
+      counts: masteryCountsFromReveals(recipe.steps, indices),
+      revealedIndices: [...indices].sort((a, b) => a - b),
+    });
+  };
+
   const revealStep = () => {
     const next = new Set(revealed);
     next.add(index);
     setRevealed(next);
-    onMasteryChange?.(masteryCountsFromReveals(recipe.steps, next));
+    reportMastery(next);
   };
 
   return (
@@ -87,6 +98,9 @@ export function CookSteps({
           </T>
           <T variant="caption" style={{ marginTop: 4 }}>
             {revealedLabel(counts)}
+          </T>
+          <T variant="caption" style={{ marginTop: 6 }}>
+            Reveal a step and you’ll still finish, but the mastery seal needs zero reveals.
           </T>
         </View>
       ) : null}
@@ -153,7 +167,7 @@ export function CookSteps({
           onPress={() => {
             setShowIngredients(false);
             if (last) {
-              if (challenge) onMasteryChange?.(counts);
+              if (challenge) reportMastery(revealed);
               onDone();
             } else setIndex(index + 1);
           }}
