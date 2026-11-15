@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { ZodError } from 'zod';
-import { CheckInInputSchema } from '../types/check-in.js';
+import { CheckInIdempotencyConflict, CheckInInputSchema } from '../types/check-in.js';
 import type { CheckInService } from '../services/check-in-service.js';
 import type { JwtVerifier } from '../services/jwt-verifier.js';
 import { createAuthMiddleware } from '../middleware/authenticate.js';
@@ -63,6 +63,7 @@ export function createCheckInRouter(
    *   went_well?: string (max 500 chars),
    *   was_hard?: string (max 500 chars),
    *   mastery?: { hidden_steps: number, revealed_steps: number }  (final slot only, F8)
+   *   idempotency_key?: string (UUID; reused on retry, stored as check_ins.id)
    * }
    * 
    * Response:
@@ -123,6 +124,14 @@ export function createCheckInRouter(
             path: e.path.join('.'),
             message: e.message,
           })),
+        });
+        return;
+      }
+
+      if (error instanceof CheckInIdempotencyConflict) {
+        res.status(409).json({
+          error: error.message,
+          code: error.code,
         });
         return;
       }

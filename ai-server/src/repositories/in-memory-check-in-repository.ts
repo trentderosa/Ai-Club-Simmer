@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
-import type { CheckInRecord } from '../types/check-in.js';
-import type { CheckInRepository, CreateCheckInParams } from './check-in-repository.js';
+import { CheckInIdempotencyConflict, type CheckInRecord } from '../types/check-in.js';
+import type { CheckInRepository, CreateCheckInParams, CreatedCheckIn } from './check-in-repository.js';
 
 interface UserRecipeRecord {
   id: string;
@@ -39,14 +39,28 @@ export class InMemoryCheckInRepository implements CheckInRepository {
     return Promise.resolve(recipe.user_id === userId && recipe.slot_id === slotId);
   }
 
-  async create(params: CreateCheckInParams): Promise<CheckInRecord> {
+  async create(params: CreateCheckInParams): Promise<CreatedCheckIn> {
     const isValid = await this.validateUserRecipe(params.user_id, params.user_recipe_id, params.slot_id);
     if (!isValid) {
       throw new Error('Invalid user_recipe_id or slot_id mismatch');
     }
 
+    if (params.id) {
+      const existing = this.checkIns.get(params.id);
+      if (existing) {
+        if (
+          existing.user_id === params.user_id &&
+          existing.user_recipe_id === params.user_recipe_id &&
+          existing.slot_id === params.slot_id
+        ) {
+          return { ...existing, created: false };
+        }
+        throw new CheckInIdempotencyConflict();
+      }
+    }
+
     const record: CheckInRecord = {
-      id: randomUUID(),
+      id: params.id ?? randomUUID(),
       user_id: params.user_id,
       user_recipe_id: params.user_recipe_id,
       slot_id: params.slot_id,
@@ -58,7 +72,7 @@ export class InMemoryCheckInRepository implements CheckInRepository {
     };
 
     this.checkIns.set(record.id, record);
-    return record;
+    return { ...record, created: true };
   }
 
   getById(id: string, userId: string): Promise<CheckInRecord | null> {

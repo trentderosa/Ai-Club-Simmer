@@ -1,0 +1,69 @@
+/**
+ * In-memory cache for one cooking session's flow: Today -> Recipe -> Cook ->
+ * Check-in -> Complete. It avoids re-fetching the plan and recipe on every
+ * screen and hands the check-in result to the session-complete screen without
+ * stuffing JSON into route params. Nothing is persisted.
+ */
+import { createContext, useContext, useMemo, useRef, type ReactNode } from 'react';
+
+import type { CheckInResponse, PlanSlot, PlanSummary, RecipeResponse } from '../api';
+
+export interface CheckInOutcome {
+  slot: PlanSlot;
+  response: CheckInResponse;
+  /** Summaries read right before and after the check-in; null if a read failed. */
+  summaryBefore: PlanSummary | null;
+  summaryAfter: PlanSummary | null;
+  /** The plan re-read after the check-in (the next slot is now current). */
+  planAfter: PlanSlot[] | null;
+}
+
+export interface FlowCache {
+  getPlan(): PlanSlot[] | null;
+  setPlan(plan: PlanSlot[]): void;
+  getSummary(): PlanSummary | null;
+  setSummary(s: PlanSummary): void;
+  getRecipe(slotId: number): RecipeResponse | null;
+  setRecipe(slotId: number, r: RecipeResponse): void;
+  getOutcome(slotId: number): CheckInOutcome | null;
+  setOutcome(o: CheckInOutcome): void;
+  /** Drop everything (sign-out). */
+  clear(): void;
+}
+
+const Ctx = createContext<FlowCache | null>(null);
+
+export function FlowCacheProvider({ children }: { children: ReactNode }) {
+  const ref = useRef({
+    plan: null as PlanSlot[] | null,
+    summary: null as PlanSummary | null,
+    recipes: new Map<number, RecipeResponse>(),
+    outcomes: new Map<number, CheckInOutcome>(),
+  });
+  const cache = useMemo<FlowCache>(() => {
+    const c = ref.current;
+    return {
+      getPlan: () => c.plan,
+      setPlan: (p) => (c.plan = p),
+      getSummary: () => c.summary,
+      setSummary: (s) => (c.summary = s),
+      getRecipe: (id) => c.recipes.get(id) ?? null,
+      setRecipe: (id, r) => void c.recipes.set(id, r),
+      getOutcome: (id) => c.outcomes.get(id) ?? null,
+      setOutcome: (o) => void c.outcomes.set(o.slot.slot_id, o),
+      clear: () => {
+        c.plan = null;
+        c.summary = null;
+        c.recipes.clear();
+        c.outcomes.clear();
+      },
+    };
+  }, []);
+  return <Ctx.Provider value={cache}>{children}</Ctx.Provider>;
+}
+
+export function useFlowCache(): FlowCache {
+  const v = useContext(Ctx);
+  if (!v) throw new Error('useFlowCache must be used inside <FlowCacheProvider>.');
+  return v;
+}

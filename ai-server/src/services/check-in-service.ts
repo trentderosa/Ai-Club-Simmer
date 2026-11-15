@@ -1,5 +1,5 @@
 import type { CheckInRepository } from '../repositories/check-in-repository.js';
-import type { CheckInBadges, CheckInInput, CheckInResponse, CheckInXp } from '../types/check-in.js';
+import type { CheckInBadges, CheckInInput, CheckInResponse, CheckInXp, CoachNote } from '../types/check-in.js';
 import type { PathRepository } from '../repositories/path-repository.js';
 import type { CoachNoteGenerator } from './coach-note.js';
 import { xpAwardErrorReason, type XpAwarder } from './xp-awarder.js';
@@ -15,6 +15,11 @@ export interface CheckInServiceOptions {
    */
   pathRepository?: Pick<PathRepository, 'getPathSlot' | 'badgesEarnedBy'> | null;
 }
+
+/** Returned on an idempotent replay so a retry does not call Ollama again. */
+export const REPLAY_COACH_NOTE: CoachNote = {
+  note: 'Your check-in was already saved.',
+};
 
 export class CheckInService {
   private pathRepository: CheckInServiceOptions['pathRepository'];
@@ -32,7 +37,9 @@ export class CheckInService {
   /**
    * Process a post-cook check-in:
    * 1. Validate ownership (done in route before calling this)
-   * 2. Persist raw text to repository (N2: store raw, sanitize only for prompt)
+   * 2. Persist raw text to repository (N2: store raw, sanitize only for prompt).
+   *    When input.idempotency_key is set, it becomes check_ins.id so a retry
+   *    of the same attempt returns the existing row instead of inserting another.
    * 3. Award XP server-side via award_slot_xp (service role). A failed award
    *    (including a timeout, XP_AWARD_TIMEOUT_MS) is logged with a reason and
    *    reported as xp.status = 'failed'; the check-in stays saved, and
@@ -40,7 +47,9 @@ export class CheckInService {
    * 4. Look up badges this check-in earned (F9). A failed lookup is logged
    *    and reported as badges.status = 'failed'; badges are derived from
    *    check-ins, so they still appear on the badges screen.
-   * 5. Generate Coach's note via Ollama
+   * 5. Generate Coach's note via Ollama. On an idempotent replay
+   *    (`create()` returned created: false), skip generation and return
+   *    REPLAY_COACH_NOTE so a retry cannot start a second Ollama run.
    * 6. suggest_repeat = rated "hard" (F6). The path never changes.
    */
   async processCheckIn(
@@ -48,6 +57,7 @@ export class CheckInService {
     input: CheckInInput
   ): Promise<CheckInResponse> {
     const checkIn = await this.repository.create({
+      id: input.idempotency_key,
       user_id: userId,
       user_recipe_id: input.user_recipe_id,
       slot_id: input.slot_id,
@@ -61,11 +71,13 @@ export class CheckInService {
     const xp = await this.awardXp(checkIn.id, checkIn.slot_id);
     const badges = await this.lookUpBadges(checkIn.id, checkIn.slot_id);
 
-    const coachNote = await this.coachNoteGenerator.generate(
-      input.rating,
-      input.went_well ?? null,
-      input.was_hard ?? null
-    );
+    const coachNote = checkIn.created
+      ? await this.coachNoteGenerator.generate(
+          input.rating,
+          input.went_well ?? null,
+          input.was_hard ?? null
+        )
+      : REPLAY_COACH_NOTE;
 
     return {
       check_in_id: checkIn.id,

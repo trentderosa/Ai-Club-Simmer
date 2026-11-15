@@ -1,0 +1,56 @@
+/**
+ * The one interface screens talk to. Two implementations:
+ * - live (`live-backend.ts`): Supabase (anon key + user session) + ai-server
+ * - mock (`mock/mock-backend.ts`): in-memory fake data, no network
+ *
+ * Screens never import supabase-js or fetch directly; they call these methods
+ * through `useBackend()`.
+ */
+import type {
+  CheckInInput,
+  CheckInResponse,
+  PlanSlot,
+  PlanSummary,
+  Profile,
+  ProfileInput,
+  RecipeResponse,
+} from './schemas';
+
+export interface AppSession {
+  userId: string;
+  email: string | null;
+  /** From auth user_metadata.first_name (set at sign-up). profiles has no name column. */
+  firstName: string | null;
+  accessToken: string;
+}
+
+export interface SignUpResult {
+  /** false when the project requires email confirmation before first sign-in. */
+  signedIn: boolean;
+}
+
+export interface Backend {
+  readonly label: 'live' | 'mock' | 'mock-ai';
+
+  // Auth (F1)
+  getSession(): Promise<AppSession | null>;
+  /** Calls `listener` on sign-in, sign-out and token refresh. Returns unsubscribe. */
+  onSessionChange(listener: (session: AppSession | null) => void): () => void;
+  signIn(email: string, password: string): Promise<void>;
+  signUp(email: string, password: string, firstName: string): Promise<SignUpResult>;
+  signOut(): Promise<void>;
+
+  // Profile / onboarding (F1). RLS: own row only.
+  getProfile(userId: string): Promise<Profile | null>;
+  saveOnboarding(userId: string, input: ProfileInput): Promise<void>;
+
+  // Plan (F2, F7)
+  getPlan(): Promise<PlanSlot[]>;
+  getPlanSummary(): Promise<PlanSummary>;
+
+  // AI server (F3-F7, F9)
+  generateRecipe(slotId: number, accessToken: string): Promise<RecipeResponse>;
+  /** `user_recipes.id` for this user + slot, needed by the check-in. */
+  getUserRecipeId(slotId: number): Promise<string>;
+  submitCheckIn(input: CheckInInput, accessToken: string): Promise<CheckInResponse>;
+}

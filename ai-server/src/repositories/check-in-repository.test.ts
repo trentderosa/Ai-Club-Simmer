@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { randomUUID } from 'crypto';
+import { CheckInIdempotencyConflict } from '../types/check-in.js';
 import { InMemoryCheckInRepository } from './in-memory-check-in-repository.js';
 
 describe('InMemoryCheckInRepository', () => {
@@ -90,6 +91,65 @@ describe('InMemoryCheckInRepository', () => {
       ).rejects.toThrow('Invalid user_recipe_id or slot_id mismatch');
     });
   });
+
+    it('reuses a supplied id and returns the first write on replay', async () => {
+      const id = '11111111-1111-4111-8111-111111111111';
+      const first = await repository.create({
+        id,
+        user_id: testUserId,
+        user_recipe_id: testRecipeId,
+        slot_id: testSlotId,
+        difficulty_rating: 'ok',
+        went_well: 'first',
+        was_hard: null,
+      });
+      const replay = await repository.create({
+        id,
+        user_id: testUserId,
+        user_recipe_id: testRecipeId,
+        slot_id: testSlotId,
+        difficulty_rating: 'hard',
+        went_well: 'retry',
+        was_hard: 'ignored',
+      });
+
+      expect(first.id).toBe(id);
+      expect(first.created).toBe(true);
+      expect(replay.id).toBe(id);
+      expect(replay.created).toBe(false);
+      expect(replay.went_well).toBe('first');
+      expect(replay.difficulty_rating).toBe('ok');
+      expect(repository.getAllCheckIns()).toHaveLength(1);
+    });
+
+    it('rejects a supplied id that already belongs to a different check-in', async () => {
+      const id = '22222222-2222-4222-8222-222222222222';
+      await repository.create({
+        id,
+        user_id: testUserId,
+        user_recipe_id: testRecipeId,
+        slot_id: testSlotId,
+        difficulty_rating: 'ok',
+        went_well: null,
+        was_hard: null,
+      });
+
+      const otherRecipe = '33333333-3333-4333-8333-333333333333';
+      repository.seedUserRecipe({ id: otherRecipe, user_id: testUserId, slot_id: 2 });
+
+      await expect(
+        repository.create({
+          id,
+          user_id: testUserId,
+          user_recipe_id: otherRecipe,
+          slot_id: 2,
+          difficulty_rating: 'ok',
+          went_well: null,
+          was_hard: null,
+        })
+      ).rejects.toBeInstanceOf(CheckInIdempotencyConflict);
+      expect(repository.getAllCheckIns()).toHaveLength(1);
+    });
 
   describe('getById', () => {
     it('returns check-in for owner', async () => {

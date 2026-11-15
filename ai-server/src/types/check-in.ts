@@ -21,6 +21,13 @@ export const CheckInInputSchema = z
         path: ['revealed_steps'],
       })
       .optional(),
+    /**
+     * Client-generated UUID, unique for one check-in attempt. Reused on retry
+     * so a timed-out POST cannot insert a second row or award XP twice.
+     * Stored as check_ins.id (the existing primary key); no migration needed.
+     * First write wins. Optional so older clients keep working.
+     */
+    idempotency_key: z.string().uuid().optional(),
   });
 
 export type CheckInInput = z.infer<typeof CheckInInputSchema>;
@@ -87,4 +94,16 @@ export interface CheckInResponse {
    * never changes either way.
    */
   suggest_repeat: boolean;
+}
+
+/**
+ * The given idempotency_key already belongs to a different user, recipe, or slot.
+ * The route maps this to 409 IDEMPOTENCY_CONFLICT.
+ */
+export class CheckInIdempotencyConflict extends Error {
+  readonly code = 'IDEMPOTENCY_CONFLICT' as const;
+  constructor() {
+    super('idempotency_key was already used for a different check-in');
+    this.name = 'CheckInIdempotencyConflict';
+  }
 }

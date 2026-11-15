@@ -1,5 +1,10 @@
 import type { CheckInRecord } from '../types/check-in.js';
 
+/** Result of create(): `created` is false when this was an idempotent replay. */
+export interface CreatedCheckIn extends CheckInRecord {
+  created: boolean;
+}
+
 export interface CreateCheckInParams {
   user_id: string;
   user_recipe_id: string;
@@ -10,18 +15,26 @@ export interface CreateCheckInParams {
   /** F8 mastery challenge only (final slot): steps hidden / revealed. */
   hidden_steps?: number | null;
   revealed_steps?: number | null;
+  /**
+   * When set (the client's idempotency_key), used as check_ins.id.
+   * A second create with the same id and the same user/recipe/slot returns
+   * the existing row (first write wins). A same-id mismatch throws
+   * CheckInIdempotencyConflict.
+   */
+  id?: string;
 }
 
 export interface CheckInRepository {
   /**
-   * Create a new check-in record.
-   * 
+   * Create a new check-in record, or return the existing one when `id` is a
+   * replay of the same check-in (see CreateCheckInParams.id).
+   *
    * NOTE: The route should call validateUserRecipe() BEFORE calling create().
    * The InMemoryCheckInRepository validates ownership in create() for safety,
    * but SupabaseCheckInRepository does not (it uses service-role and bypasses RLS).
    * Do not rely on create() to enforce ownership - always validate first.
    */
-  create(params: CreateCheckInParams): Promise<CheckInRecord>;
+  create(params: CreateCheckInParams): Promise<CreatedCheckIn>;
 
   /**
    * Get a check-in by ID.
