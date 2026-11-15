@@ -2,7 +2,7 @@
 
 The Expo + TypeScript client for Simmer. This first cut covers the **core loop**: sign up or sign in → onboarding → Today (the plan) → recipe → cook mode → check-in → session complete. It implements UI **Direction A, "editorial kitchen"** from the design proposal.
 
-UI/UX belongs to Nathan and Ezzeldin. Treat this as a handoff-ready starting point: the screens follow the mockups, but every visual decision is theirs to change. The backend contract is [`../docs/CLIENT_API.md`](../docs/CLIENT_API.md).
+Nathan owns UI/UX (Ian and Ezzeldin help). Treat this as a handoff-ready starting point: the screens follow the mockups, but every visual decision is theirs to change. The backend contract is [`../docs/CLIENT_API.md`](../docs/CLIENT_API.md).
 
 ## Run it
 
@@ -24,7 +24,7 @@ cp .env.example .env.local   # fill in the Supabase URL + anon key and the ai-se
 npm start
 ```
 
-On a phone, `EXPO_PUBLIC_AI_SERVER_URL` must be reachable from the phone: the laptop's LAN IP (start the ai-server with `HOST=0.0.0.0`) or a tunnel URL. `127.0.0.1` only works in a simulator on the same machine.
+On a phone, `EXPO_PUBLIC_AI_SERVER_URL` must be reachable from the phone. Prefer an HTTPS tunnel (ngrok or Cloudflare Tunnel; see the PRD) so the access token isn't sent over plain HTTP on the LAN, and so iOS release builds aren't blocked by App Transport Security. A LAN URL like `http://192.168.1.20:3001` (start the ai-server with `HOST=0.0.0.0`) is fine for local development. `127.0.0.1` only works in a simulator on the same machine.
 
 ## Environment
 
@@ -34,7 +34,7 @@ Expo inlines every `EXPO_PUBLIC_*` value into the app bundle, so **only public v
 | --- | --- |
 | `EXPO_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon (public) key. RLS limits each user to their own rows. |
-| `EXPO_PUBLIC_AI_SERVER_URL` | ai-server base URL, e.g. `http://192.168.1.20:3001` |
+| `EXPO_PUBLIC_AI_SERVER_URL` | ai-server base URL. Prefer an HTTPS tunnel for phones; a LAN `http://…` URL is for local dev. |
 | `EXPO_PUBLIC_MOCK_MODE` | `1` = fake everything (no network). `ai` = real Supabase, fake ai-server. Unset or `0` = live. |
 | `EXPO_PUBLIC_MOCK_XP_STATUS` | Mock only: the check-in's `xp.status`, `awarded` (default), `failed` or `skipped`. Use it to see the honest "XP pending" screen. |
 
@@ -94,7 +94,7 @@ Rules of thumb for the next person:
 | Routing | `profiles.onboarding_completed !== true` → onboarding, otherwise Today |
 | Today | `rpc('get_my_plan')` + `rpc('get_my_plan_summary')`, re-read on focus |
 | Recipe, cook mode | ai-server `POST /api/recipes/generate/:slotId` with `Authorization: Bearer <access token>`. `videos[step.techniqueName]`; missing entries mean no video, `null` is treated as `{}`. |
-| Check-in | `user_recipes.select('id').eq('slot_id', …)`, then ai-server `POST /api/check-ins` |
+| Check-in | `user_recipes.select('id').eq('slot_id', …)`, then ai-server `POST /api/check-ins` with a per-attempt `idempotency_key` (reused on Retry). After a timeout, the screen re-reads `get_my_plan()` and skips a second POST if `times_completed` already went up. |
 | Session complete | The 201 response (`xp`, `badges`, `coach_note`, `focus_area`, `suggest_repeat`), plus `get_my_plan_summary` / `get_my_plan` read right before and after |
 
 XP is shown honestly: `awarded` shows `+N` (and explains repeats and the weekly cap), `failed` says the check-in is saved and the XP is on its way with no number, `skipped` says XP isn't configured on that server.

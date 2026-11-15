@@ -3,17 +3,23 @@
  * notes. `user_recipe_id` comes from `user_recipes` (RLS: own rows only).
  * The summary is read just before and after so the next screen can show
  * "239 -> 382 total" from real numbers, not arithmetic.
+ *
+ * Each visit mints one `idempotency_key` and reuses it on Retry so a
+ * timed-out POST cannot award XP twice. After a network/timeout error the
+ * screen re-reads `get_my_plan()` and, if `times_completed` went up, goes
+ * to Complete without posting again.
  */
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 
-import type { PlanSlot, Rating } from '../../api';
+import type { PlanSlot, PlanSummary, Rating } from '../../api';
 import { Button, IconButton } from '../../components/button';
 import { Field, Segmented, type SegmentOption } from '../../components/choice';
 import { gutter, Screen, TopBar } from '../../components/layout';
 import { ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
+import { didCheckInLand, newIdempotencyKey, responseForLandedCheckIn } from '../../domain/check-in-retry';
 import { errorCopy } from '../../domain/error-messages';
 import { isApiError } from '../../api';
 import { useFlowCache } from '../../state/flow-cache';
@@ -56,14 +62,16 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
   const [wasHard, setWasHard] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [idempotencyKey] = useState(newIdempotencyKey);
 
   async function submit() {
     if (!rating) return;
     setSaving(true);
     setError(null);
+    let summaryBefore: PlanSummary | null = null;
     try {
       const session = requireSession();
-      const summaryBefore = await backend.getPlanSummary().catch(() => null);
+      summaryBefore = await backend.getPlanSummary().catch(() => null);
       const userRecipeId = await backend.getUserRecipeId(slot.slot_id);
       const response = await backend.submitCheckIn(
         {
@@ -72,6 +80,7 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
           rating,
           went_well: wentWell.trim() || undefined,
           was_hard: wasHard.trim() || undefined,
+          idempotency_key: idempotencyKey,
         },
         session.accessToken,
       );
@@ -92,8 +101,45 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
         void signOut();
         return;
       }
+      if (isApiError(e) && e.kind === 'network') {
+        const recovered = await recoverIfLanded(idempotencyKey, rating, summaryBefore);
+        if (recovered) return;
+      }
       setError(errorCopy(e).body);
       setSaving(false);
+    }
+  }
+
+  async function recoverIfLanded(
+    idempotencyKey: string,
+    submittedRating: Rating,
+    summaryBefore: PlanSummary | null,
+  ): Promise<boolean> {
+    try {
+      const [plan, summaryAfter] = await Promise.all([
+        backend.getPlan(),
+        backend.getPlanSummary().catch(() => null),
+      ]);
+      const slotAfter = plan.find((s) => s.slot_id === slot.slot_id);
+      if (!didCheckInLand(slot.times_completed, slotAfter)) return false;
+      cache.setPlan(plan);
+      cache.setOutcome({
+        slot,
+        response: responseForLandedCheckIn({
+          idempotencyKey,
+          rating: submittedRating,
+          summaryBefore,
+          summaryAfter,
+          timesCompletedBefore: slot.times_completed,
+        }),
+        summaryBefore,
+        summaryAfter,
+        planAfter: plan,
+      });
+      onDone();
+      return true;
+    } catch {
+      return false;
     }
   }
 

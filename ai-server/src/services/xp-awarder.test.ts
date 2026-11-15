@@ -10,6 +10,13 @@ import {
 const mockFetch = vi.fn();
 const KEY = 'test-service-role-key';
 
+function uniqueViolationBody(): string {
+  return JSON.stringify({
+    code: '23505',
+    message: 'duplicate key value violates unique constraint "xp_events_check_in_id_key"',
+  });
+}
+
 describe('SupabaseXpAwarder', () => {
   let awarder: SupabaseXpAwarder;
 
@@ -134,15 +141,42 @@ describe('SupabaseXpAwarder', () => {
     }
   });
 
-  it('maps a 409 unique violation (xp_events.check_in_id) to reason "already_awarded"', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 409,
-      text: () =>
-        Promise.resolve(
-          '{"code":"23505","message":"duplicate key value violates unique constraint \\"xp_events_check_in_id_key\\""}'
-        ),
+  it('returns the existing xp_events row when award_slot_xp hits UNIQUE(check_in_id)', async () => {
+    const checkInId = randomUUID();
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        text: () => Promise.resolve(uniqueViolationBody()),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{ xp_awarded: 102, is_first_completion: true }]),
+      });
+
+    const result = await awarder.award(checkInId);
+
+    expect(result).toEqual({
+      xp_awarded: 102,
+      is_first_completion: true,
+      weekly_repeat_remaining: 0,
+      capped: false,
     });
+    const [url, options] = mockFetch.mock.calls[1] as [string, RequestInit];
+    expect(url).toContain('/rest/v1/xp_events');
+    expect(url).toContain(`check_in_id=eq.${checkInId}`);
+    expect(options.method).toBe('GET');
+    expect(options.headers).toMatchObject({ apikey: KEY, Authorization: `Bearer ${KEY}` });
+  });
+
+  it('throws already_awarded when the unique violation row cannot be read back', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 409,
+        text: () => Promise.resolve(uniqueViolationBody()),
+      })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
 
     const err = await awarder.award(randomUUID()).catch((e: unknown) => e);
     expect(xpAwardErrorReason(err)).toBe('already_awarded');

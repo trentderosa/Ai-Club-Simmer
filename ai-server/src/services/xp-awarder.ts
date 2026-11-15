@@ -29,8 +29,10 @@ export const DEFAULT_XP_AWARD_TIMEOUT_MS = 5000;
  * - timeout: the call exceeded the timeout and was aborted. The database may
  *   still have committed the award; the reconcile job sorts that out safely.
  * - already_awarded: an xp_events row already exists for this check-in
- *   (UNIQUE(check_in_id) -> Postgres 23505 -> PostgREST 409). Not an error for
- *   reconcile: XP was granted exactly once.
+ *   (UNIQUE(check_in_id) -> Postgres 23505 -> PostgREST 409) and the existing
+ *   row could not be read back. award() itself returns that row on 409 when
+ *   it can, so a retried check-in still reports the original XP. Reconcile
+ *   treats a thrown already_awarded as done, not failed.
  * - http: any other non-OK response.
  * - network: fetch rejected for a reason other than the timeout.
  * - invalid_response: OK response without a result row.
@@ -84,12 +86,14 @@ function isUniqueViolation(status: number, body: string): boolean {
  * cannot leak into logs.
  */
 export class SupabaseXpAwarder implements XpAwarder {
+  private restUrl: string;
   private rpcUrl: string;
   private headers: Record<string, string>;
   private timeoutMs: number;
 
   constructor(config: SupabaseXpAwarderConfig) {
-    this.rpcUrl = `${config.url}/rest/v1/rpc/award_slot_xp`;
+    this.restUrl = `${config.url}/rest/v1`;
+    this.rpcUrl = `${this.restUrl}/rpc/award_slot_xp`;
     this.headers = {
       'Content-Type': 'application/json',
       'apikey': config.serviceRoleKey,
@@ -126,9 +130,20 @@ export class SupabaseXpAwarder implements XpAwarder {
 
     if (!response.ok) {
       const errorText = await response.text();
-      const reason = isUniqueViolation(response.status, errorText) ? 'already_awarded' : 'http';
+      if (isUniqueViolation(response.status, errorText)) {
+        // A retry of the same check-in: UNIQUE(check_in_id) fired, so XP was
+        // already granted once. Return that row instead of throwing, so the
+        // check-in response can show the real amount instead of "failed".
+        const existing = await this.fetchExistingAward(checkInId, signal);
+        if (existing) return existing;
+        throw new XpAwardError(
+          'already_awarded',
+          `award_slot_xp failed: ${response.status} ${errorText}`,
+          response.status
+        );
+      }
       throw new XpAwardError(
-        reason,
+        'http',
         `award_slot_xp failed: ${response.status} ${errorText}`,
         response.status
       );
@@ -145,6 +160,43 @@ export class SupabaseXpAwarder implements XpAwarder {
       is_first_completion: row.out_is_first_completion,
       weekly_repeat_remaining: row.out_weekly_repeat_remaining,
       capped: row.out_capped,
+    };
+  }
+
+  /**
+   * Read the xp_events row written by the first award. `capped` and
+   * `weekly_repeat_remaining` are not stored on that row; `capped` is true
+   * only when a repeat earned 0 XP (the weekly cap was already full).
+   */
+  private async fetchExistingAward(
+    checkInId: string,
+    signal: AbortSignal
+  ): Promise<XpAwardResult | null> {
+    const url = new URL(`${this.restUrl}/xp_events`);
+    url.searchParams.set('select', 'xp_awarded,is_first_completion');
+    url.searchParams.set('check_in_id', `eq.${checkInId}`);
+    url.searchParams.set('limit', '1');
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: this.headers,
+      signal,
+    });
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as Array<{
+      xp_awarded?: unknown;
+      is_first_completion?: unknown;
+    }>;
+    const row = Array.isArray(data) ? data[0] : undefined;
+    if (!row || typeof row.xp_awarded !== 'number' || typeof row.is_first_completion !== 'boolean') {
+      return null;
+    }
+    return {
+      xp_awarded: row.xp_awarded,
+      is_first_completion: row.is_first_completion,
+      weekly_repeat_remaining: 0,
+      capped: !row.is_first_completion && row.xp_awarded === 0,
     };
   }
 }

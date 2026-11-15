@@ -101,8 +101,8 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `VIDEO_LOOKUP_BUDGET_MS` | Time budget in ms for all of one recipe's YouTube searches together (default `8000`, range `100`–`60000`). Past it, the recipe is returned with the videos found so far and the rest are retried on the next visit. |
 | `EXPO_PUBLIC_SUPABASE_URL` | App: Supabase project URL. In `app/.env.local`; bundled into the app, so public values only. |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | App: Supabase anon (public) key. Never the service-role key. |
-| `EXPO_PUBLIC_AI_SERVER_URL` | App: AI server base URL, reachable from the phone (LAN IP with `HOST=0.0.0.0`, or a tunnel). |
-| `EXPO_PUBLIC_MOCK_MODE` | App: `1` = fake data, no backend; `ai` = real Supabase, fake AI server; unset = live. |
+| `EXPO_PUBLIC_AI_SERVER_URL` | App: AI server base URL. Prefer an HTTPS tunnel (ngrok or Cloudflare) for phones; a LAN `http://` URL with `HOST=0.0.0.0` is for local dev. |
+| `EXPO_PUBLIC_MOCK_MODE` | App: leave unset or `0` for the live backend; `1` = fake data, no backend; `ai` = real Supabase, fake AI server. |
 | `EXPO_PUBLIC_MOCK_XP_STATUS` | App, mock mode only: check-in XP outcome to show (`awarded`, `failed` or `skipped`). |
 
 ### Retrying failed XP awards

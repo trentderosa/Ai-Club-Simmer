@@ -78,4 +78,18 @@ describe('mock backend', () => {
     expect(res.xp).toEqual({ status: 'failed' });
     expect((await b.getPlanSummary()).total_xp).toBe(239);
   });
+
+  it('replays a timed-out check-in with the same key and awards XP only once', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    await b.generateRecipe(4, 't');
+    const key = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    const body = { user_recipe_id: mockUserRecipeId(4), slot_id: 4, rating: 'ok' as const, idempotency_key: key };
+    const first = await b.submitCheckIn(body, 't');
+    const retry = await b.submitCheckIn({ ...body, rating: 'hard' }, 't');
+    expect(first.check_in_id).toBe(key);
+    expect(retry).toEqual(first);
+    expect(retry.xp).toEqual({ status: 'awarded', xp_awarded: 143, is_first_completion: true, capped: false });
+    expect((await b.getPlanSummary()).total_xp).toBe(382);
+    expect((await b.getPlan()).find((p) => p.slot_id === 4)?.times_completed).toBe(1);
+  });
 });

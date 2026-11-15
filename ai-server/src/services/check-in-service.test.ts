@@ -3,7 +3,7 @@ import { randomUUID } from 'crypto';
 import { CheckInService, type CheckInLogger } from './check-in-service.js';
 import { InMemoryCheckInRepository } from '../repositories/in-memory-check-in-repository.js';
 import type { CoachNoteGenerator } from './coach-note.js';
-import { XpAwardError, type XpAwarder } from './xp-awarder.js';
+import { XpAwardError, type XpAwardResult, type XpAwarder } from './xp-awarder.js';
 
 describe('CheckInService XP award', () => {
   const userId = randomUUID();
@@ -101,5 +101,127 @@ describe('CheckInService XP award', () => {
     expect(response.xp).toEqual({ status: 'skipped' });
     expect(repository.getAllCheckIns()).toHaveLength(1);
     expect(logger.error).not.toHaveBeenCalled();
+  });
+});
+
+describe('CheckInService idempotent retry', () => {
+  const userId = randomUUID();
+  const recipeId = randomUUID();
+  const key = randomUUID();
+  let repository: InMemoryCheckInRepository;
+  let coachNoteGenerator: CoachNoteGenerator;
+  let logger: CheckInLogger;
+
+  const input = {
+    user_recipe_id: recipeId,
+    slot_id: 1,
+    rating: 'ok' as const,
+    idempotency_key: key,
+  };
+
+  /**
+   * Awards 102 XP the first time a check_in_id is seen, and returns that same
+   * result on later calls (stands in for UNIQUE(check_in_id) on xp_events).
+   */
+  function createIdempotentAwarder(): {
+    awarder: XpAwarder;
+    awards: Map<string, XpAwardResult>;
+  } {
+    const awards = new Map<string, XpAwardResult>();
+    const awarder: XpAwarder = {
+      award: vi.fn((checkInId: string) => {
+        const existing = awards.get(checkInId);
+        if (existing) return Promise.resolve(existing);
+        const result: XpAwardResult = {
+          xp_awarded: 102,
+          is_first_completion: awards.size === 0,
+          weekly_repeat_remaining: 100,
+          capped: false,
+        };
+        awards.set(checkInId, result);
+        return Promise.resolve(result);
+      }),
+    };
+    return { awarder, awards };
+  }
+
+  beforeEach(() => {
+    repository = new InMemoryCheckInRepository();
+    repository.seedUserRecipe({ id: recipeId, user_id: userId, slot_id: 1 });
+    coachNoteGenerator = {
+      generate: vi.fn().mockResolvedValue({ note: 'Nice work.', focus_area: 'timing' }),
+    };
+    logger = { error: vi.fn() };
+  });
+
+  it('awards XP once and keeps a single row when the same key is retried after a timeout', async () => {
+    const { awarder, awards } = createIdempotentAwarder();
+    let releaseFirstNote: () => void = () => undefined;
+    let awardedFirst!: () => void;
+    const firstAwarded = new Promise<void>((resolve) => {
+      awardedFirst = resolve;
+    });
+    let noteCalls = 0;
+    const coach: CoachNoteGenerator = {
+      generate: vi.fn((): Promise<{ note: string; focus_area: string }> => {
+        noteCalls += 1;
+        if (noteCalls === 1) {
+          return new Promise((resolve) => {
+            releaseFirstNote = (): void => resolve({ note: 'Nice work.', focus_area: 'timing' });
+          });
+        }
+        return Promise.resolve({ note: 'Nice work.', focus_area: 'timing' });
+      }),
+    };
+    const originalAward = awarder.award;
+    awarder.award = vi.fn(async (checkInId: string) => {
+      const result = await originalAward(checkInId);
+      awardedFirst();
+      return result;
+    });
+    const service = new CheckInService(repository, coach, awarder, logger);
+
+    // First POST saves the row and awards XP, then hangs on the coach's note
+    // (the app times out here). The retry reuses the key and completes.
+    const first = service.processCheckIn(userId, input);
+    await firstAwarded;
+    const retry = await service.processCheckIn(userId, input);
+    releaseFirstNote();
+    const original = await first;
+
+    expect(repository.getAllCheckIns()).toHaveLength(1);
+    expect(retry.check_in_id).toBe(original.check_in_id);
+    expect(retry.check_in_id).toBe(key);
+    expect(retry.xp).toEqual({
+      status: 'awarded',
+      xp_awarded: 102,
+      is_first_completion: true,
+      capped: false,
+    });
+    expect(original.xp).toEqual(retry.xp);
+    expect(awarder.award).toHaveBeenCalledTimes(2);
+    expect(awarder.award).toHaveBeenCalledWith(key);
+    expect(awards.size).toBe(1);
+    const totalXp = [...awards.values()].reduce((sum, a) => sum + a.xp_awarded, 0);
+    expect(totalXp).toBe(102);
+  });
+
+  it('creates two check-ins and two awards when the keys differ (a real repeat)', async () => {
+    const { awarder, awards } = createIdempotentAwarder();
+    const service = new CheckInService(repository, coachNoteGenerator, awarder, logger);
+
+    const first = await service.processCheckIn(userId, { ...input, idempotency_key: randomUUID() });
+    const second = await service.processCheckIn(userId, { ...input, idempotency_key: randomUUID() });
+
+    expect(first.check_in_id).not.toBe(second.check_in_id);
+    expect(repository.getAllCheckIns()).toHaveLength(2);
+    expect(awards.size).toBe(2);
+    expect(second.xp).toEqual({
+      status: 'awarded',
+      xp_awarded: 102,
+      is_first_completion: false,
+      capped: false,
+    });
+    expect(awarder.award).toHaveBeenCalledTimes(2);
   });
 });

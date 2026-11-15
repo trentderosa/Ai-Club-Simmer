@@ -1,4 +1,4 @@
-import type { CheckInRecord } from '../types/check-in.js';
+import { CheckInIdempotencyConflict, type CheckInRecord } from '../types/check-in.js';
 import type { CheckInRepository, CreateCheckInParams } from './check-in-repository.js';
 
 export interface SupabaseCheckInConfig {
@@ -67,6 +67,7 @@ export class SupabaseCheckInRepository implements CheckInRepository {
       method: 'POST',
       headers: this.headers,
       body: JSON.stringify({
+        ...(params.id ? { id: params.id } : {}),
         user_id: params.user_id,
         user_recipe_id: params.user_recipe_id,
         slot_id: params.slot_id,
@@ -78,6 +79,10 @@ export class SupabaseCheckInRepository implements CheckInRepository {
       }),
     });
 
+    if (response.status === 409 && params.id) {
+      return this.resolveIdempotentConflict(params);
+    }
+
     if (!response.ok) {
       const errorText = await response.text();
       throw new Error(`Failed to create check-in: ${response.status} ${errorText}`);
@@ -85,7 +90,50 @@ export class SupabaseCheckInRepository implements CheckInRepository {
 
     const data = (await response.json()) as CheckInRow | CheckInRow[];
     const row: CheckInRow = Array.isArray(data) ? data[0] : data;
+    return this.toRecord(row);
+  }
 
+  /**
+   * A 409 on a client-supplied id means the row already exists. Return it when
+   * it is the same user's same recipe/slot; otherwise reject the replay.
+   */
+  private async resolveIdempotentConflict(params: CreateCheckInParams): Promise<CheckInRecord> {
+    const existing = await this.getByIdAny(params.id!);
+    if (!existing) {
+      throw new Error(`Conflict but no existing check-in found for id ${params.id}`);
+    }
+    if (
+      existing.user_id === params.user_id &&
+      existing.user_recipe_id === params.user_recipe_id &&
+      existing.slot_id === params.slot_id
+    ) {
+      return existing;
+    }
+    throw new CheckInIdempotencyConflict();
+  }
+
+  private async getByIdAny(id: string): Promise<CheckInRecord | null> {
+    const url = new URL(`${this.baseUrl}/check_ins`);
+    url.searchParams.set('id', `eq.${id}`);
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: this.headers,
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Database error fetching check-in: ${response.status} ${errorText}`);
+    }
+
+    const data = (await response.json()) as CheckInRow[];
+    if (!Array.isArray(data) || data.length === 0) {
+      return null;
+    }
+    return this.toRecord(data[0]);
+  }
+
+  private toRecord(row: CheckInRow): CheckInRecord {
     return {
       id: row.id,
       user_id: row.user_id,
@@ -119,18 +167,7 @@ export class SupabaseCheckInRepository implements CheckInRepository {
       return null;
     }
 
-    const row = data[0];
-    return {
-      id: row.id,
-      user_id: row.user_id,
-      user_recipe_id: row.user_recipe_id,
-      slot_id: row.slot_id,
-      difficulty_rating: row.difficulty_rating,
-      went_well: row.went_well,
-      was_hard: row.was_hard,
-      is_repeat: row.is_repeat,
-      created_at: new Date(row.created_at),
-    };
+    return this.toRecord(data[0]);
   }
 
   async getRecentByUser(userId: string, limit = 5): Promise<CheckInRecord[]> {
@@ -154,16 +191,6 @@ export class SupabaseCheckInRepository implements CheckInRepository {
       return [];
     }
 
-    return data.map((row) => ({
-      id: row.id,
-      user_id: row.user_id,
-      user_recipe_id: row.user_recipe_id,
-      slot_id: row.slot_id,
-      difficulty_rating: row.difficulty_rating,
-      went_well: row.went_well,
-      was_hard: row.was_hard,
-      is_repeat: row.is_repeat,
-      created_at: new Date(row.created_at),
-    }));
+    return data.map((row) => this.toRecord(row));
   }
 }

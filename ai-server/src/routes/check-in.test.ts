@@ -8,7 +8,7 @@ import { InMemoryCheckInRepository } from '../repositories/in-memory-check-in-re
 import type { JwtVerifier, JwtVerifyResult } from '../services/jwt-verifier.js';
 import type { CoachNoteGenerator } from '../services/coach-note.js';
 import { FALLBACK_NOTE } from '../services/coach-note.js';
-import type { XpAwarder } from '../services/xp-awarder.js';
+import type { XpAwardResult, XpAwarder } from '../services/xp-awarder.js';
 
 function createMockJwtVerifier(defaultResult: JwtVerifyResult): JwtVerifier {
   return {
@@ -542,3 +542,115 @@ describe('Check-in API XP award (service role)', () => {
     expect(repository.getAllCheckIns().map((c) => c.id)).toEqual([response.body.check_in_id]);
   });
 });
+
+describe('Check-in API idempotency_key', () => {
+  const userId = randomUUID();
+  const recipeId = randomUUID();
+  const key = randomUUID();
+
+  function buildApp(): {
+    app: express.Express;
+    repository: InMemoryCheckInRepository;
+    award: XpAwarder['award'];
+  } {
+    const repository = new InMemoryCheckInRepository();
+    repository.seedUserRecipe({ id: recipeId, user_id: userId, slot_id: 1 });
+    const awards = new Map<string, XpAwardResult>();
+    const award: XpAwarder['award'] = vi.fn((checkInId: string) => {
+      const existing = awards.get(checkInId);
+      if (existing) return Promise.resolve(existing);
+      const result: XpAwardResult = {
+        xp_awarded: awards.size === 0 ? 102 : 51,
+        is_first_completion: awards.size === 0,
+        weekly_repeat_remaining: 100,
+        capped: false,
+      };
+      awards.set(checkInId, result);
+      return Promise.resolve(result);
+    });
+    const service = new CheckInService(
+      repository,
+      { generate: vi.fn().mockResolvedValue({ note: 'Nice.', focus_area: 'heat' }) },
+      { award },
+      { error: vi.fn() }
+    );
+    const app = express();
+    app.use(express.json());
+    app.use(
+      '/api/check-ins',
+      createCheckInRouter(
+        { checkInService: service, jwtVerifier: createMockJwtVerifier({ valid: true, userId }) },
+        { rateLimit: { windowMs: 60000, maxRequests: 100 } }
+      )
+    );
+    return { app, repository, award };
+  }
+
+  const body = {
+    user_recipe_id: recipeId,
+    slot_id: 1,
+    rating: 'ok' as const,
+    idempotency_key: key,
+  };
+
+  it('returns the same check_in_id and awards XP once when the same key is posted twice', async () => {
+    const { app, repository, award } = buildApp();
+
+    const first = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer valid-token')
+      .send(body);
+    const retry = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ ...body, rating: 'hard', went_well: 'retry' });
+
+    expect(first.status).toBe(201);
+    expect(retry.status).toBe(201);
+    expect(first.body.check_in_id).toBe(key);
+    expect(retry.body.check_in_id).toBe(key);
+    expect(retry.body.xp).toEqual({
+      status: 'awarded',
+      xp_awarded: 102,
+      is_first_completion: true,
+      capped: false,
+    });
+    expect(repository.getAllCheckIns()).toHaveLength(1);
+    expect(award).toHaveBeenCalledTimes(2);
+    expect(award).toHaveBeenCalledWith(key);
+  });
+
+  it('returns 400 when idempotency_key is not a UUID', async () => {
+    const { app, repository } = buildApp();
+    const response = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ ...body, idempotency_key: 'not-a-uuid' });
+
+    expect(response.status).toBe(400);
+    expect(response.body.code).toBe('VALIDATION_ERROR');
+    expect(repository.getAllCheckIns()).toHaveLength(0);
+  });
+
+  it('returns 409 when the key already belongs to a different recipe or slot', async () => {
+    const { app, repository } = buildApp();
+    const otherRecipe = randomUUID();
+    repository.seedUserRecipe({ id: otherRecipe, user_id: userId, slot_id: 2 });
+
+    const first = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer valid-token')
+      .send(body);
+    expect(first.status).toBe(201);
+
+    const conflict = await request(app)
+      .post('/api/check-ins')
+      .set('Authorization', 'Bearer valid-token')
+      .send({ user_recipe_id: otherRecipe, slot_id: 2, rating: 'ok', idempotency_key: key });
+
+    expect(conflict.status).toBe(409);
+    expect(conflict.body.code).toBe('IDEMPOTENCY_CONFLICT');
+    expect(repository.getAllCheckIns()).toHaveLength(1);
+  });
+});
+

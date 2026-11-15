@@ -32,7 +32,9 @@ export class CheckInService {
   /**
    * Process a post-cook check-in:
    * 1. Validate ownership (done in route before calling this)
-   * 2. Persist raw text to repository (N2: store raw, sanitize only for prompt)
+   * 2. Persist raw text to repository (N2: store raw, sanitize only for prompt).
+   *    When input.idempotency_key is set, it becomes check_ins.id so a retry
+   *    of the same attempt returns the existing row instead of inserting another.
    * 3. Award XP server-side via award_slot_xp (service role). A failed award
    *    (including a timeout, XP_AWARD_TIMEOUT_MS) is logged with a reason and
    *    reported as xp.status = 'failed'; the check-in stays saved, and
@@ -48,6 +50,7 @@ export class CheckInService {
     input: CheckInInput
   ): Promise<CheckInResponse> {
     const checkIn = await this.repository.create({
+      id: input.idempotency_key,
       user_id: userId,
       user_recipe_id: input.user_recipe_id,
       slot_id: input.slot_id,

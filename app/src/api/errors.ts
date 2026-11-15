@@ -49,7 +49,7 @@ export function kindForHttpError(
   if (status === 404) return /onboarding/i.test(message) ? 'onboarding_required' : 'not_found';
   if (status === 429) return 'rate_limited';
   if (status === 400 && code === 'INVALID_RECIPE') return 'invalid_recipe';
-  if (status === 400) return 'validation';
+  if (status === 400 || (status === 409 && code === 'IDEMPOTENCY_CONFLICT')) return 'validation';
   if (status === 503) return 'unavailable';
   if (status === 500 && route === 'recipe') return 'generation_failed';
   return 'server';

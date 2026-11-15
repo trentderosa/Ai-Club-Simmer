@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { CheckInRecord } from '../types/check-in.js';
+import { CheckInIdempotencyConflict, type CheckInRecord } from '../types/check-in.js';
 import type { CheckInRepository, CreateCheckInParams } from './check-in-repository.js';
 
 interface UserRecipeRecord {
@@ -45,8 +45,22 @@ export class InMemoryCheckInRepository implements CheckInRepository {
       throw new Error('Invalid user_recipe_id or slot_id mismatch');
     }
 
+    if (params.id) {
+      const existing = this.checkIns.get(params.id);
+      if (existing) {
+        if (
+          existing.user_id === params.user_id &&
+          existing.user_recipe_id === params.user_recipe_id &&
+          existing.slot_id === params.slot_id
+        ) {
+          return existing;
+        }
+        throw new CheckInIdempotencyConflict();
+      }
+    }
+
     const record: CheckInRecord = {
-      id: randomUUID(),
+      id: params.id ?? randomUUID(),
       user_id: params.user_id,
       user_recipe_id: params.user_recipe_id,
       slot_id: params.slot_id,

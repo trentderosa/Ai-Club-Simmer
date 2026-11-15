@@ -34,6 +34,7 @@ interface MockState {
   recipeSlots: Set<number>;
   totalXp: number;
   repeatXpThisWeek: number;
+  checkInsByKey: Map<string, CheckInResponse>;
 }
 
 export interface MockOptions {
@@ -61,6 +62,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     recipeSlots: new Set(),
     totalXp: 0,
     repeatXpThisWeek: 0,
+    checkInsByKey: new Map(),
   };
 
   function setSession(s: AppSession | null) {
@@ -82,6 +84,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     state.completions = {};
     state.recipeSlots = new Set();
     state.totalXp = 0;
+    state.checkInsByKey = new Map();
     for (const s of SLOTS.slice(0, DEMO_USER.completedSlots)) {
       state.completions[s.slot_id] = 1;
       state.recipeSlots.add(s.slot_id);
@@ -148,6 +151,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       state.recipeSlots = new Set();
       state.totalXp = 0;
       state.repeatXpThisWeek = 0;
+      state.checkInsByKey = new Map();
       setSession({ userId: 'mock-user-new', email, firstName: firstName.trim() || null, accessToken: 'mock-access-token' });
       return { signedIn: true };
     },
@@ -212,6 +216,10 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       await delay(900);
       requireSession();
       const body = CheckInInputSchema.parse(input);
+      if (body.idempotency_key) {
+        const existing = state.checkInsByKey.get(body.idempotency_key);
+        if (existing) return existing;
+      }
       if (body.user_recipe_id !== mockUserRecipeId(body.slot_id) || (!opts.skipGating && !state.recipeSlots.has(body.slot_id))) {
         throw new ApiError('invalid_recipe', 'Invalid user_recipe_id or slot_id mismatch', 400, 'INVALID_RECIPE');
       }
@@ -233,14 +241,16 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       }
 
       const reply = MOCK_CHECK_IN_REPLIES[body.rating];
-      return {
-        check_in_id: `mock-check-in-${Date.now()}`,
+      const response: CheckInResponse = {
+        check_in_id: body.idempotency_key ?? `mock-check-in-${Date.now()}`,
         coach_note: reply.note,
         focus_area: reply.focus,
         xp,
         badges: { status: 'ok', earned: badgesFor(slot.slot_id, first) },
         suggest_repeat: body.rating === 'hard',
       };
+      if (body.idempotency_key) state.checkInsByKey.set(body.idempotency_key, response);
+      return response;
     },
   };
 }

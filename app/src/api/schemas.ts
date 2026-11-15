@@ -132,6 +132,8 @@ export const CheckInInputSchema = z.object({
   rating: z.enum(RATINGS),
   went_well: z.string().max(500).optional(),
   was_hard: z.string().max(500).optional(),
+  /** Client-generated UUID, unique per check-in attempt; reused on retry. */
+  idempotency_key: z.string().uuid().optional(),
 });
 export type CheckInInput = z.infer<typeof CheckInInputSchema>;
 

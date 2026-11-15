@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'crypto';
+import { CheckInIdempotencyConflict } from '../types/check-in.js';
 import { SupabaseCheckInRepository } from './supabase-check-in-repository.js';
 
 const mockFetch = vi.fn();
@@ -242,6 +243,107 @@ describe('SupabaseCheckInRepository', () => {
       ).rejects.toThrow('Failed to create check-in: 400');
     });
   });
+
+    it('includes a client-supplied id in the insert body', async () => {
+      const id = randomUUID();
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: () => [{
+          id,
+          user_id: testUserId,
+          user_recipe_id: testRecipeId,
+          slot_id: testSlotId,
+          difficulty_rating: 'ok',
+          went_well: null,
+          was_hard: null,
+          is_repeat: false,
+          created_at: '2026-11-03T12:00:00Z',
+        }],
+      });
+
+      const result = await repository.create({
+        id,
+        user_id: testUserId,
+        user_recipe_id: testRecipeId,
+        slot_id: testSlotId,
+        difficulty_rating: 'ok',
+        went_well: null,
+        was_hard: null,
+      });
+
+      const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(JSON.parse(options.body as string).id).toBe(id);
+      expect(result.id).toBe(id);
+    });
+
+    it('returns the existing row when insert hits 409 for the same check-in', async () => {
+      const id = randomUUID();
+      const existing = {
+        id,
+        user_id: testUserId,
+        user_recipe_id: testRecipeId,
+        slot_id: testSlotId,
+        difficulty_rating: 'ok',
+        went_well: 'first write',
+        was_hard: null,
+        is_repeat: false,
+        created_at: '2026-11-03T12:00:00Z',
+      };
+      mockFetch
+        .mockResolvedValueOnce({ ok: false, status: 409, text: () => 'duplicate key' })
+        .mockResolvedValueOnce({ ok: true, json: () => [existing] });
+
+      const result = await repository.create({
+        id,
+        user_id: testUserId,
+        user_recipe_id: testRecipeId,
+        slot_id: testSlotId,
+        difficulty_rating: 'hard',
+        went_well: 'retry',
+        was_hard: null,
+      });
+
+      expect(result.id).toBe(id);
+      expect(result.went_well).toBe('first write');
+      expect(result.difficulty_rating).toBe('ok');
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const [url] = mockFetch.mock.calls[1] as [string, RequestInit];
+      expect(url).toContain(`/check_ins?`);
+      expect(url).toContain(`id=eq.${id}`);
+    });
+
+    it('throws CheckInIdempotencyConflict when 409 row belongs to a different recipe', async () => {
+      const id = randomUUID();
+      const otherRecipe = randomUUID();
+      mockFetch
+        .mockResolvedValueOnce({ ok: false, status: 409, text: () => 'duplicate key' })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => [{
+            id,
+            user_id: testUserId,
+            user_recipe_id: otherRecipe,
+            slot_id: 2,
+            difficulty_rating: 'ok',
+            went_well: null,
+            was_hard: null,
+            is_repeat: false,
+            created_at: '2026-11-03T12:00:00Z',
+          }],
+        });
+
+      await expect(
+        repository.create({
+          id,
+          user_id: testUserId,
+          user_recipe_id: testRecipeId,
+          slot_id: testSlotId,
+          difficulty_rating: 'ok',
+          went_well: null,
+          was_hard: null,
+        })
+      ).rejects.toBeInstanceOf(CheckInIdempotencyConflict);
+    });
 
   describe('getById', () => {
     it('returns check-in for owner', async () => {

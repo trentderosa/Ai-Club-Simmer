@@ -6,6 +6,7 @@
  */
 import type { z } from 'zod';
 
+import { CHECK_IN_TIMEOUT_MS, RECIPE_TIMEOUT_MS } from '../domain/check-in-retry';
 import { ApiError, kindForHttpError } from './errors';
 import {
   ApiErrorBodySchema,
@@ -16,9 +17,7 @@ import {
   type RecipeResponse,
 } from './schemas';
 
-/** First generation runs a local LLM and can take up to ~60 s (x3 retries server-side). */
-const RECIPE_TIMEOUT_MS = 120_000;
-const CHECK_IN_TIMEOUT_MS = 30_000;
+export { CHECK_IN_TIMEOUT_MS, RECIPE_TIMEOUT_MS };
 
 export interface AiServerClient {
   generateRecipe(slotId: number, accessToken: string): Promise<RecipeResponse>;

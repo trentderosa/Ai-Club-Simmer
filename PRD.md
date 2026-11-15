@@ -112,7 +112,7 @@ After cooking, the user does a quick check-in. The AI uses it to rewrite tips fo
 
 *Server side:* the check-in response includes `suggest_repeat: true` when the rating is "hard". The app offers "cook again" (the slot stays open) or "skip". Nothing on the path changes either way.
 
-*Client (`app/`, UI Direction A):* the check-in screen sends the rating and optional notes (max 500 characters) to `POST /api/check-ins`, after reading `user_recipes.id` for the slot. When `suggest_repeat` is true, the session-complete screen asks "That one was tough. Cook it again before moving on?" with Cook again and Skip.
+*Client (`app/`, UI Direction A):* the check-in screen sends the rating and optional notes (max 500 characters) to `POST /api/check-ins`, after reading `user_recipes.id` for the slot. Each attempt gets a client-generated `idempotency_key` that is reused on Retry, so a timed-out check-in cannot be saved or awarded twice. After a network or timeout error the screen re-reads `get_my_plan()` and goes to session complete without posting again if that slot's `times_completed` already went up. When `suggest_repeat` is true, the session-complete screen asks "That one was tough. Cook it again before moving on?" with Cook again and Skip.
 
 ### F7. XP with caps
 Users earn XP for finishing recipes. Harder recipes are worth more, and repeating easy recipes is capped so users can't farm XP.

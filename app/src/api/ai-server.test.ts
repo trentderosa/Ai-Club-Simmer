@@ -1,4 +1,4 @@
-import { createAiServerClient, parseResponse } from './ai-server';
+import { CHECK_IN_TIMEOUT_MS, RECIPE_TIMEOUT_MS, createAiServerClient, parseResponse } from './ai-server';
 import { ApiError } from './errors';
 import { CheckInResponseSchema, RecipeResponseSchema } from './schemas';
 
@@ -93,6 +93,7 @@ describe('parseResponse: check-in', () => {
   it('maps check-in 400s and 500s', async () => {
     expect(await kindOf(parseResponse(res(400, { error: 'x', code: 'INVALID_RECIPE' }), CheckInResponseSchema, 'check-in'))).toBe('invalid_recipe');
     expect(await kindOf(parseResponse(res(400, { error: 'Validation failed', code: 'VALIDATION_ERROR' }), CheckInResponseSchema, 'check-in'))).toBe('validation');
+    expect(await kindOf(parseResponse(res(409, { error: 'idempotency_key was already used for a different check-in', code: 'IDEMPOTENCY_CONFLICT' }), CheckInResponseSchema, 'check-in'))).toBe('validation');
     // A check-in 500 is a plain server error, not "generation failed".
     expect(await kindOf(parseResponse(res(500, { error: 'Internal server error' }), CheckInResponseSchema, 'check-in'))).toBe('server');
   });
@@ -110,7 +111,12 @@ describe('createAiServerClient', () => {
     const client = createAiServerClient('http://127.0.0.1:3001', fakeFetch);
 
     await client.generateRecipe(4, 'tok');
-    const body = { user_recipe_id: '00000000-0000-4000-8000-000000000004', slot_id: 4, rating: 'ok' as const };
+    const body = {
+      user_recipe_id: '00000000-0000-4000-8000-000000000004',
+      slot_id: 4,
+      rating: 'ok' as const,
+      idempotency_key: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    };
     await client.submitCheckIn(body, 'tok');
 
     expect(calls[0].url).toBe('http://127.0.0.1:3001/api/recipes/generate/4');
@@ -131,5 +137,30 @@ describe('createAiServerClient', () => {
 
   it('refuses to call without a base URL', async () => {
     expect(await kindOf(createAiServerClient('').generateRecipe(1, 't'))).toBe('config');
+  });
+});
+
+describe('ai-server timeouts', () => {
+  it('waits out the server\'s worst-case Ollama budget', () => {
+    // 3 attempts × 60s, plus video budget / pre-note work. The previous
+    // check-in timeout (30s) was shorter than a single Ollama attempt.
+    expect(RECIPE_TIMEOUT_MS).toBeGreaterThanOrEqual(3 * 60_000 + 8_000);
+    expect(CHECK_IN_TIMEOUT_MS).toBeGreaterThanOrEqual(3 * 60_000);
+  });
+
+  it('turns an aborted fetch into a network timeout error', async () => {
+    const client = createAiServerClient(
+      'http://x',
+      (async (_url: string, init?: RequestInit) => {
+        const err = new Error('aborted');
+        err.name = 'AbortError';
+        // If a signal is provided, mark the same abort path the real client uses.
+        if (init?.signal?.aborted) throw err;
+        throw err;
+      }) as unknown as typeof fetch,
+    );
+    const e = await client.generateRecipe(1, 't').catch((err: unknown) => err);
+    expect(e).toBeInstanceOf(ApiError);
+    expect((e as ApiError).kind).toBe('network');
   });
 });
