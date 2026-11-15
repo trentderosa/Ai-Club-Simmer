@@ -6,7 +6,7 @@ UI/UX belongs to Nathan and Ezzeldin. Treat this as a handoff-ready starting poi
 
 ## Run it
 
-Requires Node.js 20+.
+Requires Node.js 22.13+ (or 24.3+), which Expo SDK 58 and React Native 0.88 need.
 
 ```bash
 cd app

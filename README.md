@@ -22,7 +22,7 @@ See [PRD.md](PRD.md) for the full MVP requirements, [docs/CLIENT_API.md](docs/CL
 
 ## App
 
-The Expo client covers the core loop: sign up or sign in, onboarding, Today (the plan), recipe, cook mode, check-in and session complete. Requires Node.js 20 or later. Mock mode runs it with fake data and no backend:
+The Expo client covers the core loop: sign up or sign in, onboarding, Today (the plan), recipe, cook mode, check-in and session complete. Requires Node.js 22.13 or later (Expo SDK 58 needs it). Mock mode runs it with fake data and no backend:
 
 ```bash
 cd app
