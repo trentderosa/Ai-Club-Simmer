@@ -84,6 +84,7 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `XP_RECONCILE_BATCH_LIMIT` | Reconcile job: most check-ins handled per run (default `100`, range `1`–`1000`). |
 | `YOUTUBE_API_KEY` | YouTube Data API v3 key for technique videos (F4). Server only. Unset: recipes have no videos. |
 | `YOUTUBE_TIMEOUT_MS` | Timeout for each YouTube search in ms (default `5000`, range `100`–`60000`). |
+| `VIDEO_LOOKUP_BUDGET_MS` | Time budget in ms for all of one recipe's YouTube searches together (default `8000`, range `100`–`60000`). Past it, the recipe is returned with the videos found so far and the rest are retried on the next visit. |
 
 ### Retrying failed XP awards
 
