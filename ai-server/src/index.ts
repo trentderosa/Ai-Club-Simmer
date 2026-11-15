@@ -24,6 +24,15 @@ import {
   VideoFinder,
   YouTubeSearchClient,
 } from './services/video-finder.js';
+import { InMemoryGeneratedRecipeRepository } from './repositories/in-memory-generated-recipe-repository.js';
+import { SupabaseGeneratedRecipeRepository } from './repositories/supabase-generated-recipe-repository.js';
+import {
+  InMemoryGeneratedCheckInRepository,
+} from './repositories/generated-check-in-repository.js';
+import { SupabaseGeneratedCheckInRepository } from './repositories/supabase-generated-check-in-repository.js';
+import { SupabaseGeneratedXpAwarder } from './services/generated-xp-awarder.js';
+import { createCookAnythingRouter } from './routes/cook-anything.js';
+import type { GeneratedRecipeRepository } from './repositories/generated-recipe-repository.js';
 
 const config = loadConfig();
 
@@ -47,6 +56,7 @@ interface ServiceConfig {
   jwtVerifier: JwtVerifier | null;
   checkInService: CheckInService | null;
   videoFinder: VideoFinder | null;
+  generatedRecipes: GeneratedRecipeRepository;
 }
 
 /**
@@ -88,6 +98,7 @@ function createServicesFromConfig(): ServiceConfig {
       jwtVerifier: null,
       checkInService: null,
       videoFinder: null,
+      generatedRecipes: new InMemoryGeneratedRecipeRepository(),
     };
   }
 
@@ -100,6 +111,7 @@ function createServicesFromConfig(): ServiceConfig {
       jwtVerifier: null,
       checkInService: null,
       videoFinder: null,
+      generatedRecipes: new InMemoryGeneratedRecipeRepository(),
     };
   }
 
@@ -120,6 +132,16 @@ function createServicesFromConfig(): ServiceConfig {
       ? new SupabaseCheckInRepository({ url, serviceRoleKey })
       : new InMemoryCheckInRepository();
 
+  const generatedRecipes =
+    url && serviceRoleKey
+      ? new SupabaseGeneratedRecipeRepository({ url, serviceRoleKey })
+      : new InMemoryGeneratedRecipeRepository();
+
+  const generatedCheckInRepository =
+    url && serviceRoleKey
+      ? new SupabaseGeneratedCheckInRepository({ url, serviceRoleKey })
+      : new InMemoryGeneratedCheckInRepository();
+
   // Path data: slots, onboarding profile, path gating (F2) and badges (F9).
   const pathRepository =
     url && serviceRoleKey ? new SupabasePathRepository({ url, serviceRoleKey }) : undefined;
@@ -130,12 +152,16 @@ function createServicesFromConfig(): ServiceConfig {
     url && serviceRoleKey
       ? new SupabaseXpAwarder({ url, serviceRoleKey, timeoutMs: config.xpAward.timeoutMs })
       : null;
+  const generatedXpAwarder =
+    url && serviceRoleKey
+      ? new SupabaseGeneratedXpAwarder({ url, serviceRoleKey, timeoutMs: config.xpAward.timeoutMs })
+      : null;
   const checkInService = new CheckInService(
     checkInRepository,
     coachNoteGenerator,
     xpAwarder,
     console,
-    { pathRepository }
+    { pathRepository, generatedCheckInRepository, generatedXpAwarder }
   );
 
   if (!url || !serviceRoleKey) {
@@ -156,6 +182,7 @@ function createServicesFromConfig(): ServiceConfig {
     jwtVerifier,
     checkInService,
     videoFinder: createVideoFinder(),
+    generatedRecipes,
   };
 }
 
@@ -174,6 +201,21 @@ const recipeRouter = createRecipeRouter(
 );
 
 app.use('/api/recipes', recipeRouter);
+
+const cookAnythingRouter = createCookAnythingRouter(
+  {
+    ollamaClient,
+    supabase: services.supabase,
+    generatedRecipes: services.generatedRecipes,
+    videoFinder: services.videoFinder,
+  },
+  {
+    rateLimit: config.rateLimit,
+    generationRateLimit: config.cookAnything.generationRateLimit,
+    maxDishLength: config.cookAnything.maxDishLength,
+  }
+);
+app.use('/api/recipes', cookAnythingRouter);
 
 // Mount check-in router if JWT verifier and check-in service are available
 if (services.jwtVerifier && services.checkInService) {

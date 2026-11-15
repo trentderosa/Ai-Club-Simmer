@@ -21,6 +21,8 @@ export function createBackend(c: AppConfig): Backend {
     generateRecipe: mock.generateRecipe,
     getUserRecipeId: mock.getUserRecipeId,
     submitCheckIn: mock.submitCheckIn,
+    cookAnything: mock.cookAnything,
+    getGeneratedRecipe: mock.getGeneratedRecipe,
   };
 }
 

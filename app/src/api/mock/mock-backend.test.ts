@@ -92,4 +92,37 @@ describe('mock backend', () => {
     expect((await b.getPlanSummary()).total_xp).toBe(382);
     expect((await b.getPlan()).find((p) => p.slot_id === 4)?.times_completed).toBe(1);
   });
+
+  it('returns a canned cook-anything recipe, reuses it, and awards repeat XP once', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    const first = await b.cookAnything('  Pad Thai!! ', 't');
+    expect(first.cached).toBe(false);
+    expect(first.recipe.title).toBe('Pad Thai!!');
+    expect(first.counts).toEqual({ steps: 5, ingredients: 6, minutes: 20 });
+    expect(first.xp_value).toBe(84);
+    const again = await b.cookAnything('pad thai', 't');
+    expect(again.cached).toBe(true);
+    expect(again.generated_recipe_id).toBe(first.generated_recipe_id);
+    const key = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const check = await b.submitCheckIn(
+      { generated_recipe_id: first.generated_recipe_id, rating: 'ok', idempotency_key: key },
+      't',
+    );
+    expect(check.xp).toEqual({ status: 'awarded', xp_awarded: 84, is_first_completion: true, capped: false });
+    const retry = await b.submitCheckIn(
+      { generated_recipe_id: first.generated_recipe_id, rating: 'hard', idempotency_key: key },
+      't',
+    );
+    expect(retry).toEqual(check);
+    const secondCook = await b.submitCheckIn(
+      { generated_recipe_id: first.generated_recipe_id, rating: 'ok', idempotency_key: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd' },
+      't',
+    );
+    expect(secondCook.xp).toEqual({ status: 'awarded', xp_awarded: 42, is_first_completion: false, capped: false });
+  });
+
+  it('rejects an empty cook-anything query', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    await expect(b.cookAnything('   ', 't')).rejects.toMatchObject({ kind: 'validation' });
+  });
 });

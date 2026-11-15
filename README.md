@@ -1,6 +1,6 @@
 # Simmer
 
-Simmer is the JMU AI Club "Duolingo of cooking" app for new cooks. The MVP is a single fixed path, **"Weeknight basics"**: 10 weeknight dishes in a set order, each teaching a technique, with check-ins, XP, and AI-tailored tips after each cook.
+Simmer is the JMU AI Club "Duolingo of cooking" app for new cooks. The MVP is a single fixed path, **"Weeknight basics"**: 10 weeknight dishes in a set order, each teaching a technique, with check-ins, XP, and AI-tailored tips after each cook. Users can also type a dish outside the path ("Cook anything") and get a generated recipe, then cook and check in the same way.
 
 This repo holds the product requirements, the Expo app, the AI server, and the database migrations and tests.
 
@@ -22,7 +22,7 @@ See [PRD.md](PRD.md) for the full MVP requirements, [docs/CLIENT_API.md](docs/CL
 
 ## App
 
-The Expo client covers the core loop: sign up or sign in, onboarding, Today (the plan), recipe, cook mode, check-in and session complete. Requires Node.js 22.13 or later (Expo SDK 58 needs it). Mock mode runs it with fake data and no backend:
+The Expo client covers the core loop: sign up or sign in, onboarding, Today (the plan), recipe, cook mode, check-in and session complete, plus Cook anything from Today. Requires Node.js 22.13 or later (Expo SDK 58 needs it). Mock mode runs it with fake data and no backend:
 
 ```bash
 cd app
@@ -66,7 +66,7 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/simmer_test npm test
 
 ## Database security
 
-Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Privileged functions such as `award_slot_xp`, `is_slot_unlocked` and `get_badges_earned_by_check_in` are called only from the AI server with the service role, never from the client.
+Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Privileged functions such as `award_slot_xp`, `award_generated_recipe_xp`, `is_slot_unlocked` and `get_badges_earned_by_check_in` are called only from the AI server with the service role, never from the client.
 
 The plan, badges and recipe book are derived from `check_ins` (migration `20261115000000_plan_badges_recipe_book.sql`). The app reads them through `get_my_plan()`, `get_my_plan_summary()`, `get_my_badges()` and `get_my_recipe_book()`. These take no user id and always use `auth.uid()`. Clients can insert check-ins (RLS-checked) but can't update or delete them, and the `technique_videos` cache is invisible to them.
 
@@ -85,6 +85,9 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the AI server (Expo web). Default: `http://localhost:8081`, `http://127.0.0.1:8081`, `http://localhost:19006`, `http://127.0.0.1:19006`. Never `*`. |
 | `RATE_LIMIT_WINDOW_MS` | Rate-limit window (default `60000`) |
 | `RATE_LIMIT_MAX_REQUESTS` | Max requests per window (default `10`) |
+| `COOK_ANYTHING_MAX_DISH_LENGTH` | Max length of a Cook anything dish name (default `80`, range `10`–`200`) |
+| `COOK_ANYTHING_RATE_LIMIT_WINDOW_MS` | Per-user window for uncached Cook anything generations (default `3600000`, range `1000`–`86400000`) |
+| `COOK_ANYTHING_RATE_LIMIT_MAX` | Max uncached Cook anything generations per user per window (default `5`, range `1`–`100`) |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key (server only; never ship to the client) |
 | `SUPABASE_JWT_SECRET` | JWT secret for HS256 verification (provide this or the JWKS URI) |

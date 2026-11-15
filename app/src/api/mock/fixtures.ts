@@ -137,3 +137,32 @@ export const MOCK_CHECK_IN_REPLIES: Record<'easy' | 'ok' | 'hard', { note: strin
   ok: { note: 'Crisp vegetables mean your heat was right. Next time, add the garlic in the last minute so it toasts instead of burning.', focus: 'timing aromatics' },
   hard: { note: 'Rough nights happen. Next time, prep everything before the pan goes on, so the cooking part is just moving things around.', focus: 'prep before heat' },
 };
+
+/**
+ * Canned cook-anything recipe used in mock mode for any typed dish.
+ * Counts: 5 steps, 6 ingredients, 20 minutes.
+ * XP = max(1, round((5*0.45 + 6*0.35 + 20*0.2)*10)) = 84.
+ */
+export const CANNED_COOK_ANYTHING_COUNTS = { steps: 5, ingredients: 6, minutes: 20 } as const;
+export const CANNED_COOK_ANYTHING_XP = 84;
+
+export function cannedCookAnythingRecipe(dishTitle: string): Recipe {
+  return r(dishTitle, 20, [
+    ['8 oz', 'pasta'],
+    ['2 tbsp', 'butter'],
+    ['3 cloves', 'garlic, sliced'],
+    ['¼ cup', 'grated parmesan'],
+    ['1 pinch', 'salt'],
+    ['1 pinch', 'black pepper'],
+  ], [
+    { instruction: 'Bring a pot of salted water to a boil and cook the pasta for 9 minutes.', isSafetyStep: true, techniqueName: 'Cook pasta al dente', whyItMatters: 'Salty water seasons the pasta while it cooks.' },
+    { instruction: 'Melt the butter in a pan over medium heat and cook the garlic for 1 minute, until it smells toasty.', isSafetyStep: true, whyItMatters: 'Garlic burns in under a minute, so keep the heat moderate and stay close.' },
+    { instruction: 'Drain the pasta carefully and toss it in the garlic butter.', isSafetyStep: true },
+    { instruction: 'Add the parmesan, salt and pepper, and toss until the sauce looks creamy.', isSafetyStep: false },
+    { instruction: 'Taste, adjust the salt, and serve right away.', isSafetyStep: false },
+  ]);
+}
+
+export const CANNED_COOK_ANYTHING_VIDEOS: Videos = {
+  'Cook pasta al dente': { videoId: 'mockVideoCA1', title: 'Cooking pasta al dente', channelTitle: 'Placeholder' },
+};

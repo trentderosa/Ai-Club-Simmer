@@ -14,6 +14,7 @@ import type {
   Profile,
   ProfileInput,
   RecipeResponse,
+  CookAnythingResponse,
 } from './schemas';
 
 export interface AppSession {
@@ -53,4 +54,8 @@ export interface Backend {
   /** `user_recipes.id` for this user + slot, needed by the check-in. */
   getUserRecipeId(slotId: number): Promise<string>;
   submitCheckIn(input: CheckInInput, accessToken: string): Promise<CheckInResponse>;
+
+  /** Cook anything: type a dish, get a generated recipe (cached per normalized name). */
+  cookAnything(dish: string, accessToken: string): Promise<CookAnythingResponse>;
+  getGeneratedRecipe(id: string): Promise<CookAnythingResponse>;
 }

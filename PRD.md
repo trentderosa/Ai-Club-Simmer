@@ -2,7 +2,7 @@
 
 *Learn to cook, one dish at a time.*
 JMU AI Club · Fall 2026 · Team: Trent DeRosa, Ezzeldin Mallek, Nathan Biru, Ian Bullette, Matthew Munoz
-Status: **Draft** · Last updated: 2026-11-02 · Target demo: ~early January 2027 (2 months)
+Status: **Draft** · Last updated: 2026-11-15 · Target demo: ~early January 2027 (2 months)
 
 ---
 
@@ -12,7 +12,7 @@ Simmer is a mobile app that helps new cooks build skills step by step — "the D
 
 **Problem it solves:** Many people, especially college students living alone for the first time, want to cook but don't know where to start. Recipes assume basic knowledge ("sauté until fragrant"), recipe apps don't teach skills in a logical order, and nothing keeps beginners motivated, so they fall back on the same few meals or takeout.
 
-**Core loop (MVP):** Plan → Cook → Check in → Level up (XP and badges) → next recipe, with the AI tailoring tips after each check-in.
+**Core loop (MVP):** Plan → Cook → Check in → Level up (XP and badges) → next recipe, with the AI tailoring tips after each check-in. Users can also type a dish outside the path ("Cook anything") and go through the same cook and check-in loop.
 
 ## 2. Users
 
@@ -56,7 +56,7 @@ Every user gets the same path, **"Weeknight basics"**: 10 dish slots in a fixed 
 
 *Server side (PR #11, migration `20261115000000_plan_badges_recipe_book.sql`):* a slot is **done** once the user has at least one check-in for it. **Current** is the first slot that isn't done, and everything after it is **locked**. The app reads this with `get_my_plan()`, and `get_my_plan_summary()` gives total XP and the suggested sessions per week (rule in open question 11). The AI server enforces path order: `POST /api/recipes/generate/:slotId` returns `403 SLOT_LOCKED` for a locked slot. Done slots stay open so they can be repeated, and saved recipes always load. See `docs/CLIENT_API.md`.
 
-*Client (`app/`, UI Direction A):* Today reads `get_my_plan()` and `get_my_plan_summary()` and shows the next dish, the suggested sessions per week, total XP, all 10 slots as done / current / locked, and the final slot as the mastery challenge. Locked slots can't be opened. It re-reads both after a check-in.
+*Client (`app/`, UI Direction A):* Today reads `get_my_plan()` and `get_my_plan_summary()` and shows the next dish, the suggested sessions per week, total XP, all 10 slots as done / current / locked, and the final slot as the mastery challenge. Locked slots can't be opened. It re-reads both after a check-in. A "Cook anything" card on Today opens the free-form dish flow (F11); it does not change path order.
 
 ### F3. AI-generated recipes
 When a user opens a path slot for the first time, the app asks the local Ollama model to generate a recipe for that dish, tailored to the user's equipment, budget, and experience. The recipe is saved, and the same saved recipe is used every time after that.
@@ -86,7 +86,7 @@ Each recipe step with a technique name gets an instructional video found through
 
 *Server side:* the search query is "how to {technique} beginner cooking" (safe search, embeddable videos only). Results, including "no result", are cached per technique in `technique_videos`; a cached "no result" is retried after 7 days. A recipe makes at most 6 new searches, run concurrently under `VIDEO_LOOKUP_BUDGET_MS` (default 8000 ms). Videos are saved in `user_recipes.video_ids` and returned as `videos[techniqueName]`, but only when the lookup is complete: if any search failed, timed out, ran past the budget or was skipped by the cap, `video_ids` stays empty and the lookup runs again on the next visit (searches that worked are already in the shared cache). A genuine "no result" counts as complete. Requires `YOUTUBE_API_KEY` on the AI server; without it, recipes have no videos.
 
-*Client (`app/`, UI Direction A):* a step's video is `videos[step.techniqueName]`; a missing entry just means no video, and `null` is treated as `{}`. Thumbnails come from `i.ytimg.com` and tapping opens YouTube in the in-app browser (`expo-web-browser`) rather than an embedded player.
+*Client (`app/`, UI Direction A):* a step's video is `videos[step.techniqueName]`; a missing entry just means no video, and `null` is treated as `{}`. Thumbnails come from `i.ytimg.com`. Tapping opens YouTube with React Native `Linking` only when the URL is on the allowlist (`https://www.youtube.com`, `https://youtube.com`, `https://m.youtube.com`, `https://youtu.be`); the server validates the same list. Mock placeholder videos are disabled and do nothing (no crash, no error toast).
 
 ### F5. Cook mode
 A step-by-step screen the user follows while cooking.
@@ -144,6 +144,22 @@ Users earn XP for finishing recipes. Harder recipes are worth more, and repeatin
 - [ ] Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`, the event-trigger helper owned by Nathan and Ezzeldin. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Approved by Trent on Nov 12, 2026.
 
 *Client (`app/`, UI Direction A):* Today shows total XP. Session complete shows `+xp_awarded` when `xp.status` is `awarded`, explains half-XP repeats and the weekly cap, and shows the totals before and after. When `xp.status` is `failed` it says the check-in is saved and the XP is on its way, with no number; `skipped` says XP isn't set up on that server.
+
+### F11. Cook anything (free-form dish)
+The user can type a dish name from Today and get an AI-generated recipe fitted to their kitchen, then cook it and check in through the same screens as a path slot. The 10-slot path is unchanged.
+
+**Acceptance criteria**
+- [ ] Today has a "Cook anything" entry. The user types a dish (empty, junk, and injection-like input are rejected; the trimmed name is capped at 80 characters). The screen has loading, empty, and error states.
+- [ ] The AI server generates the recipe through the existing Ollama recipe path and looks up YouTube videos the same way as a path slot. The first validated recipe for that user and normalized dish name is reused (`cached: true`); a later request or "reroll" cannot change the stored steps, ingredients, minutes, or XP.
+- [ ] Dish names are normalized as lowercase, trimmed, collapsed whitespace, punctuation stripped. The recipe is owner-only (RLS). Uncached generations are rate-limited per user (default 5 per hour).
+- [ ] After cooking, the user checks in through `POST /api/check-ins` with `generated_recipe_id` (not a path `slot_id`). Check-ins are idempotent, the same way as path check-ins.
+- [ ] Free-form XP uses the same slot formula, `max(1, round((steps×0.45 + ingredients×0.35 + cook minutes×0.2) × scale))`, from `xp_config`. Steps and ingredients are counted from the validated saved recipe arrays, not a model-reported number. Counts are clamped to explicit config bounds before XP is stored (defaults: steps 1–15, ingredients 1–20, minutes 1–120). Example: the mock recipe (5 steps, 6 ingredients, 20 minutes) is 84 XP; an inflated 50/80/999 response clamps to 15/20/120 and yields 378 XP.
+- [ ] Repeats of the same normalized dish earn 50% XP and share the existing 100 XP/week repeat cap with path-slot repeats. Free-form awards also apply a daily cap (`freeform_daily_cap`, default 200) that counts today's slot XP and free-form XP together. Awards run only on the server via the service role (`award_generated_recipe_xp`). The 10-slot path first-completion awards are not blocked by the daily cap.
+- [ ] Video cards open allowlisted YouTube URLs only. Mock placeholders do nothing gracefully.
+
+*Server side (migration `20261115180000_cook_anything.sql`):* `user_generated_recipes` is unique on `(user_id, normalized_dish_name)`. A BEFORE INSERT trigger clamps counts and freezes `xp_value`; a BEFORE UPDATE trigger refuses to raise those inputs. `get_user_total_xp` and `get_my_plan_summary` include free-form XP. Needs Ian/Trent OK on the clamp bounds, the 200 daily cap, and that a clamped max award (378) is higher than the hardest path slot (181).
+
+*Client (`app/`, UI Direction A):* Today opens `/cook-anything`. A successful generate goes to `/generated/[recipeId]`, then `/generated-cook`, `/generated-check-in`, and `/generated-complete`. Mock mode returns a canned 5/6/20 recipe worth 84 XP and reuses it on the same normalized name.
 
 ### F8. Mastery challenge (final path recipe only)
 The user cooks the final recipe with the steps hidden, revealing individual steps only when they need help. Safety steps always stay visible.
@@ -246,3 +262,5 @@ Do **not** build these. They're future work.
 11. **Suggested sessions per week (F2).** Proposed rule: floor(days_per_week × minutes_per_session ÷ average cook minutes of the remaining recipes), kept between 1 and days_per_week. For example, 3 days × 30 min gives 2 sessions/week. Does the team agree?
 12. **Badge names (F9).** Completion badges are currently named after their dish ("Scrambled Eggs"). The mastery badge is "Roast Chicken Mastery" and the milestone is "Weeknight Basics Graduate". Ian to confirm or rename (codes stay the same).
 13. **Branch protection with AI review.** PRs are reviewed by AI, but GitHub doesn't count an approval from the PR's own author account. Should "1 approval" come from a teammate, or from a separate review-bot account?
+14. **Cook-anything XP clamps and caps.** Free-form counts are clamped to steps 1–15, ingredients 1–20, and minutes 1–120 (explicit `FREEFORM_COUNT_BOUNDS` / `xp_config`). The daily free-form cap defaults to 200 and counts today's slot + free-form XP together. A fully clamped recipe awards 378 XP, more than roast chicken (181). Ian/Trent to confirm or change these numbers.
+15. **Cook-anything daily cap vs path first-completions.** The daily cap is applied only in `award_generated_recipe_xp`, so a path first-completion is never reduced by earlier free-form awards that day. Is that the intended rule?

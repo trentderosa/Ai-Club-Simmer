@@ -5,7 +5,7 @@ What the app calls for each MVP screen. There are two backends:
 - **Supabase** (`supabase-js` with the **anon key** and the user's session): auth, the onboarding profile, and read-only RPCs for the plan, badges and recipe book.
 - **AI server** (`fetch` with `Authorization: Bearer <supabase access token>`): recipe generation, videos, and check-ins (which award XP and badges).
 
-The app never holds the service-role key or the YouTube key, and it never calls `award_slot_xp`.
+The app never holds the service-role key or the YouTube key, and it never calls `award_slot_xp` or `award_generated_recipe_xp`.
 
 | Screen | Call |
 | --- | --- |
@@ -13,7 +13,8 @@ The app never holds the service-role key or the YouTube key, and it never calls 
 | Onboarding, edit profile (F1) | `profiles` insert / update (own row) |
 | Plan (F2, F7) | `rpc('get_my_plan')` + `rpc('get_my_plan_summary')` |
 | Recipe + cook mode (F3, F4, F5) | AI server `POST /api/recipes/generate/:slotId` |
-| Check-in (F6, F7, F9) | AI server `POST /api/check-ins` |
+| Cook anything (F11) | AI server `POST /api/recipes/cook-anything`, then `user_generated_recipes` select for a saved recipe |
+| Check-in (F6, F7, F9, F11) | AI server `POST /api/check-ins` (path: `user_recipe_id` + `slot_id`; free-form: `generated_recipe_id`) |
 | Mastery challenge (F8) | Same two AI-server calls on slot 10, plus `mastery` in the check-in |
 | Badges (F9) | `rpc('get_my_badges')` |
 | Recipe book (F10) | `rpc('get_my_recipe_book')`, then `user_recipes` select for a full recipe |
@@ -61,7 +62,7 @@ const { data: [summary] } = await supabase.rpc('get_my_plan_summary');
 
 | Field | Notes |
 | --- | --- |
-| `total_xp` | Show on the plan screen (F7) |
+| `total_xp` | Show on the plan screen (F7). Includes path-slot XP and free-form (Cook anything) XP. |
 | `completed_slots`, `total_slots`, `current_slot_order`, `path_complete` | |
 | `suggested_sessions_per_week` | From the onboarding schedule. `null` until the schedule is set |
 | `estimated_weeks_remaining` | |
@@ -100,13 +101,60 @@ The first call generates the recipe with Ollama, which can take 10–60 s, so sh
 }
 ```
 
-- **Videos (F4):** use `videos[step.techniqueName]`. A step with no entry has no video. Play it in-app with `https://www.youtube.com/embed/{videoId}`, for example in a WebView or `react-native-youtube-iframe`. Thumbnail: `https://i.ytimg.com/vi/{videoId}/hqdefault.jpg`. `videos` is `{}` when the server has no YouTube key or the search failed, and can be partial when some searches failed. The server retries the missing ones the next time the recipe is loaded through the AI server.
+- **Videos (F4):** use `videos[step.techniqueName]`. A step with no entry has no video. Open the video with React Native `Linking` only when the URL is on the allowlist: `https://www.youtube.com`, `https://youtube.com`, `https://m.youtube.com`, `https://youtu.be` (the server sanitizes to the same list). Thumbnail: `https://i.ytimg.com/vi/{videoId}/hqdefault.jpg`. `videos` is `{}` when the server has no YouTube key or the search failed, and can be partial when some searches failed. The server retries the missing ones the next time the recipe is loaded through the AI server. Mock placeholder videos are not openable.
 - **Errors:**
   - `401`: bad or expired token.
   - `403 { code: "SLOT_LOCKED" }`: the slot isn't unlocked yet.
   - `404`: unknown slot, or onboarding isn't finished.
   - `500`: generation failed after 3 tries. Show a **Retry** button (F3).
   - `429`: rate limited.
+
+
+## F11. Cook anything
+
+```
+POST {AI_SERVER}/api/recipes/cook-anything
+Authorization: Bearer <access_token>
+Content-Type: application/json
+
+{ "dish": "pad thai" }
+```
+
+The first call generates a recipe with Ollama (10–60 s) and looks up videos the same way as a path slot. Later calls for the same user and normalized dish name return the saved recipe instantly (`cached: true`). The dish is trimmed, capped at 80 characters, and rejected when empty, junk, or injection-like. Normalization is lowercase, trimmed, collapsed whitespace, punctuation stripped.
+
+```jsonc
+{
+  "generated_recipe_id": "<uuid>",
+  "dish_query": "pad thai",
+  "normalized_dish_name": "pad thai",
+  "recipe": { /* same shape as F3 */ },
+  "cached": false,
+  "videos": { /* same shape as F3 */ },
+  "xp_value": 84,
+  "counts": { "steps": 5, "ingredients": 6, "minutes": 20 }
+}
+```
+
+`xp_value` is computed with the path-slot formula from the clamped, validated recipe arrays (defaults: steps 1–15, ingredients 1–20, minutes 1–120) and is frozen on first save. The mock canned recipe (5 / 6 / 20) is 84 XP; a 50 / 80 / 999 model response clamps to 15 / 20 / 120 and yields 378 XP.
+
+Reload a saved recipe (own row only, RLS) with:
+
+```ts
+const { data } = await supabase
+  .from('user_generated_recipes')
+  .select('id, dish_query, normalized_dish_name, recipe_json, video_ids, xp_value, step_count, ingredient_count, cook_minutes')
+  .eq('id', generatedRecipeId)
+  .single();
+```
+
+- **Errors:**
+  - `401`: bad or expired token.
+  - `400 { code: "INVALID_DISH" }`: empty, too long, junk, or rejected input.
+  - `404`: onboarding isn't finished.
+  - `429`: per-user uncached generation rate limit (default 5 per hour). Cache hits are not limited.
+  - `500`: generation failed after 3 tries. Show a **Retry** button.
+
+To check in, `POST /api/check-ins` with `generated_recipe_id` instead of `user_recipe_id` / `slot_id` (do not send both). The same idempotency rules apply. Repeats of that normalized dish earn 50% XP and share the 100 XP/week repeat cap with path-slot repeats. Free-form awards also apply a daily cap (default 200) that counts today's slot XP and free-form XP together.
 
 ## F6, F7, F9. Check-in
 
@@ -116,8 +164,9 @@ Authorization: Bearer <access_token>
 Content-Type: application/json
 
 {
-  "user_recipe_id": "<user_recipes.id>",
-  "slot_id": 2,
+  "user_recipe_id": "<user_recipes.id>",   // path check-in
+  "slot_id": 2,                           // path check-in
+  "generated_recipe_id": "<uuid>",        // free-form check-in (F11); do not send with slot_id
   "rating": "hard",                 // 'easy' | 'ok' | 'hard'
   "went_well": "Nice texture",      // optional, max 500 chars
   "was_hard": "Heat control",       // optional, max 500 chars
@@ -125,6 +174,8 @@ Content-Type: application/json
   "idempotency_key": "<uuid>"       // optional; required for safe retries (see below)
 }
 ```
+
+For a path check-in, send `user_recipe_id` and `slot_id`. For a Cook anything check-in, send `generated_recipe_id` instead (the row in `user_generated_recipes`; RLS returns only your rows). Do not mix the two shapes.
 
 `user_recipe_id`: read it with `supabase.from('user_recipes').select('id').eq('slot_id', slotId).single()` (RLS returns only your rows).
 
@@ -199,6 +250,6 @@ const { data } = await supabase
 
 ## What the client must not do
 
-- Call `award_slot_xp`, `is_slot_unlocked` or `get_badges_earned_by_check_in`. These are service-role only, and the database refuses them from the app.
-- Write `xp_events`, `user_slot_completions`, `user_recipes`, `badges` or `technique_videos`, or update or delete `check_ins`. All of these are blocked.
+- Call `award_slot_xp`, `award_generated_recipe_xp`, `is_slot_unlocked` or `get_badges_earned_by_check_in`. These are service-role only, and the database refuses them from the app.
+- Write `xp_events`, `generated_recipe_xp_events`, `user_slot_completions`, `user_recipes`, `user_generated_recipes`, `badges` or `technique_videos`, or update or delete `check_ins`. All of these are blocked.
 - Ship the service-role key or the YouTube key in the app.

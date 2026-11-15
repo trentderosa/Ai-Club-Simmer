@@ -87,10 +87,15 @@ function RootStack() {
       </Stack.Protected>
       <Stack.Protected guard={status === 'ready'}>
         <Stack.Screen name="today" />
+        <Stack.Screen name="cook-anything" />
         <Stack.Screen name="recipe/[slotId]" />
         <Stack.Screen name="cook/[slotId]" options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: color.sheet } }} />
         <Stack.Screen name="check-in/[slotId]" />
         <Stack.Screen name="complete/[slotId]" options={{ animation: 'fade', gestureEnabled: false }} />
+        <Stack.Screen name="generated/[recipeId]" />
+        <Stack.Screen name="generated-cook/[recipeId]" options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: color.sheet } }} />
+        <Stack.Screen name="generated-check-in/[recipeId]" />
+        <Stack.Screen name="generated-complete/[recipeId]" options={{ animation: 'fade', gestureEnabled: false }} />
       </Stack.Protected>
     </Stack>
   );

@@ -6,7 +6,7 @@
  */
 import { createContext, useContext, useMemo, useRef, type ReactNode } from 'react';
 
-import type { CheckInResponse, PlanSlot, PlanSummary, RecipeResponse } from '../api';
+import type { CheckInResponse, CookAnythingResponse, PlanSlot, PlanSummary, RecipeResponse } from '../api';
 
 export interface CheckInOutcome {
   slot: PlanSlot;
@@ -27,8 +27,19 @@ export interface FlowCache {
   setRecipe(slotId: number, r: RecipeResponse): void;
   getOutcome(slotId: number): CheckInOutcome | null;
   setOutcome(o: CheckInOutcome): void;
+  getGenerated(id: string): CookAnythingResponse | null;
+  setGenerated(id: string, r: CookAnythingResponse): void;
+  getGeneratedOutcome(id: string): GeneratedCheckInOutcome | null;
+  setGeneratedOutcome(o: GeneratedCheckInOutcome): void;
   /** Drop everything (sign-out). */
   clear(): void;
+}
+
+export interface GeneratedCheckInOutcome {
+  recipe: CookAnythingResponse;
+  response: CheckInResponse;
+  summaryBefore: PlanSummary | null;
+  summaryAfter: PlanSummary | null;
 }
 
 const Ctx = createContext<FlowCache | null>(null);
@@ -39,6 +50,8 @@ export function FlowCacheProvider({ children }: { children: ReactNode }) {
     summary: null as PlanSummary | null,
     recipes: new Map<number, RecipeResponse>(),
     outcomes: new Map<number, CheckInOutcome>(),
+    generated: new Map<string, CookAnythingResponse>(),
+    generatedOutcomes: new Map<string, GeneratedCheckInOutcome>(),
   });
   const cache = useMemo<FlowCache>(() => {
     const c = ref.current;
@@ -51,11 +64,17 @@ export function FlowCacheProvider({ children }: { children: ReactNode }) {
       setRecipe: (id, r) => void c.recipes.set(id, r),
       getOutcome: (id) => c.outcomes.get(id) ?? null,
       setOutcome: (o) => void c.outcomes.set(o.slot.slot_id, o),
+      getGenerated: (id) => c.generated.get(id) ?? null,
+      setGenerated: (id, r) => void c.generated.set(id, r),
+      getGeneratedOutcome: (id) => c.generatedOutcomes.get(id) ?? null,
+      setGeneratedOutcome: (o) => void c.generatedOutcomes.set(o.recipe.generated_recipe_id, o),
       clear: () => {
         c.plan = null;
         c.summary = null;
         c.recipes.clear();
         c.outcomes.clear();
+        c.generated.clear();
+        c.generatedOutcomes.clear();
       },
     };
   }, []);

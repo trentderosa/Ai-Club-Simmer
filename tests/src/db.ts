@@ -199,6 +199,14 @@ export class TestDatabase {
       REVOKE INSERT, UPDATE, DELETE ON badges FROM anon, authenticated;
       REVOKE ALL ON technique_videos FROM anon, authenticated;
       REVOKE UPDATE, DELETE ON check_ins FROM anon, authenticated;
+
+      -- 20261115180000_cook_anything.sql: re-assert after broad GRANTs
+      REVOKE INSERT, UPDATE, DELETE ON user_generated_recipes FROM anon, authenticated;
+      REVOKE INSERT, UPDATE, DELETE ON user_generated_dish_completions FROM anon, authenticated;
+      REVOKE INSERT, UPDATE, DELETE ON generated_recipe_xp_events FROM anon, authenticated;
+      REVOKE UPDATE, DELETE ON generated_recipe_check_ins FROM anon, authenticated;
+      REVOKE EXECUTE ON FUNCTION public.award_generated_recipe_xp(UUID) FROM PUBLIC, anon, authenticated;
+      GRANT EXECUTE ON FUNCTION public.award_generated_recipe_xp(UUID) TO service_role;
     `);
 
     // Match migration guard: only revoke when the function exists
@@ -214,6 +222,10 @@ export class TestDatabase {
   }
 
   async cleanupTestData(): Promise<void> {
+    await this.pool.query('DELETE FROM generated_recipe_xp_events');
+    await this.pool.query('DELETE FROM generated_recipe_check_ins');
+    await this.pool.query('DELETE FROM user_generated_dish_completions');
+    await this.pool.query('DELETE FROM user_generated_recipes');
     await this.pool.query('DELETE FROM xp_events');
     await this.pool.query('DELETE FROM check_ins');
     await this.pool.query('DELETE FROM technique_videos');
@@ -445,10 +457,31 @@ export class TestDatabase {
 
   async getUserTotalXp(userId: string): Promise<number> {
     const result = await this.pool.query(
-      'SELECT COALESCE(SUM(xp_awarded), 0) as total FROM xp_events WHERE user_id = $1',
+      `SELECT
+         COALESCE((SELECT SUM(xp_awarded) FROM xp_events WHERE user_id = $1), 0)
+         + COALESCE((SELECT SUM(xp_awarded) FROM generated_recipe_xp_events WHERE user_id = $1), 0)
+         AS total`,
       [userId]
     );
     return parseInt(result.rows[0].total);
+  }
+
+  async getUserTotalXpViaFunction(userId: string): Promise<number> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE authenticated');
+      await client.query(`SELECT set_config('request.jwt.claim.sub', $1, true)`, [userId]);
+      await client.query(`SELECT set_config('request.jwt.claim.role', 'authenticated', true)`);
+      const result = await client.query('SELECT get_user_total_xp() AS total');
+      await client.query('COMMIT');
+      return parseInt(result.rows[0].total);
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   async getXpEventCount(checkInId: string): Promise<number> {
@@ -605,6 +638,194 @@ export class TestDatabase {
   async resetXpConfig(): Promise<void> {
     await this.pool.query(`UPDATE xp_config SET value = 50 WHERE key = 'repeat_xp_percent'`);
     await this.pool.query(`UPDATE xp_config SET value = 100 WHERE key = 'weekly_repeat_cap'`);
+    await this.pool.query(`UPDATE xp_config SET value = 15 WHERE key = 'freeform_max_steps'`);
+    await this.pool.query(`UPDATE xp_config SET value = 20 WHERE key = 'freeform_max_ingredients'`);
+    await this.pool.query(`UPDATE xp_config SET value = 120 WHERE key = 'freeform_max_minutes'`);
+    await this.pool.query(`UPDATE xp_config SET value = 1 WHERE key = 'freeform_min_steps'`);
+    await this.pool.query(`UPDATE xp_config SET value = 1 WHERE key = 'freeform_min_ingredients'`);
+    await this.pool.query(`UPDATE xp_config SET value = 1 WHERE key = 'freeform_min_minutes'`);
+    await this.pool.query(`UPDATE xp_config SET value = 200 WHERE key = 'freeform_daily_cap'`);
+  }
+
+  async createGeneratedRecipe(
+    userId: string,
+    opts: {
+      dishQuery?: string;
+      normalizedDishName?: string;
+      stepCount: number;
+      ingredientCount: number;
+      timeEstimateMinutes: number;
+      recipeJson?: object;
+    }
+  ): Promise<{ id: string; xp_value: number; step_count: number; ingredient_count: number; time_estimate_minutes: number }> {
+    const dishQuery = opts.dishQuery ?? 'Pad Thai';
+    const normalized = opts.normalizedDishName ?? 'pad thai';
+    const recipeJson = opts.recipeJson ?? {
+      title: dishQuery,
+      ingredients: Array.from({ length: Math.max(1, opts.ingredientCount) }, (_, i) => ({
+        name: `ingredient ${i + 1}`,
+        amount: '1',
+      })),
+      timeEstimateMinutes: opts.timeEstimateMinutes,
+      steps: Array.from({ length: Math.max(1, opts.stepCount) }, (_, i) => ({
+        instruction: `Step ${i + 1}`,
+        isSafetyStep: false,
+      })),
+    };
+    const result = await this.pool.query(
+      `INSERT INTO user_generated_recipes (
+         user_id, dish_query, normalized_dish_name, recipe_json,
+         step_count, ingredient_count, time_estimate_minutes, xp_value
+       ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, 1)
+       RETURNING id, xp_value, step_count, ingredient_count, time_estimate_minutes`,
+      [
+        userId,
+        dishQuery,
+        normalized,
+        JSON.stringify(recipeJson),
+        opts.stepCount,
+        opts.ingredientCount,
+        opts.timeEstimateMinutes,
+      ]
+    );
+    return result.rows[0];
+  }
+
+  async createGeneratedCheckIn(
+    userId: string,
+    generatedRecipeId: string,
+    id?: string
+  ): Promise<string> {
+    const result = await this.pool.query(
+      `INSERT INTO generated_recipe_check_ins (id, user_id, generated_recipe_id, difficulty_rating)
+       VALUES (COALESCE($3, gen_random_uuid()), $1, $2, 'ok')
+       RETURNING id`,
+      [userId, generatedRecipeId, id ?? null]
+    );
+    return result.rows[0].id;
+  }
+
+  async awardGeneratedRecipeXp(checkInId: string): Promise<XpAwardResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE service_role');
+      await client.query(`SELECT set_config('request.jwt.claim.role', 'service_role', true)`);
+      const result = await client.query('SELECT * FROM award_generated_recipe_xp($1)', [checkInId]);
+      await client.query('COMMIT');
+      return result.rows[0];
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async tryAwardGeneratedRecipeXpAsRole(
+    checkInId: string,
+    role: ClientRole,
+    userId?: string
+  ): Promise<{ success: boolean; error?: string }> {
+    assertClientRole(role);
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SET LOCAL ROLE ${role}`);
+      if (userId) {
+        await client.query(`SELECT set_config('request.jwt.claim.sub', $1, true)`, [userId]);
+      }
+      await client.query(`SELECT set_config('request.jwt.claim.role', $1, true)`, [role]);
+      await client.query('SELECT * FROM award_generated_recipe_xp($1)', [checkInId]);
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      return { success: false, error: (e as Error).message };
+    } finally {
+      client.release();
+    }
+  }
+
+  async getGeneratedRecipeRow(id: string): Promise<{
+    step_count: number;
+    ingredient_count: number;
+    time_estimate_minutes: number;
+    xp_value: number;
+    recipe_json: unknown;
+  }> {
+    const result = await this.pool.query(
+      `SELECT step_count, ingredient_count, time_estimate_minutes, xp_value, recipe_json
+       FROM user_generated_recipes WHERE id = $1`,
+      [id]
+    );
+    return result.rows[0];
+  }
+
+  async tryUpdateGeneratedRecipeCounts(
+    id: string,
+    counts: { stepCount: number; ingredientCount: number; timeEstimateMinutes: number; xpValue: number; recipeJson: object }
+  ): Promise<void> {
+    await this.pool.query(
+      `UPDATE user_generated_recipes
+       SET recipe_json = $2::jsonb,
+           step_count = $3,
+           ingredient_count = $4,
+           time_estimate_minutes = $5,
+           xp_value = $6
+       WHERE id = $1`,
+      [id, JSON.stringify(counts.recipeJson), counts.stepCount, counts.ingredientCount, counts.timeEstimateMinutes, counts.xpValue]
+    );
+  }
+
+  async countGeneratedXpEvents(checkInId: string): Promise<number> {
+    const result = await this.pool.query(
+      'SELECT COUNT(*)::int AS n FROM generated_recipe_xp_events WHERE check_in_id = $1',
+      [checkInId]
+    );
+    return result.rows[0].n;
+  }
+
+  async listGeneratedRecipeIdsAsUser(userId: string): Promise<string[]> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE authenticated');
+      await client.query(`SELECT set_config('request.jwt.claim.sub', $1, true)`, [userId]);
+      await client.query(`SELECT set_config('request.jwt.claim.role', 'authenticated', true)`);
+      const rows = await client.query('SELECT id FROM user_generated_recipes');
+      await client.query('COMMIT');
+      return rows.rows.map((r: { id: string }) => r.id);
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
+  }
+
+  async tryInsertGeneratedRecipeAsUser(userId: string): Promise<{ success: boolean; error?: string }> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE authenticated');
+      await client.query(`SELECT set_config('request.jwt.claim.sub', $1, true)`, [userId]);
+      await client.query(`SELECT set_config('request.jwt.claim.role', 'authenticated', true)`);
+      await client.query(
+        `INSERT INTO user_generated_recipes (
+           user_id, dish_query, normalized_dish_name, recipe_json,
+           step_count, ingredient_count, time_estimate_minutes, xp_value
+         ) VALUES ($1, 'x', 'x', '{}', 1, 1, 1, 1)`,
+        [userId]
+      );
+      await client.query('COMMIT');
+      return { success: true };
+    } catch (e) {
+      await client.query('ROLLBACK');
+      return { success: false, error: (e as Error).message };
+    } finally {
+      client.release();
+    }
   }
 
   async backdateCheckIn(checkInId: string, daysAgo: number): Promise<void> {

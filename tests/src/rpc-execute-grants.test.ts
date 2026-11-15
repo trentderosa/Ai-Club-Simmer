@@ -63,6 +63,20 @@ describe('RPC EXECUTE grants lockdown', () => {
     });
   });
 
+  describe('has_function_privilege: award_generated_recipe_xp(uuid)', () => {
+    it('denies EXECUTE to anon', async () => {
+      expect(await db.hasFunctionPrivilege('anon', 'award_generated_recipe_xp(uuid)')).toBe(false);
+    });
+
+    it('denies EXECUTE to authenticated', async () => {
+      expect(await db.hasFunctionPrivilege('authenticated', 'award_generated_recipe_xp(uuid)')).toBe(false);
+    });
+
+    it('allows EXECUTE to service_role', async () => {
+      expect(await db.hasFunctionPrivilege('service_role', 'award_generated_recipe_xp(uuid)')).toBe(true);
+    });
+  });
+
   describe('service_role XP path (ai-server style)', () => {
     it('awards XP end to end via service_role', async () => {
       const checkIn = await db.createCheckIn(testUser.id, userRecipeId1, slotId1);
