@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { RecipeSchema, type Recipe } from '../schemas/recipe.js';
+import { FreeformRecipeSchema } from '../cook-anything/recipe-schema.js';
 import {
   DEFAULT_SUPABASE_REST_TIMEOUT_MS,
   SupabaseRestError,
@@ -62,7 +62,7 @@ export class SupabaseGeneratedRecipeRepository implements GeneratedRecipeReposit
   }
 
   private parse(row: Row): SavedGeneratedRecipe {
-    const recipe = RecipeSchema.safeParse(row.recipe_json);
+    const recipe = FreeformRecipeSchema.safeParse(row.recipe_json);
     if (!recipe.success) {
       throw new Error(`Invalid generated recipe data from database: ${recipe.error.message}`);
     }
@@ -186,5 +186,3 @@ export class SupabaseGeneratedRecipeRepository implements GeneratedRecipeReposit
   }
 }
 
-// silence unused Recipe import if lint complains — Recipe is used via RecipeSchema only
-void (0 as unknown as Recipe);

@@ -135,7 +135,7 @@ The first call generates a recipe with Ollama (10–60 s) and looks up videos th
 }
 ```
 
-`xp_value` is computed with the path-slot formula from the clamped, validated recipe arrays (defaults: steps 1–15, ingredients 1–20, minutes 1–120) and is frozen on first save. The mock canned recipe (5 / 6 / 20) is 84 XP; a 50 / 80 / 999 model response clamps to 15 / 20 / 120 and yields 378 XP.
+`xp_value` is computed with the path-slot formula from clamped counts of the validated recipe arrays (defaults: steps 1–15, ingredients 1–20, minutes 1–120) and is frozen on first save. The recipe body itself is not truncated. The mock canned recipe (5 / 6 / 20) has `xp_value` 84; a 50 / 80 / 999 model response keeps the full recipe and stores `xp_value` 378. A later check-in awards that value subject to the 50% repeat rule, the shared weekly repeat cap, and the daily cap (`freeform_daily_cap`, default 200), so a single free-form award cannot exceed 200 XP.
 
 Reload a saved recipe (own row only, RLS) with:
 

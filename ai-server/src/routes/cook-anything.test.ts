@@ -139,18 +139,25 @@ describe('POST /api/recipes/cook-anything', () => {
     expect(prompt).toContain('dish_name: "Pad Thai"');
   });
 
-  it('clamps an inflated LLM recipe to the config bounds and returns the capped XP', async () => {
-    const { app } = createApp(mockOllama(inflatedRecipe), mockSupabase());
+  it('clamps XP counts for an inflated LLM recipe but stores the full recipe', async () => {
+    const { app, repo } = createApp(mockOllama(inflatedRecipe), mockSupabase());
     const res = await request(app)
       .post('/api/recipes/cook-anything')
       .set('Authorization', 'Bearer token')
       .send({ dish: 'mega stew' });
     expect(res.status).toBe(200);
-    expect(res.body.recipe.steps).toHaveLength(15);
-    expect(res.body.recipe.ingredients).toHaveLength(20);
-    expect(res.body.recipe.timeEstimateMinutes).toBe(120);
+    expect(res.body.recipe.steps).toHaveLength(50);
+    expect(res.body.recipe.ingredients).toHaveLength(80);
+    expect(res.body.recipe.timeEstimateMinutes).toBe(999);
     expect(res.body.counts).toEqual({ steps: 15, ingredients: 20, minutes: 120 });
     expect(res.body.xp_value).toBe(378);
+    const saved = await repo.findByUserAndNormalizedName(userId, 'mega stew');
+    expect(saved?.recipe.steps).toHaveLength(50);
+    expect(saved?.recipe.ingredients).toHaveLength(80);
+    expect(saved?.recipe.timeEstimateMinutes).toBe(999);
+    expect(saved?.stepCount).toBe(15);
+    expect(saved?.ingredientCount).toBe(20);
+    expect(saved?.timeEstimateMinutes).toBe(120);
   });
 
   it('reuses the cached recipe for the same normalized dish and does not call Ollama again', async () => {

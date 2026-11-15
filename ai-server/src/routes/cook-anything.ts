@@ -24,6 +24,8 @@ export interface CookAnythingRouterOptions {
   maxDishLength?: number;
 }
 
+type GenerationWorkError = { error: { type: string; message: string; attempts: number } };
+
 export function createCookAnythingRouter(
   deps: CookAnythingRouterDeps,
   options: CookAnythingRouterOptions = {}
@@ -34,7 +36,7 @@ export function createCookAnythingRouter(
     options.generationRateLimit?.windowMs ?? 3_600_000,
     options.generationRateLimit?.maxGenerations ?? 5
   );
-  const inFlight = new Map<string, Promise<unknown>>();
+  const inFlight = new Map<string, Promise<CookAnythingHttpResponse | GenerationWorkError>>();
 
   const ipLimiter = rateLimit({
     windowMs: options.rateLimit?.windowMs ?? 60_000,
@@ -114,6 +116,22 @@ export function createCookAnythingRouter(
     };
   }
 
+  type GenerationWorkResult =
+    | CookAnythingHttpResponse
+    | { error: { type: string; message: string; attempts: number } };
+
+  function sendGenerationResult(res: Response, result: GenerationWorkResult): void {
+    if ('error' in result && result.error) {
+      res.status(500).json({
+        error: 'Recipe generation failed. Please try again.',
+        type: result.error.type,
+        attempts: result.error.attempts,
+      });
+      return;
+    }
+    res.json(result);
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
   router.post('/cook-anything', async (req: Request, res: Response) => {
     try {
@@ -175,6 +193,13 @@ export function createCookAnythingRouter(
         return;
       }
 
+      const flightKey = `${userId}:${normalizedDishName}`;
+      const pending = inFlight.get(flightKey);
+      if (pending) {
+        sendGenerationResult(res, await pending);
+        return;
+      }
+
       if (!generationLimiter.allow(userId)) {
         res.status(429).json({
           error: 'Too many new recipes for now. Try a dish you’ve already cooked, or wait and try again.',
@@ -183,15 +208,7 @@ export function createCookAnythingRouter(
         return;
       }
 
-      const flightKey = `${userId}:${normalizedDishName}`;
-      const pending = inFlight.get(flightKey);
-      if (pending) {
-        const result = await pending;
-        res.json(result);
-        return;
-      }
-
-      const work = (async (): Promise<CookAnythingHttpResponse | { error: { type: string; message: string; attempts: number } }> => {
+      const work = (async (): Promise<GenerationWorkResult> => {
         const result = await generateCookAnythingRecipe(
           deps.ollamaClient,
           dishQuery,
@@ -222,17 +239,7 @@ export function createCookAnythingRouter(
 
       inFlight.set(flightKey, work);
       try {
-        const result = await work;
-        if (result && typeof result === 'object' && 'error' in result && result.error) {
-          const err = result.error as { type: string; attempts: number };
-          res.status(500).json({
-            error: 'Recipe generation failed. Please try again.',
-            type: err.type,
-            attempts: err.attempts,
-          });
-          return;
-        }
-        res.json(result);
+        sendGenerationResult(res, await work);
       } finally {
         inFlight.delete(flightKey);
       }

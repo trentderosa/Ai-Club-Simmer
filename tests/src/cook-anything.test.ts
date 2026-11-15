@@ -53,7 +53,7 @@ describe('Cook anything (free-form XP, cache, caps)', () => {
       expect(result.out_capped).toBe(false);
     });
 
-    it('clamps an inflated insert (50 steps, 80 ingredients, 999 minutes) and awards the capped XP (378)', async () => {
+    it('clamps an inflated insert (50 steps, 80 ingredients, 999 minutes) to xp_value 378, then the daily cap limits the award to 200', async () => {
       const recipe = await db.createGeneratedRecipe(user.id, {
         dishQuery: 'Mega Stew',
         normalizedDishName: 'mega stew',
@@ -67,7 +67,10 @@ describe('Cook anything (free-form XP, cache, caps)', () => {
       expect(recipe.xp_value).toBe(378);
       const checkIn = await db.createGeneratedCheckIn(user.id, recipe.id);
       const result = await db.awardGeneratedRecipeXp(checkIn);
-      expect(result.out_xp_awarded).toBe(378);
+      // Default freeform_daily_cap is 200, so a single award cannot pay out 378.
+      expect(result.out_xp_awarded).toBe(200);
+      expect(result.out_capped).toBe(true);
+      expect(result.out_is_first_completion).toBe(true);
     });
   });
 

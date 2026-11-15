@@ -1,5 +1,5 @@
-import { ZodError, z } from 'zod';
-import { RecipeSchema, getRecipeJsonSchema } from '../schemas/recipe.js';
+import { ZodError } from 'zod';
+import { getRecipeJsonSchema } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 import {
   ensureSafetyFlags,
@@ -7,13 +7,7 @@ import {
 } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import { buildCookAnythingPrompt } from './prompt.js';
-
-/** Accept inflated LLM counts here; clampRecipeCounts trims them after. */
-const RawCookAnythingRecipeSchema = RecipeSchema.extend({
-  ingredients: RecipeSchema.shape.ingredients.element.array().min(1).max(200),
-  steps: RecipeSchema.shape.steps.element.array().min(1).max(200),
-  timeEstimateMinutes: z.number().int().positive().max(10_000),
-});
+import { FreeformRecipeSchema } from './recipe-schema.js';
 
 const MAX_RETRIES = 2;
 const RETRY_BASE_DELAY_MS = 500;
@@ -48,7 +42,7 @@ export async function generateCookAnythingRecipe(
         lastError = parseError as Error;
         continue;
       }
-      const validationResult = RawCookAnythingRecipeSchema.safeParse(parsed);
+      const validationResult = FreeformRecipeSchema.safeParse(parsed);
       if (!validationResult.success) {
         lastError = validationResult.error;
         continue;

@@ -79,9 +79,14 @@ collapsed whitespace, punctuation stripped). A saved row in `user_generated_reci
 that user and normalized name is returned as `cached: true` and does not count against the
 per-user generation rate limit (`COOK_ANYTHING_RATE_LIMIT_*`, default 5 uncached
 generations per hour). Otherwise the server generates through the existing Ollama recipe
-path, looks up videos the same way as a path slot, clamps step / ingredient / minute
-counts to `FREEFORM_COUNT_BOUNDS` (1–15 / 1–20 / 1–120), and stores the frozen `xp_value`.
-A later save of the same dish cannot raise those counts.
+path, looks up videos the same way as a path slot, clamps the XP *counts* (not the
+saved recipe body) to `FREEFORM_COUNT_BOUNDS` (1–15 / 1–20 / 1–120), and stores the
+frozen `xp_value`. A later save of the same dish cannot raise those counts. A fully
+clamped recipe has `xp_value` 378; a single award still cannot exceed the daily cap
+(default 200).
+
+The per-user generation limiter is in-memory per process: it resets on restart, is not
+shared across instances, and does not prune old user keys. That is enough for the demo.
 
 `POST /api/check-ins` with `generated_recipe_id` awards XP via `award_generated_recipe_xp`
 (service role only). It uses the same slot formula, 50% repeats keyed on the normalized

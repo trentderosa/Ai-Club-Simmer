@@ -204,20 +204,10 @@ CREATE POLICY "Users can view own generated check-ins"
     ON generated_recipe_check_ins FOR SELECT
     USING (auth.uid() = user_id);
 
+-- Service role (ai-server) is the only writer; awards are service_role only.
 DROP POLICY IF EXISTS "Users can insert own generated check-ins" ON generated_recipe_check_ins;
-CREATE POLICY "Users can insert own generated check-ins"
-    ON generated_recipe_check_ins FOR INSERT
-    WITH CHECK (
-        auth.uid() = user_id
-        AND EXISTS (
-            SELECT 1 FROM user_generated_recipes r
-            WHERE r.id = generated_recipe_id
-              AND r.user_id = auth.uid()
-        )
-    );
-
-REVOKE UPDATE, DELETE ON generated_recipe_check_ins FROM anon, authenticated;
-GRANT SELECT, INSERT ON generated_recipe_check_ins TO authenticated;
+REVOKE INSERT, UPDATE, DELETE ON generated_recipe_check_ins FROM anon, authenticated;
+GRANT SELECT ON generated_recipe_check_ins TO authenticated;
 
 -- -----------------------------------------------------------------------------
 -- generated_recipe_xp_events: immutable free-form XP log

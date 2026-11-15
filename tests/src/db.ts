@@ -78,6 +78,23 @@ export class TestDatabase {
       GRANT anon TO postgres;
       GRANT service_role TO postgres;
       GRANT USAGE ON SCHEMA public TO authenticated, anon, service_role;
+
+      -- Match Supabase: INVOKER RPCs such as get_user_total_xp() call auth.uid()
+      -- and need USAGE on schema auth. RLS policy expressions run as the table
+      -- owner, so they already work without this grant.
+      DO $auth_grants$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'auth') THEN
+          EXECUTE 'GRANT USAGE ON SCHEMA auth TO authenticated, anon, service_role';
+        END IF;
+        IF to_regprocedure('auth.uid()') IS NOT NULL THEN
+          EXECUTE 'GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated, anon, service_role';
+        END IF;
+        IF to_regprocedure('auth.role()') IS NOT NULL THEN
+          EXECUTE 'GRANT EXECUTE ON FUNCTION auth.role() TO authenticated, anon, service_role';
+        END IF;
+      END
+      $auth_grants$;
     `);
   }
 
@@ -204,7 +221,8 @@ export class TestDatabase {
       REVOKE INSERT, UPDATE, DELETE ON user_generated_recipes FROM anon, authenticated;
       REVOKE INSERT, UPDATE, DELETE ON user_generated_dish_completions FROM anon, authenticated;
       REVOKE INSERT, UPDATE, DELETE ON generated_recipe_xp_events FROM anon, authenticated;
-      REVOKE UPDATE, DELETE ON generated_recipe_check_ins FROM anon, authenticated;
+      REVOKE INSERT, UPDATE, DELETE ON generated_recipe_check_ins FROM anon, authenticated;
+      GRANT SELECT ON generated_recipe_check_ins TO authenticated;
       REVOKE EXECUTE ON FUNCTION public.award_generated_recipe_xp(UUID) FROM PUBLIC, anon, authenticated;
       GRANT EXECUTE ON FUNCTION public.award_generated_recipe_xp(UUID) TO service_role;
     `);

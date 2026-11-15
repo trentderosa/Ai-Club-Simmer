@@ -29,11 +29,13 @@ describe('FREEFORM_COUNT_BOUNDS', () => {
 });
 
 describe('clampRecipeCounts', () => {
-  it('clamps an inflated LLM recipe (50 steps, 80 ingredients, 999 minutes) and uses array lengths for counts', () => {
-    const clamped = clampRecipeCounts(inflatedRecipe());
-    expect(clamped.recipe.steps).toHaveLength(15);
-    expect(clamped.recipe.ingredients).toHaveLength(20);
-    expect(clamped.recipe.timeEstimateMinutes).toBe(120);
+  it('clamps XP counts for an inflated LLM recipe and leaves the stored recipe intact', () => {
+    const recipe = inflatedRecipe();
+    const clamped = clampRecipeCounts(recipe);
+    expect(clamped.recipe).toBe(recipe);
+    expect(clamped.recipe.steps).toHaveLength(50);
+    expect(clamped.recipe.ingredients).toHaveLength(80);
+    expect(clamped.recipe.timeEstimateMinutes).toBe(999);
     expect(clamped.stepCount).toBe(15);
     expect(clamped.ingredientCount).toBe(20);
     expect(clamped.timeEstimateMinutes).toBe(120);

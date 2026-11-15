@@ -14,31 +14,26 @@ export interface ClampedRecipeCounts {
 }
 
 /**
- * Slice the validated recipe arrays and clamp minutes. Counts used for XP
- * come from the resulting arrays, never from a separate model-reported number.
+ * Clamp only the counts used for XP. The validated recipe is stored unchanged
+ * so later steps (including safety steps) and the real cook time are not cut.
  */
 export function clampRecipeCounts(
   recipe: Recipe,
   bounds: FreeformCountBounds = FREEFORM_COUNT_BOUNDS
 ): ClampedRecipeCounts {
-  const steps = recipe.steps.slice(0, bounds.steps.max);
-  const ingredients = recipe.ingredients.slice(0, bounds.ingredients.max);
-  const timeEstimateMinutes = clampInt(
-    recipe.timeEstimateMinutes,
-    bounds.minutes.min,
-    bounds.minutes.max
-  );
-  const stepCount = clampInt(steps.length, bounds.steps.min, bounds.steps.max);
-  const ingredientCount = clampInt(
-    ingredients.length,
-    bounds.ingredients.min,
-    bounds.ingredients.max
-  );
   return {
-    recipe: { ...recipe, steps, ingredients, timeEstimateMinutes },
-    stepCount,
-    ingredientCount,
-    timeEstimateMinutes,
+    recipe,
+    stepCount: clampInt(recipe.steps.length, bounds.steps.min, bounds.steps.max),
+    ingredientCount: clampInt(
+      recipe.ingredients.length,
+      bounds.ingredients.min,
+      bounds.ingredients.max
+    ),
+    timeEstimateMinutes: clampInt(
+      recipe.timeEstimateMinutes,
+      bounds.minutes.min,
+      bounds.minutes.max
+    ),
   };
 }
 
