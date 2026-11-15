@@ -1,7 +1,7 @@
 import type { CheckInRepository } from '../repositories/check-in-repository.js';
 import type { CheckInInput, CheckInResponse, CheckInXp } from '../types/check-in.js';
 import type { CoachNoteGenerator } from './coach-note.js';
-import type { XpAwarder } from './xp-awarder.js';
+import { xpAwardErrorReason, type XpAwarder } from './xp-awarder.js';
 
 export interface CheckInLogger {
   error(message: string, context: Record<string, unknown>): void;
@@ -20,7 +20,9 @@ export class CheckInService {
    * 1. Validate ownership (done in route before calling this)
    * 2. Persist raw text to repository (N2: store raw, sanitize only for prompt)
    * 3. Award XP server-side via award_slot_xp (service role). A failed award
-   *    is logged and reported as xp.status = 'failed'; the check-in stays saved.
+   *    (including a timeout, XP_AWARD_TIMEOUT_MS) is logged with a reason and
+   *    reported as xp.status = 'failed'; the check-in stays saved, and
+   *    `npm run reconcile:xp` re-runs the award later.
    * 4. Generate Coach's note via Ollama
    */
   async processCheckIn(
@@ -69,6 +71,7 @@ export class CheckInService {
       this.logger.error('xp_award_failed', {
         check_in_id: checkInId,
         slot_id: slotId,
+        reason: xpAwardErrorReason(error),
         error: error instanceof Error ? error.message : String(error),
       });
       return { status: 'failed' };

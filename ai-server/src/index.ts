@@ -87,7 +87,9 @@ function createServicesFromConfig(): ServiceConfig {
   const coachNoteGenerator = createCoachNoteGenerator(ollamaClient);
   // XP is awarded only here, server-side, with the service role (never by the client).
   const xpAwarder =
-    url && serviceRoleKey ? new SupabaseXpAwarder({ url, serviceRoleKey }) : null;
+    url && serviceRoleKey
+      ? new SupabaseXpAwarder({ url, serviceRoleKey, timeoutMs: config.xpAward.timeoutMs })
+      : null;
   const checkInService = new CheckInService(checkInRepository, coachNoteGenerator, xpAwarder);
 
   if (!url || !serviceRoleKey) {
