@@ -1,9 +1,9 @@
 /**
  * Zod schemas for everything the app reads from the backend.
  *
- * Source of truth: docs/CLIENT_API.md, the `get_my_plan` / `get_my_plan_summary`
- * SQL in supabase/migrations, and ai-server/src/schemas/recipe.ts +
- * ai-server/src/types/check-in.ts. Responses are parsed at the API boundary so
+ * Source of truth: docs/CLIENT_API.md, the `get_my_plan` / `get_my_plan_summary` /
+ * `get_my_badges` / `get_my_recipe_book` SQL in supabase/migrations, and
+ * ai-server/src/schemas/recipe.ts + ai-server/src/types/check-in.ts. Responses are parsed at the API boundary so
  * screens only ever see these types.
  */
 import { z } from 'zod';
@@ -33,6 +33,8 @@ export const ProfileSchema = z.object({
   days_per_week: z.number().int().nullable(),
   minutes_per_session: z.number().int().nullable(),
   onboarding_completed: z.boolean().nullable(),
+  /** Existing column; used as "Cooking since …" on the profile. */
+  created_at: z.string().nullable().optional(),
 });
 export type Profile = z.infer<typeof ProfileSchema>;
 
@@ -74,6 +76,44 @@ export type PlanSummary = z.infer<typeof PlanSummarySchema>;
 
 /** The RPC returns a one-row table; supabase-js gives it to us as an array. */
 export const PlanSummaryRowsSchema = z.array(PlanSummarySchema).min(1);
+
+// ---------- Supabase: badges (F9) ----------
+
+export const BadgeKindSchema = z.enum(['completion', 'mastery', 'path_milestone']);
+export type BadgeKind = z.infer<typeof BadgeKindSchema>;
+
+export const BadgeSchema = z.object({
+  code: z.string(),
+  name: z.string(),
+  description: z.string(),
+  kind: BadgeKindSchema,
+  /** null on the path-milestone badge. */
+  slot_id: z.number().int().nullable(),
+  sort_order: z.number().int(),
+  earned: z.boolean(),
+  earned_at: z.string().nullable(),
+});
+export type Badge = z.infer<typeof BadgeSchema>;
+export const BadgesSchema = z.array(BadgeSchema);
+
+// ---------- Supabase: recipe book (F10) ----------
+
+export const RecipeBookLabelSchema = z.enum(['completed', 'mastered']);
+export type RecipeBookLabel = z.infer<typeof RecipeBookLabelSchema>;
+
+export const RecipeBookEntrySchema = z.object({
+  slot_id: z.number().int(),
+  slot_order: z.number().int(),
+  dish_name: z.string(),
+  /** null when a check-in exists but the saved recipe row is missing. */
+  user_recipe_id: z.string().uuid().nullable(),
+  recipe_title: z.string(),
+  label: RecipeBookLabelSchema,
+  added_at: z.string().nullable(),
+  times_cooked: z.number().int(),
+});
+export type RecipeBookEntry = z.infer<typeof RecipeBookEntrySchema>;
+export const RecipeBookSchema = z.array(RecipeBookEntrySchema);
 
 // ---------- AI server: recipe (F3, F4, F5) ----------
 

@@ -13,13 +13,15 @@ import { ApiError } from '../errors';
 import {
   CheckInInputSchema,
   ProfileInputSchema,
+  type Badge,
   type CheckInBadge,
   type CheckInResponse,
   type Profile,
   type ProfileInput,
+  type RecipeBookEntry,
   type RecipeResponse,
 } from '../schemas';
-import { DEMO_USER, MOCK_CHECK_IN_REPLIES, MOCK_COACH_NOTES, RECIPES, SLOTS, VIDEOS } from './fixtures';
+import { BADGES, DEMO_USER, MOCK_CHECK_IN_REPLIES, MOCK_COACH_NOTES, RECIPES, SLOTS, VIDEOS } from './fixtures';
 import { awardXp, derivePlan, deriveSummary } from './mock-plan';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -31,6 +33,7 @@ interface MockState {
   session: AppSession | null;
   profile: Profile | null;
   completions: Record<number, number>;
+  firstCompletedAt: Record<number, string>;
   recipeSlots: Set<number>;
   totalXp: number;
   repeatXpThisWeek: number;
@@ -59,6 +62,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     session: null,
     profile: null,
     completions: {},
+    firstCompletedAt: {},
     recipeSlots: new Set(),
     totalXp: 0,
     repeatXpThisWeek: 0,
@@ -80,15 +84,20 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       days_per_week: 3,
       minutes_per_session: 30,
       onboarding_completed: true,
+      created_at: DEMO_USER.createdAt,
     };
     state.completions = {};
+    state.firstCompletedAt = {};
     state.recipeSlots = new Set();
     state.totalXp = 0;
     state.checkInsByKey = new Map();
     for (const s of SLOTS.slice(0, DEMO_USER.completedSlots)) {
-      state.completions[s.slot_id] = 1;
+      const extra = DEMO_USER.extraCooks[s.slot_id] ?? 0;
+      state.completions[s.slot_id] = 1 + extra;
       state.recipeSlots.add(s.slot_id);
       state.totalXp += s.xp_value;
+      const added = DEMO_USER.addedAt[s.slot_id];
+      if (added) state.firstCompletedAt[s.slot_id] = added;
     }
     return {
       userId: 'mock-user-demo',
@@ -148,6 +157,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       if (!email.includes('@')) throw new ApiError('validation', 'Enter a valid email address.', 400);
       state.profile = null;
       state.completions = {};
+      state.firstCompletedAt = {};
       state.recipeSlots = new Set();
       state.totalXp = 0;
       state.repeatXpThisWeek = 0;
@@ -170,7 +180,12 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       await delay(500);
       requireSession();
       const row = ProfileInputSchema.parse(input);
-      state.profile = { id: userId, ...row, onboarding_completed: true };
+      state.profile = {
+        id: userId,
+        ...row,
+        onboarding_completed: true,
+        created_at: state.profile?.created_at ?? new Date().toISOString(),
+      };
     },
 
     async getPlan() {
@@ -185,6 +200,18 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       const p = state.profile;
       const schedule = p?.days_per_week && p.minutes_per_session ? { days_per_week: p.days_per_week, minutes_per_session: p.minutes_per_session } : null;
       return deriveSummary(currentPlan(), SLOTS, state.totalXp, schedule);
+    },
+
+    async getBadges() {
+      await delay(300);
+      requireSession();
+      return deriveMockBadges(state.completions, state.firstCompletedAt);
+    },
+
+    async getRecipeBook() {
+      await delay(350);
+      requireSession();
+      return deriveMockRecipeBook(state.completions, state.firstCompletedAt, state.recipeSlots);
     },
 
     async generateRecipe(slotId): Promise<RecipeResponse> {
@@ -228,6 +255,9 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
 
       const first = (state.completions[slot.slot_id] ?? 0) === 0;
       state.completions[slot.slot_id] = (state.completions[slot.slot_id] ?? 0) + 1;
+      if (first && !state.firstCompletedAt[slot.slot_id]) {
+        state.firstCompletedAt[slot.slot_id] = new Date().toISOString();
+      }
 
       let xp: CheckInResponse['xp'];
       const xpStatus = opts.xpStatus ?? 'awarded';
@@ -253,4 +283,36 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       return response;
     },
   };
+}
+
+export function deriveMockBadges(completions: Record<number, number>, firstCompletedAt: Record<number, string>): Badge[] {
+  const pathComplete = SLOTS.every((s) => (completions[s.slot_id] ?? 0) > 0);
+  const lastAt = pathComplete
+    ? SLOTS.reduce((latest, s) => {
+        const at = firstCompletedAt[s.slot_id];
+        return at && (!latest || at > latest) ? at : latest;
+      }, null as string | null)
+    : null;
+  return BADGES.map((b) => {
+    const earned = b.kind === 'path_milestone' ? pathComplete : b.slot_id != null && (completions[b.slot_id] ?? 0) > 0;
+    const earned_at = b.kind === 'path_milestone' ? lastAt : b.slot_id != null ? (firstCompletedAt[b.slot_id] ?? null) : null;
+    return { ...b, earned, earned_at: earned ? earned_at : null };
+  });
+}
+
+export function deriveMockRecipeBook(
+  completions: Record<number, number>,
+  firstCompletedAt: Record<number, string>,
+  recipeSlots: Set<number>,
+): RecipeBookEntry[] {
+  return SLOTS.filter((s) => (completions[s.slot_id] ?? 0) > 0).map((s) => ({
+    slot_id: s.slot_id,
+    slot_order: s.slot_order,
+    dish_name: s.dish_name,
+    user_recipe_id: recipeSlots.has(s.slot_id) ? mockUserRecipeId(s.slot_id) : null,
+    recipe_title: RECIPES[s.slot_id]?.title ?? s.dish_name,
+    label: s.is_final ? 'mastered' : 'completed',
+    added_at: firstCompletedAt[s.slot_id] ?? null,
+    times_cooked: completions[s.slot_id],
+  }));
 }

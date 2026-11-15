@@ -112,7 +112,7 @@ function Result({ outcome, onHome, onCookAgain }: { outcome: CheckInOutcome; onH
       ))}
       {response.badges.status === 'failed' ? (
         <T variant="caption" style={[gutter, { marginTop: 16 }]}>
-          Badges couldn’t be checked just now. Any you earned will still appear on your badges.
+          Badges couldn’t be checked just now. Any you earned will still appear on your profile.
         </T>
       ) : null}
 

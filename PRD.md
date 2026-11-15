@@ -42,7 +42,7 @@ New users create an account and answer a short onboarding form: cooking goals, e
 - [ ] Answers are saved to the user's profile in Supabase and can be edited later from a settings or profile screen.
 - [ ] A returning user who has finished onboarding goes straight to their plan.
 
-*Client (`app/`, UI Direction A):* sign up and sign in are on one screen (email + password). The first name is saved in auth `user_metadata.first_name` for the greeting, since `profiles` has no name column. Onboarding is steps 2–4 of 4 (about you, your kitchen, your week) and upserts the user's own `profiles` row with `onboarding_completed: true`. The diet question from the mockups is left out because there's no column for it. Users with `onboarding_completed` not `true` are routed to onboarding; everyone else goes straight to Today. Editing the profile later is not built yet.
+*Client (`app/`, UI Direction A):* sign up and sign in are on one screen (email + password). The first name is saved in auth `user_metadata.first_name` for the greeting and the profile, since `profiles` has no name column. Onboarding is steps 2–4 of 4 (about you, your kitchen, your week) and upserts the user's own `profiles` row with `onboarding_completed: true`. The diet question from the mockups is left out because there's no column for it. Users with `onboarding_completed` not `true` are routed to onboarding; everyone else goes straight to Today. The profile shows those answers and can edit them with the same steps and columns. Sign-out is on the profile.
 
 ### F2. Personalized plan (one fixed path)
 Every user gets the same path, **"Weeknight basics"**: 10 dish slots in a fixed order (e.g., knife basics, eggs, pasta, stir-fry, …, roast chicken as the final mastery challenge). Personalization comes from how the recipes are written for the user (F3) and from a suggested cooking schedule.
@@ -170,7 +170,7 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 
 *Server side:* `badges` is a fixed catalog: 9 completion badges, 1 mastery badge and 1 path milestone. The badge names are placeholders for Ian (open question 12). Earned badges are derived from each slot's first check-in, so a badge can't be earned twice. `get_my_badges()` lists earned and locked badges, and the check-in response lists `badges.earned` for the celebration.
 
-*Client (`app/`, UI Direction A):* session complete shows a seal for each badge in `badges.earned`. The badges screen isn't built yet.
+*Client (`app/`, UI Direction A):* session complete shows a seal for each badge in `badges.earned`. The profile lists every badge from `get_my_badges()`, with unearned seals grayed out.
 
 ### F10. Recipe book
 **Acceptance criteria**
@@ -182,7 +182,7 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 
 *Server side:* `get_my_recipe_book()` returns one entry per completed slot, labeled `completed`, or `mastered` for slot 10. The full recipe is read from `user_recipes`. Clients can't update or delete check-ins, so the history behind badges and the book can't be rewritten.
 
-*Client (`app/`, UI Direction A):* not built yet.
+*Client (`app/`, UI Direction A):* the recipe book lists entries from `get_my_recipe_book()`, newest first: the latest dish as a photo feature, earlier ones as rows, and unfinished path slots under "Still to come". Each row is labeled Completed or Mastered (and shows a cook count on repeats). The screen states that repeats earn 50% XP, up to 100 XP a week. Tapping an entry opens the existing recipe screen. An empty book uses the sentence from the client API doc. A simple bottom bar (Today, Recipe book, You) reaches the book and the profile; Nathan can restyle `app/src/components/tab-bar.tsx`.
 
 ## 5. Out of scope (MVP)
 
