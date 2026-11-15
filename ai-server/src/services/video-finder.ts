@@ -8,6 +8,13 @@
  *      "No result" is cached too, so a dead-end search isn't repeated.
  *   3. Any failure (no key, quota, network, timeout) leaves that technique
  *      without a video; the recipe still works. Failures are not cached.
+ *   4. New searches run concurrently under one time budget per recipe
+ *      (VIDEO_LOOKUP_BUDGET_MS), so a YouTube outage can't stall the response.
+ *
+ * findForRecipe reports `complete: false` when any technique wasn't settled
+ * (search failed, timed out, ran past the budget, or was skipped by the cap).
+ * Callers must not store an incomplete result as final, so the lookup is
+ * retried on a later visit. A genuine "no result" is complete (and cached).
  *
  * Results are keyed by the recipe's exact `techniqueName` string, so the app
  * looks a step's video up with `videos[step.techniqueName]`.
@@ -24,6 +31,21 @@ export interface TechniqueVideo {
 
 /** techniqueName (exactly as in the recipe) -> video. Techniques with no video are absent. */
 export type RecipeVideos = Record<string, TechniqueVideo>;
+
+export interface VideoLookupResult {
+  videos: RecipeVideos;
+  /**
+   * True when every technique got a definite answer (a video or a genuine
+   * "no result"). False when any search failed, timed out, ran past the time
+   * budget, or was skipped by the per-recipe cap: don't persist it as final.
+   */
+  complete: boolean;
+}
+
+export interface VideoFinderOptions {
+  /** Wall-clock budget for all new searches of one recipe, in ms. */
+  budgetMs?: number;
+}
 
 export interface CachedTechniqueVideo {
   techniqueKey: string;
@@ -50,6 +72,8 @@ export interface VideoFinderLogger {
 export const MAX_VIDEO_SEARCHES_PER_RECIPE = 6;
 /** Re-try a cached "no result" after this long. Found videos are kept. */
 export const NEGATIVE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Default VIDEO_LOOKUP_BUDGET_MS: all of a recipe's searches together. */
+export const DEFAULT_VIDEO_LOOKUP_BUDGET_MS = 8000;
 
 /** Cache key: lowercase, trimmed, internal whitespace collapsed, max 100 chars. */
 export function normalizeTechniqueKey(name: string): string {
@@ -62,14 +86,19 @@ export function buildSearchQuery(techniqueKey: string): string {
 }
 
 export class VideoFinder {
+  private readonly budgetMs: number;
+
   constructor(
     private readonly cache: TechniqueVideoCache,
     private readonly search: VideoSearchClient,
     private readonly logger: VideoFinderLogger = console,
-    private readonly now: () => Date = (): Date => new Date()
-  ) {}
+    private readonly now: () => Date = (): Date => new Date(),
+    options: VideoFinderOptions = {}
+  ) {
+    this.budgetMs = options.budgetMs ?? DEFAULT_VIDEO_LOOKUP_BUDGET_MS;
+  }
 
-  async findForRecipe(recipe: Recipe): Promise<RecipeVideos> {
+  async findForRecipe(recipe: Recipe): Promise<VideoLookupResult> {
     // Distinct technique names, in step order, grouped by cache key.
     const namesByKey = new Map<string, string[]>();
     for (const step of recipe.steps) {
@@ -81,7 +110,7 @@ export class VideoFinder {
       if (!names.includes(step.techniqueName as string)) names.push(step.techniqueName as string);
       namesByKey.set(key, names);
     }
-    if (namesByKey.size === 0) return {};
+    if (namesByKey.size === 0) return { videos: {}, complete: true };
 
     const keys = [...namesByKey.keys()];
     let cached = new Map<string, CachedTechniqueVideo>();
@@ -92,42 +121,79 @@ export class VideoFinder {
     }
 
     const found = new Map<string, TechniqueVideo>();
-    let searches = 0;
+    const toSearch: string[] = [];
+    let complete = true;
     for (const key of keys) {
       const hit = cached.get(key);
       if (hit && (hit.video || this.now().getTime() - hit.fetchedAt.getTime() < NEGATIVE_CACHE_TTL_MS)) {
         if (hit.video) found.set(key, hit.video);
         continue;
       }
-      if (searches >= MAX_VIDEO_SEARCHES_PER_RECIPE) {
+      if (toSearch.length >= MAX_VIDEO_SEARCHES_PER_RECIPE) {
+        // Left for a later visit, when the searched ones are cached.
         this.logger.warn('video_search_skipped_cap', { technique: key, cap: MAX_VIDEO_SEARCHES_PER_RECIPE });
+        complete = false;
         continue;
       }
-      searches++;
-      const query = buildSearchQuery(key);
-      let video: TechniqueVideo | null;
+      toSearch.push(key);
+    }
+
+    if (toSearch.length > 0) {
+      const settled = new Set<string>();
+      let budgetExpired = false;
+      // Each task catches its own errors, so none of them can reject. A task
+      // that outlives the budget still caches its result for the next visit.
+      const tasks = toSearch.map(async (key) => {
+        const query = buildSearchQuery(key);
+        let video: TechniqueVideo | null;
+        try {
+          video = await this.search.search(query);
+        } catch (error) {
+          // Not cached: a transient failure shouldn't block the technique for a week.
+          this.logger.warn('video_search_failed', { technique: key, error: errorMessage(error) });
+          return;
+        }
+        if (!budgetExpired) {
+          settled.add(key);
+          if (video) found.set(key, video);
+        }
+        try {
+          await this.cache.put({ techniqueKey: key, searchQuery: query, video, fetchedAt: this.now() });
+        } catch (error) {
+          this.logger.warn('video_cache_write_failed', { technique: key, error: errorMessage(error) });
+        }
+      });
+
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const budget = new Promise<void>((resolve) => {
+        timer = setTimeout(() => {
+          budgetExpired = true;
+          resolve();
+        }, this.budgetMs);
+        timer.unref?.();
+      });
       try {
-        video = await this.search.search(query);
-      } catch (error) {
-        // Not cached: a transient failure shouldn't block the technique for a week.
-        this.logger.warn('video_search_failed', { technique: key, error: errorMessage(error) });
-        continue;
+        await Promise.race([Promise.allSettled(tasks), budget]);
+      } finally {
+        clearTimeout(timer);
       }
-      if (video) found.set(key, video);
-      try {
-        await this.cache.put({ techniqueKey: key, searchQuery: query, video, fetchedAt: this.now() });
-      } catch (error) {
-        this.logger.warn('video_cache_write_failed', { technique: key, error: errorMessage(error) });
+
+      const unsettled = toSearch.filter((key) => !settled.has(key));
+      if (unsettled.length > 0) {
+        complete = false;
+        if (budgetExpired) {
+          this.logger.warn('video_lookup_budget_exceeded', { budget_ms: this.budgetMs, unsettled: unsettled.length });
+        }
       }
     }
 
-    const result: RecipeVideos = {};
+    const videos: RecipeVideos = {};
     for (const [key, names] of namesByKey) {
       const video = found.get(key);
       if (!video) continue;
-      for (const name of names) result[name] = video;
+      for (const name of names) videos[name] = video;
     }
-    return result;
+    return { videos, complete };
   }
 }
 

@@ -25,6 +25,8 @@ export interface Config {
     /** YouTube Data API v3 key (server only). Unset: recipes have no videos. */
     apiKey?: string;
     timeoutMs: number;
+    /** Wall-clock budget for all of one recipe's searches together. */
+    lookupBudgetMs: number;
   };
 }
 
@@ -54,6 +56,7 @@ export function parseBoundedIntEnv(
 
 export const XP_AWARD_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
 export const YOUTUBE_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
+export const VIDEO_LOOKUP_BUDGET_MS = { default: 8000, min: 100, max: 60000 } as const;
 
 export function loadYouTubeConfig(env: Env = process.env): Config['youtube'] {
   const apiKey = env.YOUTUBE_API_KEY?.trim();
@@ -65,6 +68,13 @@ export function loadYouTubeConfig(env: Env = process.env): Config['youtube'] {
       YOUTUBE_TIMEOUT_MS.default,
       YOUTUBE_TIMEOUT_MS.min,
       YOUTUBE_TIMEOUT_MS.max
+    ),
+    lookupBudgetMs: parseBoundedIntEnv(
+      env,
+      'VIDEO_LOOKUP_BUDGET_MS',
+      VIDEO_LOOKUP_BUDGET_MS.default,
+      VIDEO_LOOKUP_BUDGET_MS.min,
+      VIDEO_LOOKUP_BUDGET_MS.max
     ),
   };
 }

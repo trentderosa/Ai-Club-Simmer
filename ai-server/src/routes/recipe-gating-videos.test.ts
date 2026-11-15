@@ -180,6 +180,52 @@ describe('F4 technique videos', () => {
     expect(res.body.videos).toEqual({});
   });
 
+  it('a failed search is not stored as "no video": the next load of the cached recipe searches again (S1)', async () => {
+    const search: VideoSearchClient = {
+      search: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('YouTube search failed: 403 quotaExceeded'))
+        .mockImplementation((q: string) => Promise.resolve({ videoId: q.includes('whisk') ? 'whisk01' : 'heat001' })),
+    };
+    const { app, recipes } = setup({ search });
+
+    const first = await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
+
+    expect(first.status).toBe(200);
+    expect(first.body.cached).toBe(false);
+    // One technique failed, the other was found and returned...
+    expect(Object.keys(first.body.videos as Record<string, unknown>)).toHaveLength(1);
+    // ...but nothing is stored with the recipe, so it isn't final.
+    expect(recipes.getAll()[0].videos).toBeNull();
+
+    const second = await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
+
+    expect(second.body.cached).toBe(true);
+    expect(second.body.videos).toEqual({
+      'Whisk eggs': { videoId: 'whisk01' },
+      'Low heat cooking': { videoId: 'heat001' },
+    });
+    expect(recipes.getAll()[0].videos).toEqual(second.body.videos);
+    // 2 searches on the first load, then only the failed one again (the other is in the shared cache).
+    expect(search.search).toHaveBeenCalledTimes(3);
+
+    // Once stored, later loads don't search at all.
+    await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
+    expect(search.search).toHaveBeenCalledTimes(3);
+  });
+
+  it('a genuine "no result" is stored, so the recipe is not searched again on every load', async () => {
+    const search: VideoSearchClient = { search: vi.fn().mockResolvedValue(null) };
+    const { app, recipes } = setup({ search });
+
+    await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
+    expect(recipes.getAll()[0].videos).toEqual({});
+
+    const res = await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
+    expect(res.body.videos).toEqual({});
+    expect(search.search).toHaveBeenCalledTimes(2);
+  });
+
   it('without a YouTube key there is no video lookup and videos is empty', async () => {
     const { app } = setup({ search: null });
     const res = await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);

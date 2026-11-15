@@ -5,7 +5,7 @@ import { generateRecipe, PathSlot } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
-import type { RecipeVideos, VideoFinder } from '../services/video-finder.js';
+import type { RecipeVideos, VideoFinder, VideoLookupResult } from '../services/video-finder.js';
 import {
   UserProfile,
   UserProfileSchema,
@@ -103,15 +103,20 @@ export function createRecipeRouter(
 
   /**
    * F4: look up technique videos and store them with the recipe. Never fails
-   * the request: on any error the recipe is returned without videos (and the
-   * lookup is retried on the next visit, since nothing was stored).
+   * the request: on any error the recipe is returned with whatever videos
+   * were found.
+   *
+   * Videos are stored only when the lookup is complete (every technique got a
+   * video or a genuine "no result"). If any search failed, timed out or was
+   * skipped, nothing is stored, so `video_ids` stays null and the lookup runs
+   * again on the next visit. Searches that did succeed are in the shared
+   * technique cache, so the retry only re-runs the missing ones.
    */
   async function attachVideos(userId: string, slotId: number, recipe: Recipe): Promise<RecipeVideos> {
     if (!deps.videoFinder) return {};
+    let lookup: VideoLookupResult;
     try {
-      const videos = await deps.videoFinder.findForRecipe(recipe);
-      await deps.supabase.saveVideos(userId, slotId, videos);
-      return videos;
+      lookup = await deps.videoFinder.findForRecipe(recipe);
     } catch (error) {
       console.warn('recipe_videos_failed', {
         slot_id: slotId,
@@ -119,6 +124,19 @@ export function createRecipeRouter(
       });
       return {};
     }
+    if (!lookup.complete) {
+      console.warn('recipe_videos_incomplete', { slot_id: slotId, found: Object.keys(lookup.videos).length });
+      return lookup.videos;
+    }
+    try {
+      await deps.supabase.saveVideos(userId, slotId, lookup.videos);
+    } catch (error) {
+      console.warn('recipe_videos_save_failed', {
+        slot_id: slotId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return lookup.videos;
   }
 
   async function singleFlightGenerate(
@@ -215,6 +233,7 @@ export function createRecipeRouter(
 
       const existingRecipe = await deps.supabase.getSavedRecipe(userId, slotId);
       if (existingRecipe) {
+        // null = never stored (or the last lookup was incomplete): look again.
         const storedVideos = await deps.supabase.getSavedVideos(userId, slotId);
         const videos = storedVideos ?? (await attachVideos(userId, slotId, existingRecipe));
         res.json({
@@ -224,7 +243,6 @@ export function createRecipeRouter(
         });
         return;
       }
-
 
       const slot = await deps.supabase.getPathSlot(slotId);
       if (!slot) {
