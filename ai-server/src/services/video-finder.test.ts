@@ -61,8 +61,11 @@ describe('VideoFinder', () => {
     const search = searchReturning({ 'dice onion': video('abc123'), 'whisk eggs': video('def456') });
     const finder = new VideoFinder(cache, search, logger, () => NOW);
 
-    const videos = await finder.findForRecipe(recipeWith(['Dice onion', undefined, 'dice  onion', 'Whisk eggs']));
+    const { videos, complete } = await finder.findForRecipe(
+      recipeWith(['Dice onion', undefined, 'dice  onion', 'Whisk eggs'])
+    );
 
+    expect(complete).toBe(true);
     expect(search.search).toHaveBeenCalledTimes(2);
     expect(search.search).toHaveBeenCalledWith('how to dice onion beginner cooking');
     expect(videos).toEqual({
@@ -80,7 +83,7 @@ describe('VideoFinder', () => {
     const second = await finder.findForRecipe(recipeWith(['DICE ONION']));
 
     expect(search.search).toHaveBeenCalledTimes(1);
-    expect(second).toEqual({ 'DICE ONION': video('abc123') });
+    expect(second).toEqual({ videos: { 'DICE ONION': video('abc123') }, complete: true });
   });
 
   it('caches "no result" and retries it only after the TTL', async () => {
@@ -88,7 +91,8 @@ describe('VideoFinder', () => {
     let now = NOW;
     const finder = new VideoFinder(cache, search, logger, () => now);
 
-    expect(await finder.findForRecipe(recipeWith(['obscure move']))).toEqual({});
+    // A genuine "no result" is a complete answer (cached, safe to store).
+    expect(await finder.findForRecipe(recipeWith(['obscure move']))).toEqual({ videos: {}, complete: true });
     expect(cache.entries.get('obscure move')?.video).toBeNull();
 
     now = new Date(NOW.getTime() + NEGATIVE_CACHE_TTL_MS - 1000);
@@ -109,10 +113,12 @@ describe('VideoFinder', () => {
     };
     const finder = new VideoFinder(cache, search, logger, () => NOW);
 
-    const videos = await finder.findForRecipe(recipeWith(['Dice onion', 'Whisk eggs']));
+    const { videos, complete } = await finder.findForRecipe(recipeWith(['Dice onion', 'Whisk eggs']));
 
     expect(videos).toEqual({ 'Whisk eggs': video('def456') });
+    expect(complete).toBe(false);
     expect(cache.entries.has('dice onion')).toBe(false);
+    expect(cache.entries.get('whisk eggs')?.video).toEqual(video('def456'));
     expect(logger.warn).toHaveBeenCalledWith('video_search_failed', {
       technique: 'dice onion',
       error: 'YouTube search failed: 403 quotaExceeded',
@@ -124,10 +130,90 @@ describe('VideoFinder', () => {
     const finder = new VideoFinder(cache, search, logger, () => NOW);
     const names = Array.from({ length: MAX_VIDEO_SEARCHES_PER_RECIPE + 3 }, (_, i) => `technique ${i}`);
 
-    const videos = await finder.findForRecipe(recipeWith(names));
+    const first = await finder.findForRecipe(recipeWith(names));
 
     expect(search.search).toHaveBeenCalledTimes(MAX_VIDEO_SEARCHES_PER_RECIPE);
-    expect(Object.keys(videos)).toHaveLength(MAX_VIDEO_SEARCHES_PER_RECIPE);
+    expect(Object.keys(first.videos)).toHaveLength(MAX_VIDEO_SEARCHES_PER_RECIPE);
+    // Skipped techniques make the result incomplete, so it is looked up again...
+    expect(first.complete).toBe(false);
+
+    // ...and the next lookup searches only the ones that were skipped.
+    const second = await finder.findForRecipe(recipeWith(names));
+    expect(search.search).toHaveBeenCalledTimes(names.length);
+    expect(Object.keys(second.videos)).toHaveLength(names.length);
+    expect(second.complete).toBe(true);
+  });
+
+  it('runs the searches concurrently, not one after another', async () => {
+    let active = 0;
+    let maxActive = 0;
+    const search: VideoSearchClient = {
+      search: vi.fn().mockImplementation(async () => {
+        active++;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((r) => setTimeout(r, 20));
+        active--;
+        return video('abc123');
+      }),
+    };
+    const finder = new VideoFinder(cache, search, logger, () => NOW);
+    const names = Array.from({ length: MAX_VIDEO_SEARCHES_PER_RECIPE }, (_, i) => `technique ${i}`);
+
+    const result = await finder.findForRecipe(recipeWith(names));
+
+    expect(maxActive).toBe(MAX_VIDEO_SEARCHES_PER_RECIPE);
+    expect(result.complete).toBe(true);
+  });
+
+  describe('time budget', () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('returns what it has when the budget runs out, marks it incomplete, and caches late results', async () => {
+      const search: VideoSearchClient = {
+        search: vi.fn().mockImplementation((query: string) =>
+          query === buildSearchQuery('fast')
+            ? Promise.resolve(video('fast01'))
+            : new Promise((resolve) => setTimeout(() => resolve(video('slow01')), 5000))
+        ),
+      };
+      const finder = new VideoFinder(cache, search, logger, () => NOW, { budgetMs: 1000 });
+
+      const pending = finder.findForRecipe(recipeWith(['Fast', 'Slow']));
+      await vi.advanceTimersByTimeAsync(1000);
+      const result = await pending;
+
+      expect(result).toEqual({ videos: { Fast: video('fast01') }, complete: false });
+      expect(logger.warn).toHaveBeenCalledWith('video_lookup_budget_exceeded', { budget_ms: 1000, unsettled: 1 });
+
+      // The slow search still lands in the shared cache for the next visit.
+      await vi.advanceTimersByTimeAsync(4000);
+      expect(cache.entries.get('slow')?.video).toEqual(video('slow01'));
+      const again = await finder.findForRecipe(recipeWith(['Fast', 'Slow']));
+      expect(again).toEqual({ videos: { Fast: video('fast01'), Slow: video('slow01') }, complete: true });
+      expect(search.search).toHaveBeenCalledTimes(2);
+    });
+
+    it('a hung search costs at most one budget, however many techniques there are', async () => {
+      const search: VideoSearchClient = { search: vi.fn().mockImplementation(() => new Promise(() => {})) };
+      const finder = new VideoFinder(cache, search, logger, () => NOW, { budgetMs: 2000 });
+      const names = Array.from({ length: MAX_VIDEO_SEARCHES_PER_RECIPE }, (_, i) => `technique ${i}`);
+
+      let done = false;
+      const pending = finder.findForRecipe(recipeWith(names)).then((r) => {
+        done = true;
+        return r;
+      });
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(done).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await pending).toEqual({ videos: {}, complete: false });
+      expect(search.search).toHaveBeenCalledTimes(MAX_VIDEO_SEARCHES_PER_RECIPE);
+    });
   });
 
   it('cache errors never fail the recipe', async () => {
@@ -138,13 +224,16 @@ describe('VideoFinder', () => {
     const search = searchReturning({ 'dice onion': video('abc123') });
     const finder = new VideoFinder(brokenCache, search, logger, () => NOW);
 
-    expect(await finder.findForRecipe(recipeWith(['Dice onion']))).toEqual({ 'Dice onion': video('abc123') });
+    expect(await finder.findForRecipe(recipeWith(['Dice onion']))).toEqual({
+      videos: { 'Dice onion': video('abc123') },
+      complete: true,
+    });
   });
 
   it('no techniques: no searches', async () => {
     const search = searchReturning({});
     const finder = new VideoFinder(cache, search, logger, () => NOW);
-    expect(await finder.findForRecipe(recipeWith([undefined, '   ']))).toEqual({});
+    expect(await finder.findForRecipe(recipeWith([undefined, '   ']))).toEqual({ videos: {}, complete: true });
     expect(search.search).not.toHaveBeenCalled();
   });
 });

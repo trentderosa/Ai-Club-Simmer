@@ -62,7 +62,10 @@ function createVideoFinder(): VideoFinder | null {
       : new InMemoryTechniqueVideoCache();
   return new VideoFinder(
     cache,
-    new YouTubeSearchClient({ apiKey: config.youtube.apiKey, timeoutMs: config.youtube.timeoutMs })
+    new YouTubeSearchClient({ apiKey: config.youtube.apiKey, timeoutMs: config.youtube.timeoutMs }),
+    console,
+    (): Date => new Date(),
+    { budgetMs: config.youtube.lookupBudgetMs }
   );
 }
 

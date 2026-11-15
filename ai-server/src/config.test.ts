@@ -63,14 +63,15 @@ describe('parseBoundedIntEnv', () => {
 
 describe('loadYouTubeConfig', () => {
   it('no key: videos disabled, default timeout', () => {
-    expect(loadYouTubeConfig({})).toEqual({ timeoutMs: 5000 });
-    expect(loadYouTubeConfig({ YOUTUBE_API_KEY: '   ' })).toEqual({ timeoutMs: 5000 });
+    expect(loadYouTubeConfig({})).toEqual({ timeoutMs: 5000, lookupBudgetMs: 8000 });
+    expect(loadYouTubeConfig({ YOUTUBE_API_KEY: '   ' })).toEqual({ timeoutMs: 5000, lookupBudgetMs: 8000 });
   });
 
   it('reads the key and a bounded timeout', () => {
     expect(loadYouTubeConfig({ YOUTUBE_API_KEY: 'placeholder-key', YOUTUBE_TIMEOUT_MS: '2500' })).toEqual({
       apiKey: 'placeholder-key',
       timeoutMs: 2500,
+      lookupBudgetMs: 8000,
     });
   });
 
@@ -78,5 +79,14 @@ describe('loadYouTubeConfig', () => {
     expect(() => loadYouTubeConfig({ YOUTUBE_API_KEY: 'placeholder-key', YOUTUBE_TIMEOUT_MS: '0' })).toThrow(
       'YOUTUBE_TIMEOUT_MS must be a whole number from 100 to 60000'
     );
+  });
+
+  it('reads a bounded VIDEO_LOOKUP_BUDGET_MS and rejects bad values at startup', () => {
+    expect(loadYouTubeConfig({ VIDEO_LOOKUP_BUDGET_MS: '3000' }).lookupBudgetMs).toBe(3000);
+    for (const bad of ['0', '99', '60001', 'abc', '1.5', '-5']) {
+      expect(() => loadYouTubeConfig({ VIDEO_LOOKUP_BUDGET_MS: bad })).toThrow(
+        'VIDEO_LOOKUP_BUDGET_MS must be a whole number from 100 to 60000'
+      );
+    }
   });
 });

@@ -29,6 +29,7 @@ Set these in the server's environment (never in the repo, chat, or logs):
 | `XP_AWARD_TIMEOUT_MS` | Optional. Timeout for each `award_slot_xp` call (default `5000` ms, range `100`–`60000`). An invalid value stops startup |
 | `YOUTUBE_API_KEY` | Optional. Enables technique videos (F4). Server-side only |
 | `YOUTUBE_TIMEOUT_MS` | Optional. Timeout for each YouTube search (default `5000` ms, range `100`–`60000`) |
+| `VIDEO_LOOKUP_BUDGET_MS` | Optional. Time budget for all of one recipe's searches together (default `8000` ms, range `100`–`60000`). An invalid value stops startup |
 
 With `NODE_ENV=production`, the server exits at startup and names any missing variable.
 
@@ -41,9 +42,21 @@ server first calls `is_slot_unlocked` and answers `403 SLOT_LOCKED` for a locked
 
 With `YOUTUBE_API_KEY` set, `src/services/video-finder.ts` runs one YouTube search per
 distinct technique in a new recipe and caches it in `technique_videos`. It caches misses for
-7 days, makes at most 6 new searches per recipe, and stores the results in
-`user_recipes.video_ids`. The response has `videos[techniqueName]`. Video errors are logged
-(`video_search_failed`, `recipe_videos_failed`) and never fail the recipe.
+7 days and makes at most 6 new searches per recipe. The searches run concurrently under one
+time budget (`VIDEO_LOOKUP_BUDGET_MS`, default 8000 ms); a search that finishes after the
+budget still writes the shared cache. The response has `videos[techniqueName]`.
+
+Results are stored in `user_recipes.video_ids` only when the lookup is complete, meaning every
+technique got a video or a genuine "no result". If any search failed, timed out, ran past the
+budget or was skipped by the cap, nothing is stored and the lookup runs again the next time
+the recipe loads. Video problems never fail the recipe. They are logged as
+`video_search_failed`, `video_lookup_budget_exceeded`, `recipe_videos_incomplete`,
+`recipe_videos_save_failed` or `recipe_videos_failed`. The `video_ids` update aborts after
+5000 ms.
+
+If a profile can't be used for generation, the server logs `user_profile_invalid` with the
+failing field paths only (no values). Equipment is cleaned first (trimmed, empty and duplicate
+items dropped, items cut to 100 chars, at most 50 items), so messy equipment never blocks a user.
 
 ## XP on check-in
 

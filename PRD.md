@@ -52,7 +52,7 @@ Every user gets the same path, **"Weeknight basics"**: 10 dish slots in a fixed 
 - [ ] The plan shows a suggested number of cooking sessions per week based on the user's onboarding schedule.
 - [ ] The final slot is marked as the mastery challenge.
 
-*Server side (branch `claude/eloquent-dijkstra-x1qp33`, migration `20261115000000_plan_badges_recipe_book.sql`):* a slot is **done** once the user has at least one check-in for it. **Current** is the first slot that isn't done, and everything after it is **locked**. The app reads this with `get_my_plan()`, and `get_my_plan_summary()` gives total XP and the suggested sessions per week (rule in open question 11). The AI server enforces path order: `POST /api/recipes/generate/:slotId` returns `403 SLOT_LOCKED` for a locked slot. Done slots stay open so they can be repeated, and saved recipes always load. See `docs/CLIENT_API.md`.
+*Server side (PR #11, migration `20261115000000_plan_badges_recipe_book.sql`):* a slot is **done** once the user has at least one check-in for it. **Current** is the first slot that isn't done, and everything after it is **locked**. The app reads this with `get_my_plan()`, and `get_my_plan_summary()` gives total XP and the suggested sessions per week (rule in open question 11). The AI server enforces path order: `POST /api/recipes/generate/:slotId` returns `403 SLOT_LOCKED` for a locked slot. Done slots stay open so they can be repeated, and saved recipes always load. See `docs/CLIENT_API.md`.
 
 ### F3. AI-generated recipes
 When a user opens a path slot for the first time, the app asks the local Ollama model to generate a recipe for that dish, tailored to the user's equipment, budget, and experience. The recipe is saved, and the same saved recipe is used every time after that.
@@ -75,8 +75,10 @@ Each recipe step with a technique name gets an instructional video found through
 - [ ] Video results are cached per technique so the same search isn't repeated for other users (this saves API quota).
 - [ ] In cook mode, a step with a video shows a thumbnail or button that plays the video inside the app.
 - [ ] If the search fails or returns nothing, the step still shows without a video and the recipe keeps working.
+- [ ] A failed search (quota, network, timeout) is not saved as "no video". The recipe's videos are saved only when every technique got an answer, so a failed lookup is retried the next time the recipe is opened.
+- [ ] Video lookup never holds up a recipe for long: a recipe's searches run at the same time under one time budget (default 8 seconds), and the recipe is returned with whatever videos were found by then.
 
-*Server side:* the search query is "how to {technique} beginner cooking" (safe search, embeddable videos only). Results, including "no result", are cached per technique in `technique_videos`; a cached "no result" is retried after 7 days. A recipe makes at most 6 new searches. Videos are saved in `user_recipes.video_ids` and returned as `videos[techniqueName]`. Requires `YOUTUBE_API_KEY` on the AI server; without it, recipes have no videos.
+*Server side:* the search query is "how to {technique} beginner cooking" (safe search, embeddable videos only). Results, including "no result", are cached per technique in `technique_videos`; a cached "no result" is retried after 7 days. A recipe makes at most 6 new searches, run concurrently under `VIDEO_LOOKUP_BUDGET_MS` (default 8000 ms). Videos are saved in `user_recipes.video_ids` and returned as `videos[techniqueName]`, but only when the lookup is complete: if any search failed, timed out, ran past the budget or was skipped by the cap, `video_ids` stays empty and the lookup runs again on the next visit (searches that worked are already in the shared cache). A genuine "no result" counts as complete. Requires `YOUTUBE_API_KEY` on the AI server; without it, recipes have no videos.
 
 ### F5. Cook mode
 A step-by-step screen the user follows while cooking.

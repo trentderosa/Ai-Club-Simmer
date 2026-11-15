@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SupabasePathRepository } from './path-repository.js';
+import { SupabasePathRepository, normalizeEquipment } from './path-repository.js';
 
 const KEY = 'test-service-role-key';
 const USER_ID = '550e8400-e29b-41d4-a716-446655440000';
@@ -108,6 +108,56 @@ describe('SupabasePathRepository', () => {
       const profile = await repo.getUserProfile(USER_ID);
       expect(profile?.equipment).toEqual([]);
       expect(profile?.recentCheckIns).toEqual([]);
+    });
+
+    it('normalizes messy equipment instead of treating the user as not onboarded (N3)', async () => {
+      const messy = ['  stove ', '', '   ', 'Pan', 'pan', 'x'.repeat(150), ...Array.from({ length: 60 }, (_, i) => `tool ${i}`)];
+      mockFetch.mockResolvedValueOnce(ok([{ ...profileRow, equipment: messy }])).mockResolvedValueOnce(ok([]));
+
+      const profile = await repo.getUserProfile(USER_ID);
+
+      expect(profile).not.toBeNull();
+      expect(profile?.equipment).toHaveLength(50);
+      expect(profile?.equipment.slice(0, 4)).toEqual(['stove', 'Pan', 'x'.repeat(100), 'tool 0']);
+    });
+
+    it('cuts over-long check-in answers to the prompt limit', async () => {
+      mockFetch
+        .mockResolvedValueOnce(ok([profileRow]))
+        .mockResolvedValueOnce(
+          ok([{ difficulty_rating: 'ok', went_well: 'a'.repeat(1500), was_hard: '  ', path_slots: null }])
+        );
+      const profile = await repo.getUserProfile(USER_ID);
+      expect(profile?.recentCheckIns).toEqual([
+        { recipeName: 'a previous recipe', difficulty: 'ok', whatWentWell: 'a'.repeat(1000) },
+      ]);
+    });
+
+    it('logs which fields failed (paths only, no values) when the profile still does not fit', async () => {
+      const logger = { warn: vi.fn() };
+      repo = new SupabasePathRepository(
+        { url: 'https://test-project.supabase.co', serviceRoleKey: KEY, timeoutMs: 1000 },
+        logger
+      );
+      mockFetch
+        .mockResolvedValueOnce(ok([{ ...profileRow, experience_level: 'chef-secret-value' }]))
+        .mockResolvedValueOnce(ok([]));
+
+      expect(await repo.getUserProfile(USER_ID)).toBeNull();
+      expect(logger.warn).toHaveBeenCalledWith('user_profile_invalid', {
+        issues: [{ path: 'experienceLevel', code: 'invalid_enum_value' }],
+      });
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('chef-secret-value');
+      expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(USER_ID);
+    });
+  });
+
+  describe('normalizeEquipment', () => {
+    it('trims, drops empties, dedupes case-insensitively and caps count and length', () => {
+      expect(normalizeEquipment(null)).toEqual([]);
+      expect(normalizeEquipment([' Wok ', 'wok', '', 'WOK', 'knife'])).toEqual(['Wok', 'knife']);
+      expect(normalizeEquipment(['y'.repeat(101)])).toEqual(['y'.repeat(100)]);
+      expect(normalizeEquipment(Array.from({ length: 51 }, (_, i) => `t${i}`))).toHaveLength(50);
     });
   });
 

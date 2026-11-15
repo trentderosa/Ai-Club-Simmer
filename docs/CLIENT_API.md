@@ -100,7 +100,7 @@ The first call generates the recipe with Ollama, which can take 10–60 s, so sh
 }
 ```
 
-- **Videos (F4):** use `videos[step.techniqueName]`. A step with no entry has no video. Play it in-app with `https://www.youtube.com/embed/{videoId}`, for example in a WebView or `react-native-youtube-iframe`. Thumbnail: `https://i.ytimg.com/vi/{videoId}/hqdefault.jpg`. `videos` is `{}` when the server has no YouTube key or the search failed.
+- **Videos (F4):** use `videos[step.techniqueName]`. A step with no entry has no video. Play it in-app with `https://www.youtube.com/embed/{videoId}`, for example in a WebView or `react-native-youtube-iframe`. Thumbnail: `https://i.ytimg.com/vi/{videoId}/hqdefault.jpg`. `videos` is `{}` when the server has no YouTube key or the search failed, and can be partial when some searches failed. The server retries the missing ones the next time the recipe is loaded through the AI server.
 - **Errors:**
   - `401`: bad or expired token.
   - `403 { code: "SLOT_LOCKED" }`: the slot isn't unlocked yet.
@@ -190,6 +190,7 @@ const { data } = await supabase
   .eq('id', entry.user_recipe_id)
   .single();
 // data.recipe_json has the same shape as `recipe` above; data.video_ids the same shape as `videos`
+// data.video_ids is null until a complete video lookup is saved; treat null as {}
 ```
 
 ## What the client must not do
