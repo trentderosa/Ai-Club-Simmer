@@ -33,6 +33,41 @@ export interface PathRepository {
 /** How many recent check-ins go into the recipe prompt (buildPrompt uses the last 3). */
 export const RECENT_CHECK_INS_FOR_PROMPT = 3;
 
+/** Limits from UserProfileSchema / CheckInSchema (schemas/user.ts). */
+export const MAX_EQUIPMENT_ITEMS = 50;
+export const MAX_EQUIPMENT_ITEM_LENGTH = 100;
+export const MAX_CHECK_IN_TEXT_LENGTH = 1000;
+
+export interface PathRepositoryLogger {
+  warn(message: string, context: Record<string, unknown>): void;
+}
+
+/**
+ * Make stored equipment fit the prompt schema instead of rejecting the user:
+ * trim, drop empty items, cut each item to 100 chars, drop duplicates
+ * (case-insensitive, first one wins) and keep at most 50 items.
+ */
+export function normalizeEquipment(equipment: readonly string[] | null): string[] {
+  const result: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of equipment ?? []) {
+    const item = raw.trim().slice(0, MAX_EQUIPMENT_ITEM_LENGTH).trim();
+    if (!item) continue;
+    const key = item.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+    if (result.length >= MAX_EQUIPMENT_ITEMS) break;
+  }
+  return result;
+}
+
+/** Cut free-text check-in answers to the schema limit; empty becomes absent. */
+function clampText(text: string | null): string | undefined {
+  const trimmed = text?.trim();
+  return trimmed ? trimmed.slice(0, MAX_CHECK_IN_TEXT_LENGTH) : undefined;
+}
+
 const SlotRowSchema = z.object({
   id: z.number().int(),
   dish_name: z.string(),
@@ -65,7 +100,10 @@ const EarnedBadgeSchema = z.object({
 export class SupabasePathRepository implements PathRepository {
   private readonly rest: SupabaseRest;
 
-  constructor(config: SupabaseRestConfig) {
+  constructor(
+    config: SupabaseRestConfig,
+    private readonly logger: PathRepositoryLogger = console
+  ) {
     this.rest = new SupabaseRest(config);
   }
 
@@ -105,21 +143,32 @@ export class SupabasePathRepository implements PathRepository {
     const recentCheckIns = checkIns
       .map((raw) => CheckInRowSchema.parse(raw))
       .reverse() // oldest first; buildPrompt takes the last 3
-      .map((c) => ({
-        recipeName: c.path_slots?.dish_name ?? 'a previous recipe',
-        difficulty: c.difficulty_rating,
-        ...(c.went_well ? { whatWentWell: c.went_well } : {}),
-        ...(c.was_hard ? { whatWasHard: c.was_hard } : {}),
-      }));
+      .map((c) => {
+        const whatWentWell = clampText(c.went_well);
+        const whatWasHard = clampText(c.was_hard);
+        return {
+          recipeName: c.path_slots?.dish_name ?? 'a previous recipe',
+          difficulty: c.difficulty_rating,
+          ...(whatWentWell ? { whatWentWell } : {}),
+          ...(whatWasHard ? { whatWasHard } : {}),
+        };
+      });
 
     const parsed = UserProfileSchema.safeParse({
       id: profile.id,
       experienceLevel: profile.experience_level,
       budget: profile.budget,
-      equipment: profile.equipment ?? [],
+      equipment: normalizeEquipment(profile.equipment),
       recentCheckIns,
     });
-    return parsed.success ? parsed.data : null;
+    if (!parsed.success) {
+      // Issue paths and codes only: never the user's values.
+      this.logger.warn('user_profile_invalid', {
+        issues: parsed.error.issues.map((issue) => ({ path: issue.path.join('.'), code: issue.code })),
+      });
+      return null;
+    }
+    return parsed.data;
   }
 
   async isSlotUnlocked(userId: string, slotId: number): Promise<boolean> {
