@@ -6,10 +6,12 @@ import { createAiServerClient, type AiServerClient } from './ai-server';
 import type { AppSession, Backend } from './backend';
 import { ApiError } from './errors';
 import {
+  BadgesSchema,
   PlanSchema,
   PlanSummaryRowsSchema,
   ProfileInputSchema,
   ProfileSchema,
+  RecipeBookSchema,
 } from './schemas';
 import { createSupabaseClient } from './supabase';
 
@@ -93,7 +95,7 @@ export function createLiveBackend(opts: {
     async getProfile(userId) {
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, goals, experience_level, equipment, budget, days_per_week, minutes_per_session, onboarding_completed')
+        .select('id, goals, experience_level, equipment, budget, days_per_week, minutes_per_session, onboarding_completed, created_at')
         .eq('id', userId)
         .maybeSingle();
       if (error) throw fromSupabaseError(error);
@@ -118,6 +120,18 @@ export function createLiveBackend(opts: {
       const { data, error } = await supabase.rpc('get_my_plan_summary');
       if (error) throw fromSupabaseError(error);
       return parseOrThrow(PlanSummaryRowsSchema, data, 'plan summary')[0];
+    },
+
+    async getBadges() {
+      const { data, error } = await supabase.rpc('get_my_badges');
+      if (error) throw fromSupabaseError(error);
+      return parseOrThrow(BadgesSchema, data, 'badges');
+    },
+
+    async getRecipeBook() {
+      const { data, error } = await supabase.rpc('get_my_recipe_book');
+      if (error) throw fromSupabaseError(error);
+      return parseOrThrow(RecipeBookSchema, data, 'recipe book');
     },
 
     generateRecipe: (slotId, token) => ai.generateRecipe(slotId, token),

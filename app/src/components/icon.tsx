@@ -5,7 +5,8 @@ import { color as palette } from '../theme/tokens';
 
 export type IconName =
   | 'back' | 'x' | 'play' | 'pause' | 'check' | 'arrow' | 'alert' | 'pot' | 'list'
-  | 'minus' | 'plus' | 'trophy' | 'repeat' | 'timer' | 'lock' | 'reset';
+  | 'minus' | 'plus' | 'trophy' | 'repeat' | 'timer' | 'lock' | 'reset'
+  | 'path' | 'book' | 'user' | 'search';
 
 const shapes: Record<IconName, React.ReactNode> = {
   back: <Path d="M15 5l-7 7 7 7" />,
@@ -46,6 +47,27 @@ const shapes: Record<IconName, React.ReactNode> = {
     </>
   ),
   reset: <Path d="M4.5 12a7.5 7.5 0 102.2-5.3M4.5 4.5v4h4" />,
+  path: (
+    <>
+      <Circle cx={6.5} cy={5.5} r={2.5} />
+      <Circle cx={17.5} cy={12} r={2.5} />
+      <Circle cx={6.5} cy={18.5} r={2.5} />
+      <Path d="M8.8 6.6l6.4 4.1M15.2 13.3l-6.4 4.1" />
+    </>
+  ),
+  book: <Path d="M4 4.5h6a2 2 0 012 2V20a1.5 1.5 0 00-1.5-1.5H4zM20 4.5h-6a2 2 0 00-2 2V20a1.5 1.5 0 011.5-1.5H20z" />,
+  user: (
+    <>
+      <Circle cx={12} cy={8} r={4} />
+      <Path d="M4.5 20.5c1-4 4-6 7.5-6s6.5 2 7.5 6" />
+    </>
+  ),
+  search: (
+    <>
+      <Circle cx={10.5} cy={10.5} r={6} />
+      <Path d="M15 15l5 5" />
+    </>
+  ),
 };
 
 export function Icon({ name, size = 22, color = palette.ink, strokeWidth = 1.7 }: { name: IconName; size?: number; color?: string; strokeWidth?: number }) {

@@ -86,11 +86,12 @@ function RootStack() {
         <Stack.Screen name="onboarding" />
       </Stack.Protected>
       <Stack.Protected guard={status === 'ready'}>
-        <Stack.Screen name="today" />
+        <Stack.Screen name="(tabs)" />
         <Stack.Screen name="recipe/[slotId]" />
         <Stack.Screen name="cook/[slotId]" options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: color.sheet } }} />
         <Stack.Screen name="check-in/[slotId]" />
         <Stack.Screen name="complete/[slotId]" options={{ animation: 'fade', gestureEnabled: false }} />
+        <Stack.Screen name="edit-profile" />
       </Stack.Protected>
     </Stack>
   );

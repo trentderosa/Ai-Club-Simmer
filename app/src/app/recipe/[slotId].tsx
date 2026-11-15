@@ -15,6 +15,7 @@ import { SectionHead } from '../../components/layout';
 import { ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
 import { VideoRow } from '../../components/video';
+import { REPEAT_XP_NOTE } from '../../domain/recipe-book';
 import { photoForSlot } from '../../domain/slot-photos';
 import { useSession } from '../../state/session';
 import { useErrorAction } from '../../state/use-error-action';
@@ -84,6 +85,11 @@ export default function RecipeScreen() {
           <Fact value={String(recipe.steps.length)} label="Steps" divider />
           <Fact value={String(slot.xp_value)} label={slot.status === 'done' ? 'XP (first time)' : 'XP'} divider />
         </View>
+        {slot.status === 'done' ? (
+          <T variant="caption" style={{ marginTop: 10, paddingHorizontal: space.gutter }}>
+            {REPEAT_XP_NOTE}
+          </T>
+        ) : null}
 
         {recipe.coachNote ? (
           <View style={styles.note}>
