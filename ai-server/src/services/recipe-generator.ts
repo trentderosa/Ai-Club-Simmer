@@ -23,6 +23,8 @@ export interface PathSlot {
   id: number;
   dishName: string;
   techniqueFocus: string;
+  /** True for the final (mastery challenge) slot. */
+  isFinal?: boolean;
 }
 
 // Maximum retry attempts after the initial try. Total attempts = MAX_RETRIES + 1 = 3.

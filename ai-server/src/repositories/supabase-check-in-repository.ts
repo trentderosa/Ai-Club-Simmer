@@ -73,6 +73,8 @@ export class SupabaseCheckInRepository implements CheckInRepository {
         difficulty_rating: params.difficulty_rating,
         went_well: params.went_well,
         was_hard: params.was_hard,
+        hidden_steps: params.hidden_steps ?? null,
+        revealed_steps: params.revealed_steps ?? null,
       }),
     });
 

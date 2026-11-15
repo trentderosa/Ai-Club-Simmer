@@ -61,7 +61,8 @@ export function createCheckInRouter(
    *   slot_id: number (1-10),
    *   rating: "easy" | "ok" | "hard",
    *   went_well?: string (max 500 chars),
-   *   was_hard?: string (max 500 chars)
+   *   was_hard?: string (max 500 chars),
+   *   mastery?: { hidden_steps: number, revealed_steps: number }  (final slot only, F8)
    * }
    * 
    * Response:
@@ -70,7 +71,9 @@ export function createCheckInRouter(
    *   coach_note: string,
    *   focus_area?: string,
    *   xp: { status: 'awarded', xp_awarded: number, is_first_completion: boolean, capped: boolean }
-   *     | { status: 'failed' } | { status: 'skipped' }
+   *     | { status: 'failed' } | { status: 'skipped' },
+   *   badges: { status: 'ok', earned: Badge[] } | { status: 'failed' } | { status: 'skipped' },
+   *   suggest_repeat: boolean   // true when rated "hard" (F6)
    * }
    */
   // B3 fix: authenticate runs BEFORE userLimiter
@@ -96,6 +99,14 @@ export function createCheckInRouter(
         res.status(400).json({ 
           error: 'Invalid user_recipe_id or slot_id mismatch',
           code: 'INVALID_RECIPE'
+        });
+        return;
+      }
+
+      if (!(await deps.checkInService.isMasteryInputAllowed(input))) {
+        res.status(400).json({
+          error: 'mastery is only allowed for the final (mastery challenge) recipe',
+          code: 'MASTERY_NOT_ALLOWED',
         });
         return;
       }

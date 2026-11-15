@@ -3,38 +3,50 @@ import { Recipe } from '../schemas/recipe.js';
 import type { PathSlot } from './recipe-generator.js';
 import type { JwtVerifier, JwtVerifyResult } from './jwt-verifier.js';
 import type { UserRecipeRepository } from '../repositories/user-recipe-repository.js';
+import type { PathRepository } from '../repositories/path-repository.js';
+import type { RecipeVideos } from './video-finder.js';
 
 export interface SupabaseService {
   verifyToken(token: string): Promise<JwtVerifyResult>;
   getUserProfile(userId: string): Promise<UserProfile | null>;
   getPathSlot(slotId: number): Promise<PathSlot | null>;
+  /** F2 path order: may this user start this slot (done or current)? */
+  isSlotUnlocked(userId: string, slotId: number): Promise<boolean>;
   getSavedRecipe(userId: string, slotId: number): Promise<Recipe | null>;
   saveRecipe(userId: string, slotId: number, recipe: Recipe): Promise<Recipe>;
+  /** F4: stored technique videos, or null if not looked up yet. */
+  getSavedVideos(userId: string, slotId: number): Promise<RecipeVideos | null>;
+  saveVideos(userId: string, slotId: number, videos: RecipeVideos): Promise<void>;
 }
 
 export interface SupabaseServiceDeps {
   jwtVerifier: JwtVerifier;
   userRecipeRepository: UserRecipeRepository;
+  /**
+   * Path data (slots, profiles, gating). Without it (dev in-memory mode)
+   * slots and profiles are not found and every slot counts as unlocked.
+   */
+  pathRepository?: PathRepository;
 }
 
 export function createSupabaseService(deps: SupabaseServiceDeps): SupabaseService {
-  const { jwtVerifier, userRecipeRepository } = deps;
+  const { jwtVerifier, userRecipeRepository, pathRepository } = deps;
 
   return {
     verifyToken(token: string): Promise<JwtVerifyResult> {
       return jwtVerifier.verify(token);
     },
 
-    // TODO: Implement fetching user profile from Supabase profiles table
-    // Query the profiles table for equipment, budget, experience, recent check-ins
-    getUserProfile(_userId: string): Promise<UserProfile | null> {
-      return Promise.resolve(null);
+    getUserProfile(userId: string): Promise<UserProfile | null> {
+      return pathRepository ? pathRepository.getUserProfile(userId) : Promise.resolve(null);
     },
 
-    // TODO: Implement fetching path slot from Supabase path_slots table
-    // Query the path_slots table for the dish name and technique focus
-    getPathSlot(_slotId: number): Promise<PathSlot | null> {
-      return Promise.resolve(null);
+    getPathSlot(slotId: number): Promise<PathSlot | null> {
+      return pathRepository ? pathRepository.getPathSlot(slotId) : Promise.resolve(null);
+    },
+
+    isSlotUnlocked(userId: string, slotId: number): Promise<boolean> {
+      return pathRepository ? pathRepository.isSlotUnlocked(userId, slotId) : Promise.resolve(true);
     },
 
     async getSavedRecipe(userId: string, slotId: number): Promise<Recipe | null> {
@@ -45,6 +57,15 @@ export function createSupabaseService(deps: SupabaseServiceDeps): SupabaseServic
     async saveRecipe(userId: string, slotId: number, recipe: Recipe): Promise<Recipe> {
       const saved = await userRecipeRepository.save(userId, slotId, recipe);
       return saved.recipe;
+    },
+
+    async getSavedVideos(userId: string, slotId: number): Promise<RecipeVideos | null> {
+      const saved = await userRecipeRepository.findByUserAndSlot(userId, slotId);
+      return saved?.videos ?? null;
+    },
+
+    saveVideos(userId: string, slotId: number, videos: RecipeVideos): Promise<void> {
+      return userRecipeRepository.saveVideos(userId, slotId, videos);
     },
   };
 }
@@ -85,6 +106,18 @@ export function createSupabaseStub(
 
     getPathSlot(_slotId: number): Promise<PathSlot | null> {
       return Promise.resolve(null);
+    },
+
+    isSlotUnlocked(_userId: string, _slotId: number): Promise<boolean> {
+      return Promise.resolve(true);
+    },
+
+    getSavedVideos(_userId: string, _slotId: number): Promise<RecipeVideos | null> {
+      return Promise.resolve(null);
+    },
+
+    saveVideos(_userId: string, _slotId: number, _videos: RecipeVideos): Promise<void> {
+      return Promise.resolve();
     },
 
     getSavedRecipe(_userId: string, _slotId: number): Promise<Recipe | null> {
