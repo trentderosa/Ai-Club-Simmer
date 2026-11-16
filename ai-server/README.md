@@ -44,6 +44,8 @@ Set these in the server's environment (never in the repo, chat, or logs):
 
 With `NODE_ENV=production`, the server exits at startup and names any missing variable.
 
+`ENABLE_PREVIEW_ROUTE=true` mounts the unauthenticated `POST /api/recipes/generate-preview` route in development only. Production ignores that flag, leaves the route off, and logs a startup warning if the flag is set.
+
 ## Recipes: path order and videos
 
 `POST /api/recipes/generate/:slotId` reads the slot and the user's onboarding profile (plus

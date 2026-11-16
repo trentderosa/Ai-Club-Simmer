@@ -244,6 +244,7 @@ Do **not** build these. They're future work.
 - **Timeline:** ~2 months to a working demo. The team is part-time students.
 - **The AI only works while the AI-server laptop is running Ollama and the proxy.** Recipes that are already generated and saved still load without it.
 - **Secrets:** The YouTube API key and Supabase service-role key live only on the AI server, never in the app.
+- **Preview route:** `POST /api/recipes/generate-preview` is unauthenticated and off unless `ENABLE_PREVIEW_ROUTE=true`. `NODE_ENV=production` keeps it off even when that flag is set, and startup logs a warning.
 - **CORS:** The AI server echoes only origins listed in `ALLOWED_ORIGINS`. It never sends `Access-Control-Allow-Origin: *`.
 - **YouTube quota:** The default quota is 10,000 units/day, and each search costs 100 units (about 100 searches/day), so searches must be cached.
 - **Cost:** Use free tiers (Supabase free plan, YouTube free quota, local model).

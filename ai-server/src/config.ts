@@ -184,13 +184,33 @@ export function loadXpAwardTimeoutMs(env: Env = process.env): number {
   );
 }
 
+/**
+ * The unauthenticated POST /api/recipes/generate-preview route.
+ * Off unless ENABLE_PREVIEW_ROUTE=true, and ignored entirely when
+ * NODE_ENV=production. A production process that sets the flag logs a
+ * startup warning and still leaves the route off.
+ */
+export function isPreviewRouteEnabled(env: Env = process.env): boolean {
+  const requested = env.ENABLE_PREVIEW_ROUTE === 'true';
+  if (env.NODE_ENV === 'production') {
+    if (requested) {
+      console.warn(
+        'SECURITY WARNING: ENABLE_PREVIEW_ROUTE=true is ignored when NODE_ENV=production. The unauthenticated /generate-preview route stays off.'
+      );
+    }
+    return false;
+  }
+  return requested;
+}
+
 export function loadConfig(): Config {
   return {
     port: parseInt(process.env.PORT || '3001', 10),
     // SECURITY: Default to localhost to prevent external access
     host: process.env.HOST || '127.0.0.1',
-    // SECURITY: Preview route disabled by default (unauthenticated LLM access)
-    enablePreviewRoute: process.env.ENABLE_PREVIEW_ROUTE === 'true',
+    // SECURITY: Unauthenticated preview route. Off unless explicitly enabled,
+    // and never on when NODE_ENV=production (see isPreviewRouteEnabled).
+    enablePreviewRoute: isPreviewRouteEnabled(),
     ollama: {
       baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
       model: process.env.OLLAMA_MODEL || 'llama3.2',
