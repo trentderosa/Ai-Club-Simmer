@@ -6,12 +6,11 @@
  */
 import { createContext, useContext, useMemo, useRef, type ReactNode } from 'react';
 
-import type { CheckInResponse, CookAnythingResponse, MasteryCounts, PlanSlot, PlanSummary, RecipeResponse } from '../api';
+import type { CheckInResponse, CookAnythingResponse, PlanSlot, PlanSummary, RecipeResponse } from '../api';
+import type { MasteryRun } from '../domain/mastery';
 
-export interface MasterySession {
-  counts: MasteryCounts;
-  revealedIndices: number[];
-}
+/** The server-side mastery run for the final slot (F8). */
+export type MasterySession = MasteryRun;
 
 export interface CheckInOutcome {
   slot: PlanSlot;

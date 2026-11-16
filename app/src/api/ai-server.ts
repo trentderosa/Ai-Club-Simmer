@@ -7,13 +7,17 @@
 import type { z } from 'zod';
 
 import { CHECK_IN_TIMEOUT_MS, RECIPE_TIMEOUT_MS } from '../domain/check-in-retry';
-import { ApiError, kindForHttpError } from './errors';
+import { ApiError, kindForHttpError, type ApiRoute } from './errors';
 import {
   ApiErrorBodySchema,
   CheckInResponseSchema,
   RecipeResponseSchema,
   CookAnythingResponseSchema,
+  MasteryRevealResponseSchema,
+  MasteryStartResponseSchema,
   type CheckInInput,
+  type MasteryRevealResponse,
+  type MasteryStartResponse,
   type CheckInResponse,
   type RecipeResponse,
   type CookAnythingResponse,
@@ -25,7 +29,12 @@ export interface AiServerClient {
   generateRecipe(slotId: number, accessToken: string): Promise<RecipeResponse>;
   submitCheckIn(input: CheckInInput, accessToken: string): Promise<CheckInResponse>;
   cookAnything(dish: string, accessToken: string): Promise<CookAnythingResponse>;
+  startMastery(slotId: number, accessToken: string): Promise<MasteryStartResponse>;
+  revealMasteryStep(sessionId: string, stepIndex: number, accessToken: string): Promise<MasteryRevealResponse>;
 }
+
+/** Mastery calls are small single-row updates; they should answer fast. */
+export const MASTERY_TIMEOUT_MS = 15_000;
 
 type FetchFn = typeof fetch;
 
@@ -35,7 +44,7 @@ export function createAiServerClient(baseUrl: string, fetchFn: FetchFn = fetch):
     body: unknown,
     accessToken: string,
     schema: S,
-    route: 'recipe' | 'check-in',
+    route: ApiRoute,
     timeoutMs: number,
   ): Promise<z.infer<S>> {
     if (!baseUrl) throw new ApiError('config', 'EXPO_PUBLIC_AI_SERVER_URL is not set.');
@@ -65,6 +74,17 @@ export function createAiServerClient(baseUrl: string, fetchFn: FetchFn = fetch):
       post('/api/check-ins', input, token, CheckInResponseSchema, 'check-in', CHECK_IN_TIMEOUT_MS),
     cookAnything: (dish, token) =>
       post('/api/recipes/cook-anything', { dish }, token, CookAnythingResponseSchema, 'recipe', RECIPE_TIMEOUT_MS),
+    startMastery: (slotId, token) =>
+      post('/api/mastery/sessions', { slot_id: slotId }, token, MasteryStartResponseSchema, 'mastery', MASTERY_TIMEOUT_MS),
+    revealMasteryStep: (sessionId, stepIndex, token) =>
+      post(
+        `/api/mastery/sessions/${encodeURIComponent(sessionId)}/reveal`,
+        { step_index: stepIndex },
+        token,
+        MasteryRevealResponseSchema,
+        'mastery',
+        MASTERY_TIMEOUT_MS,
+      ),
   };
 }
 
@@ -72,7 +92,7 @@ export function createAiServerClient(baseUrl: string, fetchFn: FetchFn = fetch):
 export async function parseResponse<S extends z.ZodTypeAny>(
   res: Response,
   schema: S,
-  route: 'recipe' | 'check-in',
+  route: ApiRoute,
 ): Promise<z.infer<S>> {
   let json: unknown = undefined;
   try {

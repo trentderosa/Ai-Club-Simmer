@@ -6,6 +6,7 @@ import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
 import type { RecipeVideos, VideoFinder, VideoLookupResult } from '../services/video-finder.js';
+import { maskRecipeForMastery } from '../mastery/mask.js';
 import {
   UserProfile,
   UserProfileSchema,
@@ -236,8 +237,10 @@ export function createRecipeRouter(
         // null = never stored (or the last lookup was incomplete): look again.
         const storedVideos = await deps.supabase.getSavedVideos(userId, slotId);
         const videos = storedVideos ?? (await attachVideos(userId, slotId, existingRecipe));
+        // F8: the final slot's hidden steps are only served by a mastery reveal.
+        const savedSlot = await deps.supabase.getPathSlot(slotId);
         res.json({
-          recipe: existingRecipe,
+          recipe: savedSlot?.isFinal ? maskRecipeForMastery(existingRecipe) : existingRecipe,
           cached: true,
           videos,
         });
@@ -289,7 +292,7 @@ export function createRecipeRouter(
       }
 
       res.json({
-        recipe: result.recipe,
+        recipe: slot.isFinal ? maskRecipeForMastery(result.recipe) : result.recipe,
         cached: false,
         videos: result.videos,
       });

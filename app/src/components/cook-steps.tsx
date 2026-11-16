@@ -1,7 +1,9 @@
 /**
  * Shared cook-mode stepper used by path slots and free-form generated recipes.
- * When `challenge` is set (slot 10, F8), non-safety steps start hidden and
- * can be revealed one at a time. Safety steps (`isSafetyStep`) stay visible.
+ * With `mastery` (slot 10, F8), non-safety steps start hidden and can be
+ * revealed one at a time. The server masks hidden steps; a reveal asks the
+ * server, which records it, for the step's real content. Safety steps
+ * (`isSafetyStep`) stay visible.
  */
 import { useCallback, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
@@ -10,8 +12,8 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Recipe, RecipeStep, Videos } from '../api';
 import { color, font, radius, space } from '../theme/tokens';
 import { highlightIngredients } from '../domain/highlight';
-import { isHiddenMasteryStep, masteryCountsFromReveals, revealedLabel } from '../domain/mastery';
-import type { MasterySession } from '../state/flow-cache';
+import { errorCopy } from '../domain/error-messages';
+import { countsForRun, displayStep, isStepHidden, revealedLabel, type MasteryRun } from '../domain/mastery';
 import { createTimer, parseStepDurationSeconds, type TimerState } from '../domain/timer';
 import { useSession } from '../state/session';
 import { Button, IconButton } from './button';
@@ -20,60 +22,68 @@ import { T } from './text';
 import { TimerCard } from './timer-card';
 import { VideoRow } from './video';
 
+export interface MasteryControls {
+  run: MasteryRun;
+  /** Ask the server for step `index`; resolves with the updated run. */
+  reveal: (index: number) => Promise<MasteryRun>;
+}
+
 export function CookSteps({
   recipe,
   videos,
   onClose,
   onDone,
-  challenge = false,
-  initialRevealed,
-  onMasteryChange,
+  mastery,
 }: {
   recipe: Recipe;
   videos: Videos;
   onClose: () => void;
   onDone: () => void;
-  /** Final path slot: hide non-safety steps until the user reveals them. */
-  challenge?: boolean;
-  /** Revealed step indices from a previous visit in this session (N1). */
-  initialRevealed?: readonly number[];
-  onMasteryChange?: (session: MasterySession) => void;
+  /** Final path slot (F8): the server-side mastery run and how to reveal a step. */
+  mastery?: MasteryControls;
 }) {
   const insets = useSafeAreaInsets();
   const { backend } = useSession();
   const [index, setIndex] = useState(0);
   const [showIngredients, setShowIngredients] = useState(false);
-  const [revealed, setRevealed] = useState<Set<number>>(() => new Set(initialRevealed ?? []));
+  const [run, setRun] = useState<MasteryRun | null>(mastery?.run ?? null);
+  const [revealing, setRevealing] = useState(false);
+  const [revealError, setRevealError] = useState<string | null>(null);
   // One timer per step that names a duration; they keep running when you move between steps.
+  // A hidden step's timer appears once it is revealed.
   const [timers, setTimers] = useState<Record<number, TimerState>>(() => {
     const out: Record<number, TimerState> = {};
-    recipe.steps.forEach((s, i) => {
-      const secs = parseStepDurationSeconds(s.instruction);
+    recipe.steps.forEach((_, i) => {
+      if (isStepHidden(mastery?.run ?? null, i)) return;
+      const secs = parseStepDurationSeconds(displayStep(recipe, mastery?.run ?? null, i).instruction);
       if (secs) out[i] = createTimer(secs);
     });
     return out;
   });
   const setTimer = useCallback((i: number, t: TimerState) => setTimers((prev) => ({ ...prev, [i]: t })), []);
 
-  const step = recipe.steps[index];
+  const step = displayStep(recipe, run, index);
   const total = recipe.steps.length;
   const last = index === total - 1;
   const video = step.techniqueName ? videos[step.techniqueName] : undefined;
-  const counts = useMemo(() => masteryCountsFromReveals(recipe.steps, revealed), [recipe.steps, revealed]);
-  const hidden = challenge && isHiddenMasteryStep(step) && !revealed.has(index);
+  const counts = useMemo(() => (run ? countsForRun(run) : null), [run]);
+  const hidden = isStepHidden(run, index);
 
-  const reportMastery = (indices: ReadonlySet<number>) => {
-    onMasteryChange?.({
-      counts: masteryCountsFromReveals(recipe.steps, indices),
-      revealedIndices: [...indices].sort((a, b) => a - b),
-    });
-  };
-
-  const revealStep = () => {
-    const next = new Set(revealed);
-    next.add(index);
-    setRevealed(next);
-    reportMastery(next);
+  const revealStep = async () => {
+    if (!mastery || revealing) return;
+    setRevealing(true);
+    setRevealError(null);
+    try {
+      const next = await mastery.reveal(index);
+      setRun(next);
+      const revealedStep = next.revealed[index];
+      const secs = revealedStep ? parseStepDurationSeconds(revealedStep.instruction) : null;
+      if (secs) setTimers((prev) => (prev[index] ? prev : { ...prev, [index]: createTimer(secs) }));
+    } catch (e) {
+      setRevealError(errorCopy(e).body);
+    } finally {
+      setRevealing(false);
+    }
   };
 
   return (
@@ -91,7 +101,7 @@ export function CookSteps({
         ))}
       </View>
 
-      {challenge ? (
+      {counts ? (
         <View style={styles.challengeHead} accessibilityLabel={revealedLabel(counts)}>
           <T variant="overline" color="ink3">
             Mastery challenge
@@ -115,7 +125,7 @@ export function CookSteps({
               <T style={styles.of}>of {total}</T>
             </View>
             {hidden ? (
-              <HiddenStep index={index} total={total} onReveal={revealStep} />
+              <HiddenStep index={index} total={total} onReveal={() => void revealStep()} loading={revealing} error={revealError} />
             ) : (
               <>
             <Instruction step={step} recipe={recipe} />
@@ -154,6 +164,7 @@ export function CookSteps({
           disabled={index === 0}
           onPress={() => {
             setShowIngredients(false);
+            setRevealError(null);
             setIndex(index - 1);
           }}
           style={({ pressed }) => [styles.backBtn, index === 0 && { opacity: 0.35 }, pressed && { opacity: 0.7 }]}
@@ -166,10 +177,9 @@ export function CookSteps({
           trailingIcon={last ? 'check' : 'arrow'}
           onPress={() => {
             setShowIngredients(false);
-            if (last) {
-              if (challenge) reportMastery(revealed);
-              onDone();
-            } else setIndex(index + 1);
+            setRevealError(null);
+            if (last) onDone();
+            else setIndex(index + 1);
           }}
           style={{ flex: 1 }}
         />
@@ -178,7 +188,19 @@ export function CookSteps({
   );
 }
 
-function HiddenStep({ index, total, onReveal }: { index: number; total: number; onReveal: () => void }) {
+function HiddenStep({
+  index,
+  total,
+  onReveal,
+  loading,
+  error,
+}: {
+  index: number;
+  total: number;
+  onReveal: () => void;
+  loading: boolean;
+  error: string | null;
+}) {
   return (
     <View style={styles.hidden}>
       <T variant="overline" color="ink3">
@@ -191,9 +213,15 @@ function HiddenStep({ index, total, onReveal }: { index: number; total: number; 
         kind="outline"
         label="Reveal"
         onPress={onReveal}
+        loading={loading}
         accessibilityHint={`Reveal step ${index + 1} of ${total}`}
         style={{ marginTop: 16, alignSelf: 'flex-start' }}
       />
+      {error ? (
+        <T variant="caption" style={{ marginTop: 10, color: color.safety }} accessibilityLiveRegion="polite">
+          {error}
+        </T>
+      ) : null}
     </View>
   );
 }

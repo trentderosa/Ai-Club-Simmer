@@ -1,45 +1,80 @@
 /**
- * F8 mastery-challenge helpers. Safety steps use the recipe field
- * `isSafetyStep` (CLIENT_API / RecipeSchema). Hidden steps are every
- * other step; they start hidden and may be revealed one at a time.
+ * F8 mastery-challenge helpers.
  *
- * Finishing the cook and checking in completes the slot (XP and path
- * progress are unchanged). The mastery badge is awarded only when the
- * check-in has revealed_steps = 0. A missing payload earns no badge.
- * Reveal counts are client-reported.
+ * The final path slot is cooked from memory: every non-safety step starts
+ * hidden. The ai-server masks those steps in the recipe (`isHidden: true`,
+ * placeholder text) and only sends a step's real content through a reveal,
+ * which it records in a server-side mastery session. The check-in sends the
+ * session id, and the server reads the reveal counts from the session, so the
+ * app never reports counts itself.
+ *
+ * Finishing the cook and checking in completes the slot (XP and path progress
+ * are unchanged). The mastery badge needs zero reveals.
  */
+import type { MasteryCounts, MasteryRevealResponse, MasteryStartResponse, Recipe, RecipeStep } from '../api/schemas';
 
-export interface MasteryCounts {
-  hidden_steps: number;
-  revealed_steps: number;
+export const HIDDEN_STEP_INSTRUCTION = 'Hidden step. Reveal it in cook mode if you need a reminder.';
+
+/** One cook of the final slot: the server session plus the steps revealed so far. */
+export interface MasteryRun {
+  sessionId: string;
+  hiddenIndices: number[];
+  /** Full content of each revealed step, by index. */
+  revealed: Record<number, RecipeStep>;
 }
 
-export function isHiddenMasteryStep(step: { isSafetyStep: boolean }): boolean {
-  return !step.isSafetyStep;
-}
-
-/** Indices of steps that start hidden in challenge mode (non-safety). */
+/** Indices of steps that start hidden in challenge mode (every non-safety step). */
 export function hiddenStepIndices(steps: readonly { isSafetyStep: boolean }[]): number[] {
-  return steps.flatMap((step, i) => (isHiddenMasteryStep(step) ? [i] : []));
-}
-
-export function hiddenStepCount(steps: readonly { isSafetyStep: boolean }[]): number {
-  return hiddenStepIndices(steps).length;
+  return steps.flatMap((step, i) => (step.isSafetyStep ? [] : [i]));
 }
 
 /**
- * Build the check-in `mastery` payload from the recipe and the set of
- * revealed step indices. Only hidden (non-safety) steps count; revealing
- * a safety step is ignored, and `revealed_steps` never exceeds `hidden_steps`.
+ * Same masking as the ai-server (ai-server/src/mastery/mask.ts). Used by mock
+ * mode so the app sees what the live server sends.
  */
-export function masteryCountsFromReveals(
-  steps: readonly { isSafetyStep: boolean }[],
-  revealedIndices: ReadonlySet<number> | readonly number[],
-): MasteryCounts {
-  const hidden = hiddenStepIndices(steps);
-  const revealed = revealedIndices instanceof Set ? revealedIndices : new Set(revealedIndices);
-  const revealedHidden = hidden.filter((i) => revealed.has(i)).length;
-  return { hidden_steps: hidden.length, revealed_steps: revealedHidden };
+export function maskRecipeForMastery(recipe: Recipe): Recipe {
+  return {
+    ...recipe,
+    steps: recipe.steps.map((step): RecipeStep => {
+      if (step.isSafetyStep) return step;
+      const masked: RecipeStep = { instruction: HIDDEN_STEP_INSTRUCTION, isSafetyStep: false, isHidden: true };
+      if (step.techniqueName) masked.techniqueName = step.techniqueName;
+      return masked;
+    }),
+  };
+}
+
+export function runFromStart(res: MasteryStartResponse): MasteryRun {
+  const revealed: Record<number, RecipeStep> = {};
+  for (const [key, step] of Object.entries(res.revealed_steps)) {
+    const i = Number(key);
+    if (Number.isInteger(i) && i >= 0) revealed[i] = step;
+  }
+  return { sessionId: res.session_id, hiddenIndices: [...res.hidden_step_indices], revealed };
+}
+
+export function runWithReveal(run: MasteryRun, res: MasteryRevealResponse): MasteryRun {
+  return { ...run, hiddenIndices: [...res.hidden_step_indices], revealed: { ...run.revealed, [res.step_index]: res.step } };
+}
+
+/** Counts for the cook-mode and check-in labels. Only hidden steps count. */
+export function countsForRun(run: MasteryRun): MasteryCounts {
+  const hidden = new Set(run.hiddenIndices);
+  const revealed = Object.keys(run.revealed)
+    .map(Number)
+    .filter((i) => hidden.has(i)).length;
+  return { hidden_steps: hidden.size, revealed_steps: revealed };
+}
+
+/** What cook mode shows for step `i`: the revealed content, or the recipe's step. */
+export function displayStep(recipe: Recipe, run: MasteryRun | null, i: number): RecipeStep {
+  return run?.revealed[i] ?? recipe.steps[i];
+}
+
+/** True while step `i` is still hidden in this run. */
+export function isStepHidden(run: MasteryRun | null, i: number): boolean {
+  if (!run) return false;
+  return run.hiddenIndices.includes(i) && !(i in run.revealed);
 }
 
 export function isValidMasteryCounts(counts: MasteryCounts): boolean {
@@ -57,7 +92,7 @@ export function revealedLabel(counts: MasteryCounts): string {
   return `Revealed ${counts.revealed_steps} of ${counts.hidden_steps} hidden steps.`;
 }
 
-/** True only when a payload is present and revealed_steps is 0. */
+/** True only when a run is present and nothing was revealed. */
 export function qualifiesForMasteryBadge(counts: MasteryCounts | null | undefined): boolean {
   return counts != null && isValidMasteryCounts(counts) && counts.revealed_steps === 0;
 }

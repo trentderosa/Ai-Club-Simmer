@@ -17,6 +17,8 @@ import type {
   RecipeBookEntry,
   RecipeResponse,
   CookAnythingResponse,
+  MasteryRevealResponse,
+  MasteryStartResponse,
 } from './schemas';
 
 export interface AppSession {
@@ -60,6 +62,11 @@ export interface Backend {
   /** `user_recipes.id` for this user + slot, needed by the check-in. */
   getUserRecipeId(slotId: number): Promise<string>;
   submitCheckIn(input: CheckInInput, accessToken: string): Promise<CheckInResponse>;
+
+  /** F8: start (or resume) the server-side mastery session for the final slot. */
+  startMastery(slotId: number, accessToken: string): Promise<MasteryStartResponse>;
+  /** F8: reveal one hidden step. The server records it before sending the text. */
+  revealMasteryStep(sessionId: string, stepIndex: number, accessToken: string): Promise<MasteryRevealResponse>;
 
   /** Cook anything: type a dish, get a generated recipe (cached per normalized name). */
   cookAnything(dish: string, accessToken: string): Promise<CookAnythingResponse>;

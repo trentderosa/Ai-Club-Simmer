@@ -122,6 +122,11 @@ export const RecipeStepSchema = z.object({
   whyItMatters: z.string().optional(),
   isSafetyStep: z.boolean(),
   techniqueName: z.string().optional(),
+  /**
+   * F8, final slot only: the server masked this step (placeholder text). Its
+   * real content comes only from a mastery reveal.
+   */
+  isHidden: z.literal(true).optional(),
 });
 export type RecipeStep = z.infer<typeof RecipeStepSchema>;
 
@@ -187,16 +192,28 @@ export const RATINGS = ['easy', 'ok', 'hard'] as const;
 export type Rating = (typeof RATINGS)[number];
 
 /** F8: reveal counts for the final-slot mastery challenge. revealed ≤ hidden. */
-export const MasteryCountsSchema = z
-  .object({
-    hidden_steps: z.number().int().min(0).max(30),
-    revealed_steps: z.number().int().min(0).max(30),
-  })
-  .refine((m) => m.revealed_steps <= m.hidden_steps, {
-    message: 'revealed_steps cannot be more than hidden_steps',
-    path: ['revealed_steps'],
-  });
-export type MasteryCounts = z.infer<typeof MasteryCountsSchema>;
+export interface MasteryCounts {
+  hidden_steps: number;
+  revealed_steps: number;
+}
+
+/** F8: POST /api/mastery/sessions — start or resume the server-side session. */
+export const MasteryStartResponseSchema = z.object({
+  session_id: z.string().uuid(),
+  hidden_step_indices: z.array(z.number().int().min(0)),
+  /** Steps already revealed in this session, keyed by index ("3"). */
+  revealed_steps: z.record(z.string(), RecipeStepSchema),
+});
+export type MasteryStartResponse = z.infer<typeof MasteryStartResponseSchema>;
+
+/** F8: POST /api/mastery/sessions/:id/reveal — the step's full content. */
+export const MasteryRevealResponseSchema = z.object({
+  step_index: z.number().int().min(0),
+  step: RecipeStepSchema,
+  hidden_step_indices: z.array(z.number().int().min(0)),
+  revealed_step_indices: z.array(z.number().int().min(0)),
+});
+export type MasteryRevealResponse = z.infer<typeof MasteryRevealResponseSchema>;
 
 export const CheckInInputSchema = z
   .object({
@@ -206,8 +223,11 @@ export const CheckInInputSchema = z
     rating: z.enum(RATINGS),
     went_well: z.string().max(500).optional(),
     was_hard: z.string().max(500).optional(),
-    /** Slot 10 only (F8). The server rejects this on any other slot. */
-    mastery: MasteryCountsSchema.optional(),
+    /**
+     * Slot 10 only (F8): the server-side mastery session. The server reads the
+     * reveal counts from it; the app never reports counts itself.
+     */
+    mastery_session_id: z.string().uuid().optional(),
     /** Client-generated UUID, unique per check-in attempt; reused on retry. */
     idempotency_key: z.string().uuid().optional(),
   })

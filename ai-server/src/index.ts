@@ -12,6 +12,8 @@ import { InMemoryUserRecipeRepository } from './repositories/user-recipe-reposit
 import { SupabaseUserRecipeRepository } from './repositories/supabase-user-recipe-repository.js';
 import { createRecipeRouter } from './routes/recipe.js';
 import { createCheckInRouter } from './routes/check-in.js';
+import { createMasteryRouter } from './routes/mastery.js';
+import { SupabaseMasteryRepository, type MasteryRepository } from './repositories/mastery-repository.js';
 import { CheckInService } from './services/check-in-service.js';
 import { createCoachNoteGenerator } from './services/coach-note.js';
 import { InMemoryCheckInRepository } from './repositories/in-memory-check-in-repository.js';
@@ -57,6 +59,8 @@ interface ServiceConfig {
   checkInService: CheckInService | null;
   videoFinder: VideoFinder | null;
   generatedRecipes: GeneratedRecipeRepository;
+  /** F8 server-side mastery sessions. Needs Supabase (no in-memory version). */
+  masteryRepository: MasteryRepository | null;
 }
 
 /**
@@ -99,6 +103,7 @@ function createServicesFromConfig(): ServiceConfig {
       checkInService: null,
       videoFinder: null,
       generatedRecipes: new InMemoryGeneratedRecipeRepository(),
+      masteryRepository: null,
     };
   }
 
@@ -112,6 +117,7 @@ function createServicesFromConfig(): ServiceConfig {
       checkInService: null,
       videoFinder: null,
       generatedRecipes: new InMemoryGeneratedRecipeRepository(),
+      masteryRepository: null,
     };
   }
 
@@ -183,6 +189,7 @@ function createServicesFromConfig(): ServiceConfig {
     checkInService,
     videoFinder: createVideoFinder(),
     generatedRecipes,
+    masteryRepository: url && serviceRoleKey ? new SupabaseMasteryRepository({ url, serviceRoleKey }) : null,
   };
 }
 
@@ -232,6 +239,16 @@ if (services.jwtVerifier && services.checkInService) {
   console.info('Check-in route: ENABLED');
 } else {
   console.warn('Check-in route: DISABLED (no JWT verifier configured)');
+}
+
+if (services.jwtVerifier && services.masteryRepository) {
+  app.use(
+    '/api/mastery',
+    createMasteryRouter({ jwtVerifier: services.jwtVerifier, masteryRepository: services.masteryRepository })
+  );
+  console.info('Mastery route: ENABLED');
+} else {
+  console.warn('Mastery route: DISABLED (needs Supabase and a JWT verifier)');
 }
 
 app.get('/health', (_req, res) => {

@@ -1,4 +1,4 @@
-import { CheckInIdempotencyConflict, type CheckInRecord } from '../types/check-in.js';
+import { CheckInIdempotencyConflict, CheckInMasterySessionError, type CheckInRecord } from '../types/check-in.js';
 import type { CheckInRepository, CreateCheckInParams, CreatedCheckIn } from './check-in-repository.js';
 
 export interface SupabaseCheckInConfig {
@@ -74,17 +74,29 @@ export class SupabaseCheckInRepository implements CheckInRepository {
         difficulty_rating: params.difficulty_rating,
         went_well: params.went_well,
         was_hard: params.was_hard,
-        hidden_steps: params.hidden_steps ?? null,
-        revealed_steps: params.revealed_steps ?? null,
+        // Only when set, so ordinary check-ins don't depend on the column existing.
+        ...(params.mastery_session_id ? { mastery_session_id: params.mastery_session_id } : {}),
       }),
     });
 
-    if (response.status === 409 && params.id) {
-      return this.resolveIdempotentConflict(params);
+    if (response.status === 409) {
+      const errorText = await response.text();
+      if (params.id) {
+        // A replay of the same attempt conflicts on the id (and on the session).
+        const replay = await this.resolveIdempotentConflict(params, !!params.mastery_session_id);
+        if (replay) return replay;
+      }
+      if (params.mastery_session_id && /mastery_session_id/.test(errorText)) {
+        throw new CheckInMasterySessionError('MASTERY_SESSION_USED');
+      }
+      throw new Error(`Failed to create check-in: ${response.status} ${errorText}`);
     }
 
     if (!response.ok) {
       const errorText = await response.text();
+      if (params.mastery_session_id && /mastery session does not match/.test(errorText)) {
+        throw new CheckInMasterySessionError('INVALID_MASTERY_SESSION');
+      }
       throw new Error(`Failed to create check-in: ${response.status} ${errorText}`);
     }
 
@@ -97,9 +109,11 @@ export class SupabaseCheckInRepository implements CheckInRepository {
    * A 409 on a client-supplied id means the row already exists. Return it when
    * it is the same user's same recipe/slot; otherwise reject the replay.
    */
-  private async resolveIdempotentConflict(params: CreateCheckInParams): Promise<CreatedCheckIn> {
+  private async resolveIdempotentConflict(params: CreateCheckInParams, allowMissing: boolean): Promise<CreatedCheckIn | null> {
     const existing = await this.getByIdAny(params.id!);
     if (!existing) {
+      // The conflict was on something else (a used mastery session).
+      if (allowMissing) return null;
       throw new Error(`Conflict but no existing check-in found for id ${params.id}`);
     }
     if (

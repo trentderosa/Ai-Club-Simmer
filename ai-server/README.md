@@ -69,6 +69,22 @@ If a profile can't be used for generation, the server logs `user_profile_invalid
 failing field paths only (no values). Equipment is cleaned first (trimmed, empty and duplicate
 items dropped, items cut to 100 chars, at most 50 items), so messy equipment never blocks a user.
 
+## Mastery challenge (slot 10)
+
+The final slot's recipe is always returned masked (`src/mastery/mask.ts`): every non-safety
+step gets placeholder text and `isHidden: true`. The saved recipe is unchanged. Hidden step
+text comes only from `src/routes/mastery.ts` (mounted when Supabase and a JWT verifier are
+configured; the startup log shows `Mastery route: ENABLED`):
+
+- `POST /api/mastery/sessions` `{ slot_id }` starts the user's session, or resumes the open
+  one (`start_mastery_session`).
+- `POST /api/mastery/sessions/:id/reveal` `{ step_index }` records the reveal and returns the
+  step (`reveal_mastery_step`).
+
+Both are per-user rate limited (60/min by default). The check-in sends `mastery_session_id`,
+and the database copies the reveal counts from that session. A session backs one check-in;
+reusing it returns `409 MASTERY_SESSION_USED`. See `docs/CLIENT_API.md` for the contract.
+
 
 ## Cook anything
 

@@ -24,8 +24,15 @@ export const CheckInInputSchema = z
     went_well: z.string().max(500).optional(),
     was_hard: z.string().max(500).optional(),
     /**
-     * F8 mastery challenge (final slot only): how many steps started hidden
-     * and how many the user revealed ("Revealed X of Y hidden steps").
+     * F8 mastery challenge (final slot only): the server-side session from
+     * POST /api/mastery/sessions. The check-in's hidden/revealed counts are
+     * read from that session, never from the client.
+     */
+    mastery_session_id: z.string().uuid().optional(),
+    /**
+     * Deprecated: client-reported reveal counts from before mastery sessions.
+     * Still accepted so older clients do not get a 400, but ignored: without
+     * a mastery_session_id the check-in earns no mastery badge.
      */
     mastery: MasterySchema.optional(),
     /**
@@ -62,6 +69,13 @@ export const CheckInInputSchema = z
         code: z.ZodIssueCode.custom,
         path: ['mastery'],
         message: 'mastery is only allowed for the path mastery challenge',
+      });
+    }
+    if (hasGenerated && val.mastery_session_id !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['mastery_session_id'],
+        message: 'mastery_session_id is only allowed for the path mastery challenge',
       });
     }
   });
@@ -153,6 +167,22 @@ export interface CheckInResponse {
  * The given idempotency_key already belongs to a different user, recipe, or slot.
  * The route maps this to 409 IDEMPOTENCY_CONFLICT.
  */
+/**
+ * The mastery session can't back this check-in: it was already used by
+ * another check-in (MASTERY_SESSION_USED, 409) or belongs to a different
+ * user, slot or recipe (INVALID_MASTERY_SESSION, 400).
+ */
+export class CheckInMasterySessionError extends Error {
+  constructor(readonly code: 'MASTERY_SESSION_USED' | 'INVALID_MASTERY_SESSION') {
+    super(
+      code === 'MASTERY_SESSION_USED'
+        ? 'This mastery session was already used for a check-in'
+        : 'mastery_session_id does not match this check-in'
+    );
+    this.name = 'CheckInMasterySessionError';
+  }
+}
+
 export class CheckInIdempotencyConflict extends Error {
   readonly code = 'IDEMPOTENCY_CONFLICT' as const;
   constructor() {

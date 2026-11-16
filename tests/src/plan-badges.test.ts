@@ -73,7 +73,42 @@ describe('plan, badges and recipe book', () => {
     }
   }
 
-  /** Cook a slot: recipe (once) + check-in + XP award, like the ai-server. */
+  /**
+   * A final-slot recipe with `hidden` non-safety steps plus one safety step
+   * (index `hidden`, which stays visible in the mastery challenge).
+   */
+  function masteryRecipe(hidden: number): object {
+    const steps = Array.from({ length: hidden }, (_, i) => ({ instruction: `Hidden step ${i + 1}`, isSafetyStep: false }));
+    steps.push({ instruction: 'Rest the chicken; the pan is hot.', isSafetyStep: true });
+    return { title: 'Test Recipe', steps };
+  }
+
+  interface MasterySession {
+    session_id: string;
+    hidden_step_indices: number[];
+    revealed_step_indices: number[];
+    revealed_steps: Record<string, unknown>;
+  }
+
+  async function startMastery(u: TestUser, slotId: number): Promise<MasterySession> {
+    const [s] = await asRole<MasterySession>('service_role', 'SELECT * FROM start_mastery_session($1, $2)', [u.id, slotId]);
+    return s;
+  }
+
+  async function reveal(u: TestUser, sessionId: string, index: number): Promise<{ step: { instruction: string }; revealed_step_indices: number[] }> {
+    const [r] = await asRole<{ step: { instruction: string }; revealed_step_indices: number[] }>(
+      'service_role',
+      'SELECT * FROM reveal_mastery_step($1, $2, $3)',
+      [u.id, sessionId, index]
+    );
+    return r;
+  }
+
+  /**
+   * Cook a slot: recipe (once) + check-in + XP award, like the ai-server.
+   * With `hidden`, runs a real mastery session (start, reveal `revealed`
+   * steps) and links it to the check-in; the counts come from the session.
+   */
   async function cook(
     u: TestUser,
     slotOrder: number,
@@ -84,12 +119,22 @@ describe('plan, badges and recipe book', () => {
       'SELECT id FROM user_recipes WHERE user_id = $1 AND slot_id = $2',
       [u.id, slotId]
     );
-    const recipeId: string = existing.rows[0]?.id ?? (await db.createUserRecipe(u.id, slotId));
+    const recipeId: string =
+      existing.rows[0]?.id ??
+      (await db.createUserRecipe(u.id, slotId, opts.hidden !== undefined ? masteryRecipe(opts.hidden) : undefined));
+    let sessionId: string | null = null;
+    if (opts.hidden !== undefined) {
+      const session = await startMastery(u, slotId);
+      for (const index of session.hidden_step_indices.slice(0, opts.revealed ?? 0)) {
+        await reveal(u, session.session_id, index);
+      }
+      sessionId = session.session_id;
+    }
     const result = await db.getPool().query(
-      `INSERT INTO check_ins (user_id, user_recipe_id, slot_id, difficulty_rating, hidden_steps, revealed_steps, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::timestamptz, NOW()))
+      `INSERT INTO check_ins (user_id, user_recipe_id, slot_id, difficulty_rating, mastery_session_id, created_at)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()))
        RETURNING id`,
-      [u.id, recipeId, slotId, opts.rating ?? 'ok', opts.hidden ?? null, opts.revealed ?? null, opts.at ?? null]
+      [u.id, recipeId, slotId, opts.rating ?? 'ok', sessionId, opts.at ?? null]
     );
     const checkInId: string = result.rows[0].id;
     await db.awardSlotXp(checkInId);
@@ -382,21 +427,155 @@ describe('plan, badges and recipe book', () => {
   });
 
   describe('F8 mastery reveal counts', () => {
-    it('stored on the final slot', async () => {
+    it('stored on the final slot, copied from the session', async () => {
       await cookThrough(user, 9);
       const id = await cook(user, 10, { hidden: 3, revealed: 1 });
       const row = await db.getPool().query('SELECT hidden_steps, revealed_steps FROM check_ins WHERE id = $1', [id]);
       expect(row.rows[0]).toEqual({ hidden_steps: 3, revealed_steps: 1 });
     });
 
-    it('rejected on any other slot', async () => {
-      await expect(cook(user, 1, { hidden: 3, revealed: 1 })).rejects.toThrow(/only allowed for the mastery slot/);
+    it('a mastery session cannot start on any other slot', async () => {
+      await expect(cook(user, 1, { hidden: 3, revealed: 1 })).rejects.toThrow(/SLOT_NOT_FINAL/);
     });
 
-    it('revealed cannot exceed hidden, and both must be set together', async () => {
+    it('counts sent without a session are rejected', async () => {
       await cookThrough(user, 9);
-      await expect(cook(user, 10, { hidden: 2, revealed: 3 })).rejects.toThrow(/check_ins_mastery_counts_check/);
-      await expect(cook(user, 10, { hidden: 2 })).rejects.toThrow(/check_ins_mastery_counts_check/);
+      const slotId = await db.getSlotId(10);
+      const recipeId = await db.createUserRecipe(user.id, slotId, masteryRecipe(3));
+      await expect(
+        db.getPool().query(
+          `INSERT INTO check_ins (user_id, user_recipe_id, slot_id, difficulty_rating, hidden_steps, revealed_steps)
+           VALUES ($1, $2, $3, 'ok', 3, 0)`,
+          [user.id, recipeId, slotId]
+        )
+      ).rejects.toThrow(/must come from a mastery session/);
+    });
+  });
+
+  describe('F8 mastery sessions (server-side reveals)', () => {
+    let finalSlotId: number;
+
+    beforeEach(async () => {
+      finalSlotId = await db.getSlotId(10);
+    });
+
+    async function readyForFinal(u: TestUser, hidden = 3): Promise<string> {
+      await cookThrough(u, 9);
+      return db.createUserRecipe(u.id, finalSlotId, masteryRecipe(hidden));
+    }
+
+    async function checkInWith(u: TestUser, recipeId: string, sessionId: string, extra = ''): Promise<string> {
+      const r = await db.getPool().query(
+        `INSERT INTO check_ins (user_id, user_recipe_id, slot_id, difficulty_rating, mastery_session_id${extra ? ', hidden_steps, revealed_steps' : ''})
+         VALUES ($1, $2, $3, 'ok', $4${extra})
+         RETURNING id`,
+        [u.id, recipeId, finalSlotId, sessionId]
+      );
+      return r.rows[0].id;
+    }
+
+    it('hides every non-safety step and starts with no reveals', async () => {
+      await readyForFinal(user, 3);
+      const s = await startMastery(user, finalSlotId);
+      expect(s.hidden_step_indices).toEqual([0, 1, 2]);
+      expect(s.revealed_step_indices).toEqual([]);
+      expect(s.revealed_steps).toEqual({});
+    });
+
+    it('starting again resumes the open session, reveals included', async () => {
+      await readyForFinal(user);
+      const first = await startMastery(user, finalSlotId);
+      await reveal(user, first.session_id, 1);
+      const again = await startMastery(user, finalSlotId);
+      expect(again.session_id).toBe(first.session_id);
+      expect(again.revealed_step_indices).toEqual([1]);
+      expect(again.revealed_steps).toEqual({ '1': { instruction: 'Hidden step 2', isSafetyStep: false } });
+    });
+
+    it('a reveal returns the step and is idempotent', async () => {
+      await readyForFinal(user);
+      const s = await startMastery(user, finalSlotId);
+      const r1 = await reveal(user, s.session_id, 2);
+      expect(r1.step.instruction).toBe('Hidden step 3');
+      expect(r1.revealed_step_indices).toEqual([2]);
+      await reveal(user, s.session_id, 0);
+      const r3 = await reveal(user, s.session_id, 2);
+      expect(r3.revealed_step_indices).toEqual([0, 2]);
+    });
+
+    it('safety and out-of-range steps cannot be "revealed"', async () => {
+      await readyForFinal(user, 3);
+      const s = await startMastery(user, finalSlotId);
+      await expect(reveal(user, s.session_id, 3)).rejects.toThrow(/STEP_NOT_HIDDEN/);
+      await expect(reveal(user, s.session_id, 99)).rejects.toThrow(/STEP_NOT_HIDDEN/);
+      await expect(reveal(user, s.session_id, -1)).rejects.toThrow(/STEP_NOT_HIDDEN/);
+    });
+
+    it("another user's session is not found", async () => {
+      await readyForFinal(user);
+      const s = await startMastery(user, finalSlotId);
+      await expect(reveal(other, s.session_id, 0)).rejects.toThrow(/MASTERY_SESSION_NOT_FOUND/);
+    });
+
+    it('needs a saved recipe and an unlocked slot', async () => {
+      await expect(startMastery(user, finalSlotId)).rejects.toThrow(/RECIPE_NOT_FOUND/);
+      await db.createUserRecipe(user.id, finalSlotId, masteryRecipe(2));
+      await expect(startMastery(user, finalSlotId)).rejects.toThrow(/SLOT_LOCKED/);
+    });
+
+    it('the check-in takes its counts from the session, not from the insert', async () => {
+      const recipeId = await readyForFinal(user, 3);
+      const s = await startMastery(user, finalSlotId);
+      await reveal(user, s.session_id, 0);
+      await reveal(user, s.session_id, 1);
+      const id = await checkInWith(user, recipeId, s.session_id, ', 3, 0');
+      const row = await db.getPool().query('SELECT hidden_steps, revealed_steps FROM check_ins WHERE id = $1', [id]);
+      expect(row.rows[0]).toEqual({ hidden_steps: 3, revealed_steps: 2 });
+      const codes = await asRole<{ code: string }>('service_role', 'SELECT code FROM get_badges_earned_by_check_in($1)', [id]);
+      expect(codes.map((b) => b.code)).not.toContain('mastery');
+    });
+
+    it('a session backs one check-in; after that reveals stop and a new session starts', async () => {
+      const recipeId = await readyForFinal(user);
+      const s = await startMastery(user, finalSlotId);
+      await checkInWith(user, recipeId, s.session_id);
+      await expect(checkInWith(user, recipeId, s.session_id)).rejects.toThrow(/check_ins_mastery_session_id_key/);
+      await expect(reveal(user, s.session_id, 0)).rejects.toThrow(/MASTERY_SESSION_USED/);
+      const next = await startMastery(user, finalSlotId);
+      expect(next.session_id).not.toBe(s.session_id);
+      expect(next.revealed_step_indices).toEqual([]);
+    });
+
+    it("a session must match the check-in's user and recipe", async () => {
+      const recipeId = await readyForFinal(user);
+      const otherRecipe = await readyForFinal(other);
+      const s = await startMastery(user, finalSlotId);
+      await expect(checkInWith(other, otherRecipe, s.session_id)).rejects.toThrow(/does not match/);
+      expect(recipeId).toBeTruthy();
+    });
+
+    it('mastery fields on a check-in cannot be changed afterwards', async () => {
+      const recipeId = await readyForFinal(user);
+      const s = await startMastery(user, finalSlotId);
+      const id = await checkInWith(user, recipeId, s.session_id);
+      await expect(db.getPool().query('UPDATE check_ins SET revealed_steps = 0, hidden_steps = 9 WHERE id = $1', [id])).rejects.toThrow(
+        /cannot be changed/
+      );
+      await expect(db.getPool().query('UPDATE check_ins SET mastery_session_id = NULL WHERE id = $1', [id])).rejects.toThrow(/cannot be changed/);
+    });
+
+    it('clients cannot see sessions, call the RPCs, or read recipe_json', async () => {
+      const recipeId = await readyForFinal(user);
+      const s = await startMastery(user, finalSlotId);
+      await expect(asUser(user.id, 'SELECT * FROM mastery_sessions')).rejects.toThrow(/permission denied/);
+      await expect(asUser(user.id, 'SELECT * FROM start_mastery_session($1, $2)', [user.id, finalSlotId])).rejects.toThrow(/permission denied/);
+      await expect(asUser(user.id, 'SELECT * FROM reveal_mastery_step($1, $2, 0)', [user.id, s.session_id])).rejects.toThrow(/permission denied/);
+      await expect(asUser(user.id, 'SELECT recipe_json FROM user_recipes')).rejects.toThrow(/permission denied/);
+      await expect(asRole('anon', 'SELECT id FROM user_recipes')).rejects.toThrow(/permission denied/);
+      const ids = await asUser<{ id: string }>(user.id, 'SELECT id FROM user_recipes WHERE slot_id = $1', [finalSlotId]);
+      expect(ids).toEqual([{ id: recipeId }]);
+      const theirs = await asUser<{ id: string }>(other.id, 'SELECT id FROM user_recipes WHERE slot_id = $1', [finalSlotId]);
+      expect(theirs).toEqual([]);
     });
   });
 

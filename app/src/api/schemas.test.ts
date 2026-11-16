@@ -1,4 +1,4 @@
-import { BadgesSchema, CheckInInputSchema, RecipeBookSchema } from './schemas';
+import { BadgesSchema, CheckInInputSchema, MasteryRevealResponseSchema, MasteryStartResponseSchema, RecipeBookSchema, RecipeStepSchema } from './schemas';
 
 describe('recipe book and badge schemas', () => {
   it('parses a get_my_recipe_book row, including a null user_recipe_id', () => {
@@ -77,27 +77,46 @@ const pathCheckIn = {
   rating: 'ok' as const,
 };
 
-describe('check-in mastery payload', () => {
-  it('accepts mastery: { hidden_steps, revealed_steps } with revealed ≤ hidden', () => {
-    const body = { ...pathCheckIn, mastery: { hidden_steps: 3, revealed_steps: 1 } };
+describe('check-in mastery session', () => {
+  const sessionId = '20000000-0000-4000-8000-000000000001';
+
+  it('accepts a mastery_session_id', () => {
+    const body = { ...pathCheckIn, mastery_session_id: sessionId };
     expect(CheckInInputSchema.parse(body)).toEqual(body);
-    expect(CheckInInputSchema.parse({ ...pathCheckIn, mastery: { hidden_steps: 3, revealed_steps: 0 } }).mastery).toEqual({
-      hidden_steps: 3,
-      revealed_steps: 0,
-    });
-    expect(CheckInInputSchema.parse({ ...pathCheckIn, mastery: { hidden_steps: 3, revealed_steps: 3 } }).mastery).toEqual({
-      hidden_steps: 3,
-      revealed_steps: 3,
-    });
   });
 
-  it('rejects revealed_steps greater than hidden_steps', () => {
-    expect(() => CheckInInputSchema.parse({ ...pathCheckIn, mastery: { hidden_steps: 3, revealed_steps: 4 } })).toThrow(
-      /revealed_steps cannot be more than hidden_steps/,
-    );
+  it('rejects a non-UUID session id', () => {
+    expect(() => CheckInInputSchema.parse({ ...pathCheckIn, mastery_session_id: 'abc' })).toThrow();
   });
 
-  it('still accepts a path check-in without mastery', () => {
-    expect(CheckInInputSchema.parse(pathCheckIn).mastery).toBeUndefined();
+  it('never sends client-reported counts', () => {
+    const parsed = CheckInInputSchema.parse({ ...pathCheckIn, mastery: { hidden_steps: 3, revealed_steps: 0 } });
+    expect(parsed).not.toHaveProperty('mastery');
+  });
+
+  it('still accepts a path check-in without a session', () => {
+    expect(CheckInInputSchema.parse(pathCheckIn).mastery_session_id).toBeUndefined();
+  });
+});
+
+describe('mastery responses', () => {
+  it('parses a start response and a masked step', () => {
+    const start = MasteryStartResponseSchema.parse({
+      session_id: '20000000-0000-4000-8000-000000000001',
+      hidden_step_indices: [2, 3],
+      revealed_steps: { '3': { instruction: 'Rest it', isSafetyStep: false } },
+    });
+    expect(start.revealed_steps['3'].instruction).toBe('Rest it');
+    expect(RecipeStepSchema.parse({ instruction: 'Hidden step.', isSafetyStep: false, isHidden: true }).isHidden).toBe(true);
+  });
+
+  it('parses a reveal response', () => {
+    const r = MasteryRevealResponseSchema.parse({
+      step_index: 2,
+      step: { instruction: 'Pat dry', isSafetyStep: false },
+      hidden_step_indices: [2, 3],
+      revealed_step_indices: [2],
+    });
+    expect(r.step.instruction).toBe('Pat dry');
   });
 });

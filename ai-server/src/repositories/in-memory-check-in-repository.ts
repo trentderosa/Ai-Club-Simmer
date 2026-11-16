@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import { CheckInIdempotencyConflict, type CheckInRecord } from '../types/check-in.js';
+import { CheckInIdempotencyConflict, CheckInMasterySessionError, type CheckInRecord } from '../types/check-in.js';
 import type { CheckInRepository, CreateCheckInParams, CreatedCheckIn } from './check-in-repository.js';
 
 interface UserRecipeRecord {
@@ -15,6 +15,8 @@ interface UserRecipeRecord {
 export class InMemoryCheckInRepository implements CheckInRepository {
   private checkIns: Map<string, CheckInRecord> = new Map();
   private userRecipes: Map<string, UserRecipeRecord> = new Map();
+  /** mastery_session_id -> check-in id (one check-in per session, like the DB). */
+  private masterySessions: Map<string, string> = new Map();
 
   /**
    * Seed a user recipe for testing.
@@ -29,6 +31,7 @@ export class InMemoryCheckInRepository implements CheckInRepository {
   clear(): void {
     this.checkIns.clear();
     this.userRecipes.clear();
+    this.masterySessions.clear();
   }
 
   validateUserRecipe(userId: string, userRecipeId: string, slotId: number): Promise<boolean> {
@@ -59,6 +62,10 @@ export class InMemoryCheckInRepository implements CheckInRepository {
       }
     }
 
+    if (params.mastery_session_id && this.masterySessions.has(params.mastery_session_id)) {
+      throw new CheckInMasterySessionError('MASTERY_SESSION_USED');
+    }
+
     const record: CheckInRecord = {
       id: params.id ?? randomUUID(),
       user_id: params.user_id,
@@ -72,6 +79,9 @@ export class InMemoryCheckInRepository implements CheckInRepository {
     };
 
     this.checkIns.set(record.id, record);
+    if (params.mastery_session_id) {
+      this.masterySessions.set(params.mastery_session_id, record.id);
+    }
     return { ...record, created: true };
   }
 
@@ -96,5 +106,10 @@ export class InMemoryCheckInRepository implements CheckInRepository {
    */
   getAllCheckIns(): CheckInRecord[] {
     return Array.from(this.checkIns.values());
+  }
+
+  /** The check-in id a mastery session backs, if any (for testing assertions). */
+  checkInForMasterySession(sessionId: string): string | null {
+    return this.masterySessions.get(sessionId) ?? null;
   }
 }

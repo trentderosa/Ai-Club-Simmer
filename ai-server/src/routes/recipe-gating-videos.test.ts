@@ -246,3 +246,38 @@ describe('F2 gating order', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('F8 mastery: the final slot never sends hidden step text', () => {
+  const finalSlot = pathRepo({
+    getPathSlot: vi.fn().mockResolvedValue({ id: 10, dishName: 'Roast Chicken', techniqueFocus: 'Roasting', isFinal: true }),
+  });
+
+  it('masks non-safety steps on a fresh generation, but saves the full recipe', async () => {
+    const { app, recipes } = setup({ pathRepository: finalSlot });
+    const res = await request(app).post('/api/recipes/generate/10').set('Authorization', `Bearer ${token()}`);
+    expect(res.status).toBe(200);
+    const steps = res.body.recipe.steps as Array<{ instruction: string; isHidden?: boolean; isSafetyStep: boolean }>;
+    expect(steps.map((s) => s.isHidden ?? false)).toEqual([true, false, true]);
+    expect(steps[1].instruction).toBe('Cook on low heat');
+    expect(JSON.stringify(res.body)).not.toContain('Whisk the eggs');
+    expect(JSON.stringify(res.body)).not.toContain('"Serve"');
+    expect(recipes.getAll()[0].recipe.steps[0].instruction).toBe('Whisk the eggs');
+  });
+
+  it('masks a saved recipe too', async () => {
+    const { app, recipes } = setup({ pathRepository: finalSlot });
+    await recipes.save(USER_ID, 10, recipe);
+    const res = await request(app).post('/api/recipes/generate/10').set('Authorization', `Bearer ${token()}`);
+    expect(res.body.cached).toBe(true);
+    expect(JSON.stringify(res.body)).not.toContain('Whisk the eggs');
+    // Technique names stay, so the "Learn the move" videos still show.
+    expect(res.body.videos).toHaveProperty('Whisk eggs');
+  });
+
+  it('other slots are never masked', async () => {
+    const { app, recipes } = setup();
+    await recipes.save(USER_ID, 2, recipe);
+    const res = await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
+    expect(res.body.recipe.steps[0].instruction).toBe('Whisk the eggs');
+  });
+});
