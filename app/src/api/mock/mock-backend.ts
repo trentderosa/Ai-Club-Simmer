@@ -49,6 +49,15 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 /** A fake but RFC-valid v4 UUID per slot, so it passes the check-in schema. */
 export const mockUserRecipeId = (slotId: number) => `00000000-0000-4000-8000-${String(slotId).padStart(12, '0')}`;
 
+/** Look up a celebration seal from the shared BADGES catalog. Missing codes fail loudly. */
+export function catalogBadge(code: string): CheckInBadge {
+  const badge = BADGES.find((b) => b.code === code);
+  if (!badge) {
+    throw new Error(`Unknown badge code in mock catalog: ${code}`);
+  }
+  return { code: badge.code, name: badge.name, description: badge.description, kind: badge.kind };
+}
+
 interface MockState {
   session: AppSession | null;
   profile: Profile | null;
@@ -171,12 +180,6 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     return derivePlan(SLOTS, state.completions, state.recipeSlots);
   }
 
-  function catalogBadge(code: string): CheckInBadge | undefined {
-    const badge = BADGES.find((b) => b.code === code);
-    if (!badge) return undefined;
-    return { code: badge.code, name: badge.name, description: badge.description, kind: badge.kind };
-  }
-
   function badgesFor(
     slotId: number,
     firstCompletion: boolean,
@@ -188,19 +191,18 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     // Completion badges exist only for slots 1–9. Slot 10 is the mastery
     // challenge, so a final-slot check-in must not invent complete_slot_10.
     if (firstCompletion && !slot.is_final) {
-      const completion = catalogBadge(`complete_slot_${slot.slot_order}`);
-      if (completion) earned.push(completion);
+      earned.push(catalogBadge(`complete_slot_${slot.slot_order}`));
     }
     // Mastery badge: only on a final-slot check-in with revealed_steps = 0.
     // A missing payload earns no badge. Repeats can still earn it later.
+    // Record mastery as earned only after the catalog lookup succeeds.
     if (slot.is_final && qualifiesForMasteryBadge(mastery) && !state.masteryEarnedAt) {
-      state.masteryEarnedAt = new Date().toISOString();
       const masteryBadge = catalogBadge('mastery');
-      if (masteryBadge) earned.push(masteryBadge);
+      state.masteryEarnedAt = new Date().toISOString();
+      earned.push(masteryBadge);
     }
     if (firstCompletion && currentPlan().every((p) => p.status === 'done')) {
-      const milestone = catalogBadge('path_weeknight_basics');
-      if (milestone) earned.push(milestone);
+      earned.push(catalogBadge('path_weeknight_basics'));
     }
     return earned;
   }

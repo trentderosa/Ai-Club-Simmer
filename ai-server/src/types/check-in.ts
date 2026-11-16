@@ -167,6 +167,14 @@ export interface CheckInResponse {
  * The given idempotency_key already belongs to a different user, recipe, or slot.
  * The route maps this to 409 IDEMPOTENCY_CONFLICT.
  */
+export class CheckInIdempotencyConflict extends Error {
+  readonly code = 'IDEMPOTENCY_CONFLICT' as const;
+  constructor() {
+    super('idempotency_key was already used for a different check-in');
+    this.name = 'CheckInIdempotencyConflict';
+  }
+}
+
 /**
  * The mastery session can't back this check-in: it was already used by
  * another check-in (MASTERY_SESSION_USED, 409) or belongs to a different
@@ -180,13 +188,5 @@ export class CheckInMasterySessionError extends Error {
         : 'mastery_session_id does not match this check-in'
     );
     this.name = 'CheckInMasterySessionError';
-  }
-}
-
-export class CheckInIdempotencyConflict extends Error {
-  readonly code = 'IDEMPOTENCY_CONFLICT' as const;
-  constructor() {
-    super('idempotency_key was already used for a different check-in');
-    this.name = 'CheckInIdempotencyConflict';
   }
 }

@@ -1,5 +1,5 @@
 import { BADGES, MASTERY_USER, MASTERY_USER_XP, RECIPES, SLOTS } from './fixtures';
-import { createMockBackend, mockUserRecipeId } from './mock-backend';
+import { catalogBadge, createMockBackend, mockUserRecipeId } from './mock-backend';
 import { awardXp, derivePlan, deriveSummary } from './mock-plan';
 
 describe('mock plan rules', () => {
@@ -26,6 +26,20 @@ describe('mock plan rules', () => {
     expect(awardXp(143, false, 0)).toEqual({ xp_awarded: 72, capped: false });
     expect(awardXp(143, false, 72)).toEqual({ xp_awarded: 28, capped: true });
     expect(awardXp(143, false, 100)).toEqual({ xp_awarded: 0, capped: true });
+  });
+});
+
+describe('mock badge catalog', () => {
+  it('includes every badge code the mock awards, and throws on a missing code', () => {
+    const codes = BADGES.map((b) => b.code);
+    for (const n of [1, 2, 3, 4, 5, 6, 7, 8, 9]) {
+      expect(codes).toContain(`complete_slot_${n}`);
+    }
+    expect(codes).toContain('mastery');
+    expect(codes).toContain('path_weeknight_basics');
+    expect(catalogBadge('mastery').name).toBe('Roast Chicken Mastery');
+    expect(() => catalogBadge('complete_slot_10')).toThrow(/Unknown badge code in mock catalog: complete_slot_10/);
+    expect(() => catalogBadge('not_a_real_badge')).toThrow(/Unknown badge code in mock catalog: not_a_real_badge/);
   });
 });
 

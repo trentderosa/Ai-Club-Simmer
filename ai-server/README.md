@@ -48,8 +48,11 @@ With `NODE_ENV=production`, the server exits at startup and names any missing va
 
 `POST /api/recipes/generate/:slotId` reads the slot and the user's onboarding profile (plus
 their last 3 check-ins, for the Coach's note) from Supabase with the service role
-(`src/repositories/path-repository.ts`). A saved recipe is returned as-is. Otherwise the
-server first calls `is_slot_unlocked` and answers `403 SLOT_LOCKED` for a locked slot.
+(`src/repositories/path-repository.ts`). A saved recipe is returned immediately
+(`cached: true`), masked when the slot is the mastery challenge. An unknown slot is
+404 even if a saved recipe exists, so hidden steps are never returned unmasked.
+Otherwise the server first calls `is_slot_unlocked` and answers `403 SLOT_LOCKED`
+for a locked slot.
 
 With `YOUTUBE_API_KEY` set, `src/services/video-finder.ts` runs one YouTube search per
 distinct technique in a new recipe and caches it in `technique_videos`. It caches misses for

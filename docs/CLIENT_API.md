@@ -76,7 +76,7 @@ POST {AI_SERVER}/api/recipes/generate/:slotId
 Authorization: Bearer <access_token>
 ```
 
-The first call generates the recipe with Ollama, which can take 10–60 s, so show a loading state. Later calls return the saved recipe instantly (`cached: true`).
+The first call generates the recipe with Ollama, which can take 10–60 s, so show a loading state. Later calls return the saved recipe instantly (`cached: true`). An unknown slot is 404 even if a saved recipe exists, so hidden steps are never returned unmasked.
 
 ```jsonc
 {
