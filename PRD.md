@@ -242,7 +242,7 @@ Do **not** build these. They're future work.
 
 **Constraints**
 - **Timeline:** ~2 months to a working demo. The team is part-time students.
-- **The AI only works while the AI-server laptop is running Ollama and the proxy.** Recipes that are already generated and saved still load without it.
+- **The AI only works while the AI-server laptop is running Ollama and the proxy.** Recipes that are already generated and saved still load without it. `GET /health` only checks that the process is up. `GET /health/deep` reports whether the configured Ollama model answers, whether a cheap service-role read of `path_slots` succeeds, and whether the YouTube key is set. It does not call the YouTube API, and the response has no keys, URLs, or error text.
 - **Secrets:** The YouTube API key and Supabase service-role key live only on the AI server, never in the app.
 - **CORS:** The AI server echoes only origins listed in `ALLOWED_ORIGINS`. It never sends `Access-Control-Allow-Origin: *`.
 - **YouTube quota:** The default quota is 10,000 units/day, and each search costs 100 units (about 100 searches/day), so searches must be cached.

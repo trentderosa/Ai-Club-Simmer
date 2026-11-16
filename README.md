@@ -46,6 +46,8 @@ npm run dev            # tsx watch, default http://127.0.0.1:3001
 
 To run the compiled server: `npm run build && npm start`.
 
+`GET /health` stays a fast, unauthenticated process check and returns `{"status":"ok"}`. `GET /health/deep` checks that the configured Ollama model is listed, that a one-row `path_slots` read with the service role succeeds, and that `YOUTUBE_API_KEY` is set. It does not call the YouTube API. Each check times out after 2 seconds. The JSON is only `ok` or `fail` plus a short reason code: no keys, URLs, or error text.
+
 ```bash
 npm test               # vitest
 npm run lint
