@@ -232,25 +232,27 @@ export function createRecipeRouter(
       const { slotId } = paramsResult.data;
       const dietaryNeedsOverride = bodyResult.data?.dietaryNeeds;
 
+      // One slot lookup for both the cached and generate paths. A missing
+      // slot is 404 even if a saved recipe exists, so we never fail open and
+      // leak hidden step text.
+      const slot = await deps.supabase.getPathSlot(slotId);
+      if (!slot) {
+        res.status(404).json({
+          error: `Path slot ${slotId} not found`,
+        });
+        return;
+      }
+
       const existingRecipe = await deps.supabase.getSavedRecipe(userId, slotId);
       if (existingRecipe) {
         // null = never stored (or the last lookup was incomplete): look again.
         const storedVideos = await deps.supabase.getSavedVideos(userId, slotId);
         const videos = storedVideos ?? (await attachVideos(userId, slotId, existingRecipe));
         // F8: the final slot's hidden steps are only served by a mastery reveal.
-        const savedSlot = await deps.supabase.getPathSlot(slotId);
         res.json({
-          recipe: savedSlot?.isFinal ? maskRecipeForMastery(existingRecipe) : existingRecipe,
+          recipe: slot.isFinal ? maskRecipeForMastery(existingRecipe) : existingRecipe,
           cached: true,
           videos,
-        });
-        return;
-      }
-
-      const slot = await deps.supabase.getPathSlot(slotId);
-      if (!slot) {
-        res.status(404).json({
-          error: `Path slot ${slotId} not found`,
         });
         return;
       }

@@ -148,6 +148,7 @@ describe('POST /api/recipes/generate/:slotId', () => {
     const ollamaClient = createMockOllamaClient();
     const supabase = createMockSupabase({
       tokenValid: true,
+      pathSlot: mockSlot,
       savedRecipe: validRecipe,
     });
     const app = createApp({ ollamaClient, supabase });

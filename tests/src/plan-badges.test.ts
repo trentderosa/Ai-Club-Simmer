@@ -564,6 +564,42 @@ describe('plan, badges and recipe book', () => {
       await expect(db.getPool().query('UPDATE check_ins SET mastery_session_id = NULL WHERE id = $1', [id])).rejects.toThrow(/cannot be changed/);
     });
 
+    it('deleting a session clears the check-in link and leaves the counts', async () => {
+      const recipeId = await readyForFinal(user, 3);
+      const s = await startMastery(user, finalSlotId);
+      const id = await checkInWith(user, recipeId, s.session_id);
+      await db.getPool().query('DELETE FROM mastery_sessions WHERE id = $1', [s.session_id]);
+      const row = await db.getPool().query(
+        'SELECT mastery_session_id, hidden_steps, revealed_steps FROM check_ins WHERE id = $1',
+        [id]
+      );
+      expect(row.rows[0]).toEqual({ mastery_session_id: null, hidden_steps: 3, revealed_steps: 0 });
+    });
+
+    it('deleting a user who has a mastery check-in succeeds', async () => {
+      const recipeId = await readyForFinal(user, 3);
+      const s = await startMastery(user, finalSlotId);
+      const id = await checkInWith(user, recipeId, s.session_id);
+      await db.getPool().query('DELETE FROM auth.users WHERE id = $1', [user.id]);
+      const leftover = await db.getPool().query(
+        'SELECT (SELECT count(*)::int FROM check_ins WHERE id = $1) AS check_ins, (SELECT count(*)::int FROM mastery_sessions WHERE id = $2) AS sessions, (SELECT count(*)::int FROM user_recipes WHERE id = $3) AS recipes',
+        [id, s.session_id, recipeId]
+      );
+      expect(leftover.rows[0]).toEqual({ check_ins: 0, sessions: 0, recipes: 0 });
+    });
+
+    it('deleting a recipe that has a mastery check-in succeeds', async () => {
+      const recipeId = await readyForFinal(user, 3);
+      const s = await startMastery(user, finalSlotId);
+      const id = await checkInWith(user, recipeId, s.session_id);
+      await db.getPool().query('DELETE FROM user_recipes WHERE id = $1', [recipeId]);
+      const leftover = await db.getPool().query(
+        'SELECT (SELECT count(*)::int FROM check_ins WHERE id = $1) AS check_ins, (SELECT count(*)::int FROM mastery_sessions WHERE id = $2) AS sessions',
+        [id, s.session_id]
+      );
+      expect(leftover.rows[0]).toEqual({ check_ins: 0, sessions: 0 });
+    });
+
     it('clients cannot see sessions, call the RPCs, or read recipe_json', async () => {
       const recipeId = await readyForFinal(user);
       const s = await startMastery(user, finalSlotId);

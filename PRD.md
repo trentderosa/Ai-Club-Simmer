@@ -54,7 +54,7 @@ Every user gets the same path, **"Weeknight basics"**: 10 dish slots in a fixed 
 - [ ] The plan shows a suggested number of cooking sessions per week based on the user's onboarding schedule.
 - [ ] The final slot is marked as the mastery challenge.
 
-*Server side (PR #11, migration `20261115000000_plan_badges_recipe_book.sql`):* a slot is **done** once the user has at least one check-in for it. **Current** is the first slot that isn't done, and everything after it is **locked**. The app reads this with `get_my_plan()`, and `get_my_plan_summary()` gives total XP and the suggested sessions per week (rule in open question 11). The AI server enforces path order: `POST /api/recipes/generate/:slotId` returns `403 SLOT_LOCKED` for a locked slot. Done slots stay open so they can be repeated, and saved recipes always load. See `docs/CLIENT_API.md`.
+*Server side (PR #11, migration `20261115000000_plan_badges_recipe_book.sql`):* a slot is **done** once the user has at least one check-in for it. **Current** is the first slot that isn't done, and everything after it is **locked**. The app reads this with `get_my_plan()`, and `get_my_plan_summary()` gives total XP and the suggested sessions per week (rule in open question 11). The AI server enforces path order: `POST /api/recipes/generate/:slotId` returns `403 SLOT_LOCKED` for a locked slot. Done slots stay open so they can be repeated, and saved recipes always load when the slot is known. If the path-slot lookup comes back empty, the call returns 404 even if a saved recipe exists, so hidden step text is never returned unmasked. See `docs/CLIENT_API.md`.
 
 *Client (`app/`, UI Direction A):* Today reads `get_my_plan()` and `get_my_plan_summary()` and shows the next dish, the suggested sessions per week, total XP, all 10 slots as done / current / locked, and the final slot as the mastery challenge. Locked slots can't be opened. It re-reads both after a check-in. A "Cook anything" card on Today opens the free-form dish flow (F11); it does not change path order.
 
@@ -173,10 +173,11 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 - [ ] Reveals are tracked by the server. The app never receives a hidden step's text until the user reveals it, and the reveal count on the check-in comes from the server, not the app.
 
 *Server side:* hidden steps are served only on reveal (migration `20261116000000_mastery_sessions.sql`, follow-up to Q4).
-- The recipe call for slot 10 returns hidden steps masked: placeholder text, no "why it matters", `isHidden: true`. Technique names stay, so their videos still show.
+- The recipe call for slot 10 returns hidden steps masked: placeholder text, no "why it matters", `isHidden: true`. Technique names stay, so their videos still show. If the path-slot lookup comes back empty, the call returns 404 even when a saved recipe exists, so hidden step text is never returned unmasked.
 - Cook mode calls `POST /api/mastery/sessions`, which starts the user's mastery session or resumes the open one. A session stays open until a check-in uses it, so closing the app or reopening cook mode can't reset the reveal count.
 - `POST /api/mastery/sessions/:id/reveal` records the reveal in `mastery_sessions` before it returns the step's real content.
 - The check-in sends `mastery_session_id`. A trigger copies `hidden_steps` and `revealed_steps` from the session, rejects counts sent without a session, and lets each session back only one check-in. The older client-sent `mastery: { hidden_steps, revealed_steps }` is still accepted so old builds don't fail, but it is ignored and earns no badge.
+- Deleting an account or a saved recipe that has a mastery check-in succeeds (migration `20261116150000_check_in_mastery_session_delete.sql`). The immutability trigger still blocks a direct change to the session link or the copied counts, but it allows the foreign key to clear `mastery_session_id` when the session row itself is deleted.
 - `get_badges_for_user` is unchanged: the badge needs a final-slot check-in with counts and `revealed_steps = 0` (migration `20261115210000_mastery_badge_zero_reveals.sql`). New counts can only come from a session, so that rule is now checked by the server. Check-ins saved before this migration keep their old client-reported counts.
 - Clients can no longer insert `check_ins` directly or read `user_recipes.recipe_json`. Only the AI server writes check-ins, and it was already the only caller.
 - Badge rules are Ian's area; Ian still needs to OK the zero-reveals rule (Trent decided it on Nov 15, 2026).
@@ -194,7 +195,7 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 
 *Server side:* `badges` is a fixed catalog: 9 completion badges, 1 mastery badge and 1 path milestone. The badge names are placeholders for Ian (open question 12). Earned badges are derived from each slot's first check-in, so a badge can't be earned twice. `get_my_badges()` lists earned and locked badges, and the check-in response lists `badges.earned` for the celebration.
 
-*Client (`app/`, UI Direction A):* session complete shows a seal for each badge in `badges.earned`. The profile lists every badge from `get_my_badges()`, with unearned seals grayed out. Mock check-ins use that same catalog: a completion seal for slots 1–9 only, never a slot-10 completion seal, and the mastery seal only when `revealed_steps` is 0.
+*Client (`app/`, UI Direction A):* session complete shows a seal for each badge in `badges.earned`. The profile lists every badge from `get_my_badges()`, with unearned seals grayed out. Mock check-ins use that same catalog: a completion seal for slots 1–9 only, never a slot-10 completion seal, and the mastery seal only when `revealed_steps` is 0. A code missing from the catalog fails the check-in instead of dropping the seal, and the mock only records mastery as earned after that lookup succeeds.
 
 ### F10. Recipe book
 **Acceptance criteria**

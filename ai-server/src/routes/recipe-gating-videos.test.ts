@@ -274,6 +274,19 @@ describe('F8 mastery: the final slot never sends hidden step text', () => {
     expect(res.body.videos).toHaveProperty('Whisk eggs');
   });
 
+  it('does not leak a saved recipe when the path-slot lookup is empty', async () => {
+    const { app, recipes } = setup({
+      pathRepository: pathRepo({
+        getPathSlot: vi.fn().mockResolvedValue(null),
+      }),
+    });
+    await recipes.save(USER_ID, 10, recipe);
+    const res = await request(app).post('/api/recipes/generate/10').set('Authorization', `Bearer ${token()}`);
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(res.body)).not.toContain('Whisk the eggs');
+    expect(JSON.stringify(res.body)).not.toContain('"Serve"');
+  });
+
   it('other slots are never masked', async () => {
     const { app, recipes } = setup();
     await recipes.save(USER_ID, 2, recipe);
