@@ -22,7 +22,7 @@ See [PRD.md](PRD.md) for the full MVP requirements, [docs/CLIENT_API.md](docs/CL
 
 ## App
 
-The Expo client covers the core loop plus the recipe book, profile, and Cook anything: sign up or sign in, onboarding, Today (the plan), recipe, cook mode (including the slot 10 mastery challenge, where non-safety steps start hidden and the mastery badge needs zero reveals), check-in, session complete, the recipe book and the profile (XP, badges, editable onboarding answers, sign-out), and typing a dish from Today. A small bottom bar switches between Today, the recipe book and You. Requires Node.js 22.13 or later (Expo SDK 58 needs it). Mock mode runs it with fake data and no backend. Mock check-ins celebrate the same badge catalog as the database: completion seals for slots 1–9 only, and the mastery seal only when the final cook reveals nothing.
+The Expo client covers the core loop plus the recipe book, profile, and Cook anything: sign up or sign in, onboarding, Today (the plan), recipe, cook mode (including the slot 10 mastery challenge, where non-safety steps start hidden, the server tracks every reveal, and the mastery badge needs zero reveals), check-in, session complete, the recipe book and the profile (XP, badges, editable onboarding answers, sign-out), and typing a dish from Today. A small bottom bar switches between Today, the recipe book and You. Requires Node.js 22.13 or later (Expo SDK 58 needs it). Mock mode runs it with fake data and no backend. Mock check-ins celebrate the same badge catalog as the database: completion seals for slots 1–9 only, and the mastery seal only when the final cook reveals nothing.
 
 ```bash
 cd app
@@ -66,9 +66,11 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/simmer_test npm test
 
 ## Database security
 
-Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Privileged functions such as `award_slot_xp`, `award_generated_recipe_xp`, `is_slot_unlocked` and `get_badges_earned_by_check_in` are called only from the AI server with the service role, never from the client.
+Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Privileged functions such as `award_slot_xp`, `award_generated_recipe_xp`, `is_slot_unlocked`, `get_badges_earned_by_check_in`, `start_mastery_session` and `reveal_mastery_step` are called only from the AI server with the service role, never from the client.
 
-The plan, badges and recipe book are derived from `check_ins` (migration `20261115000000_plan_badges_recipe_book.sql`). The app reads them through `get_my_plan()`, `get_my_plan_summary()`, `get_my_badges()` and `get_my_recipe_book()`. These take no user id and always use `auth.uid()`. Clients can insert check-ins (RLS-checked) but can't update or delete them, and the `technique_videos` cache is invisible to them.
+The plan, badges and recipe book are derived from `check_ins` (migration `20261115000000_plan_badges_recipe_book.sql`). The app reads them through `get_my_plan()`, `get_my_plan_summary()`, `get_my_badges()` and `get_my_recipe_book()`. These take no user id and always use `auth.uid()`. Clients can't insert, update or delete check-ins (only the AI server writes them), and the `technique_videos` cache is invisible to them.
+
+The slot 10 mastery challenge is enforced on the server (migration `20261116000000_mastery_sessions.sql`). Clients can read `user_recipes` ids but not `recipe_json`, and the `mastery_sessions` table is server-only. A hidden step's text is sent only by the reveal endpoint, which records the reveal first. A check-in's reveal counts are copied from its session, never taken from the client.
 
 ## Environment variables
 

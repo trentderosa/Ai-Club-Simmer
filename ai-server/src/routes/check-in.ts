@@ -1,7 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { ZodError } from 'zod';
-import { CheckInIdempotencyConflict, CheckInInputSchema, isGeneratedCheckIn, isPathCheckIn } from '../types/check-in.js';
+import { CheckInIdempotencyConflict, CheckInInputSchema, CheckInMasterySessionError, isGeneratedCheckIn, isPathCheckIn } from '../types/check-in.js';
 import type { CheckInService } from '../services/check-in-service.js';
 import type { JwtVerifier } from '../services/jwt-verifier.js';
 import { createAuthMiddleware } from '../middleware/authenticate.js';
@@ -62,7 +62,8 @@ export function createCheckInRouter(
    *   rating: "easy" | "ok" | "hard",
    *   went_well?: string (max 500 chars),
    *   was_hard?: string (max 500 chars),
-   *   mastery?: { hidden_steps: number, revealed_steps: number }  (final slot only, F8)
+   *   mastery_session_id?: string (UUID; final slot only, F8 — from POST /api/mastery/sessions)
+   *   mastery?: { hidden_steps, revealed_steps }  (deprecated, accepted but ignored)
    *   idempotency_key?: string (UUID; reused on retry, stored as check_ins.id)
    * }
    * 
@@ -126,6 +127,14 @@ export function createCheckInRouter(
             path: e.path.join('.'),
             message: e.message,
           })),
+        });
+        return;
+      }
+
+      if (error instanceof CheckInMasterySessionError) {
+        res.status(error.code === 'MASTERY_SESSION_USED' ? 409 : 400).json({
+          error: error.message,
+          code: error.code,
         });
         return;
       }

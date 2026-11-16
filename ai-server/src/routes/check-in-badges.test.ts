@@ -10,7 +10,7 @@ import type { CoachNoteGenerator } from '../services/coach-note.js';
 import type { PathRepository } from '../repositories/path-repository.js';
 
 /**
- * F6 repeat suggestion, F8 mastery reveal counts and F9 badges on
+ * F6 repeat suggestion, F8 mastery sessions and F9 badges on
  * POST /api/check-ins.
  */
 
@@ -101,40 +101,75 @@ describe('F9 badges in the check-in response', () => {
   });
 });
 
-describe('F8 mastery reveal counts', () => {
-  it('accepted on the final slot', async () => {
-    const { app, recipeFor } = setup(lookups());
-    const res = await post(app, {
-      user_recipe_id: recipeFor(10),
-      slot_id: 10,
-      rating: 'ok',
-      mastery: { hidden_steps: 4, revealed_steps: 1 },
-    });
+describe('F8 mastery sessions on the check-in', () => {
+  const sessionId = randomUUID();
+
+  it('mastery_session_id is accepted on the final slot and linked to the check-in', async () => {
+    const { app, repository, recipeFor } = setup(lookups());
+    const res = await post(app, { user_recipe_id: recipeFor(10), slot_id: 10, rating: 'ok', mastery_session_id: sessionId });
     expect(res.status).toBe(201);
+    expect(repository.checkInForMasterySession(sessionId)).toBe(res.body.check_in_id);
   });
 
   it('rejected with MASTERY_NOT_ALLOWED on any other slot', async () => {
     const { app, repository, recipeFor } = setup(lookups());
-    const res = await post(app, {
-      user_recipe_id: recipeFor(3),
-      slot_id: 3,
-      rating: 'ok',
-      mastery: { hidden_steps: 4, revealed_steps: 1 },
-    });
+    const res = await post(app, { user_recipe_id: recipeFor(3), slot_id: 3, rating: 'ok', mastery_session_id: sessionId });
     expect(res.status).toBe(400);
     expect(res.body.code).toBe('MASTERY_NOT_ALLOWED');
     expect(await repository.getRecentByUser(USER_ID)).toEqual([]);
   });
 
-  it('revealed_steps cannot exceed hidden_steps', async () => {
+  it('a session backs one check-in: reusing it is 409 MASTERY_SESSION_USED', async () => {
     const { app, recipeFor } = setup(lookups());
+    const recipe = recipeFor(10);
+    const first = await post(app, { user_recipe_id: recipe, slot_id: 10, rating: 'ok', mastery_session_id: sessionId });
+    expect(first.status).toBe(201);
+    const second = await post(app, { user_recipe_id: recipe, slot_id: 10, rating: 'ok', mastery_session_id: sessionId });
+    expect(second.status).toBe(409);
+    expect(second.body.code).toBe('MASTERY_SESSION_USED');
+  });
+
+  it('a retry of the same attempt (same idempotency_key) is a replay, not a reuse', async () => {
+    const { app, recipeFor } = setup(lookups());
+    const body = { user_recipe_id: recipeFor(10), slot_id: 10, rating: 'ok', mastery_session_id: randomUUID(), idempotency_key: randomUUID() };
+    const first = await post(app, body);
+    const retry = await post(app, body);
+    expect(retry.status).toBe(201);
+    expect(retry.body.check_in_id).toBe(first.body.check_in_id);
+  });
+
+  it('must be a UUID', async () => {
+    const { app, recipeFor } = setup(lookups());
+    const res = await post(app, { user_recipe_id: recipeFor(10), slot_id: 10, rating: 'ok', mastery_session_id: 'abc' });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('is not allowed on a cook-anything check-in', async () => {
+    const { app } = setup(lookups());
+    const res = await post(app, { generated_recipe_id: randomUUID(), rating: 'ok', mastery_session_id: sessionId });
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('deprecated client counts are still accepted on the final slot but never stored', async () => {
+    const { app, repository, recipeFor } = setup(lookups());
     const res = await post(app, {
       user_recipe_id: recipeFor(10),
       slot_id: 10,
       rating: 'ok',
-      mastery: { hidden_steps: 2, revealed_steps: 3 },
+      mastery: { hidden_steps: 4, revealed_steps: 0 },
     });
+    expect(res.status).toBe(201);
+    const [saved] = repository.getAllCheckIns();
+    expect(saved).not.toHaveProperty('hidden_steps');
+    expect(saved).not.toHaveProperty('revealed_steps');
+  });
+
+  it('deprecated client counts on any other slot are still MASTERY_NOT_ALLOWED', async () => {
+    const { app, recipeFor } = setup(lookups());
+    const res = await post(app, { user_recipe_id: recipeFor(3), slot_id: 3, rating: 'ok', mastery: { hidden_steps: 4, revealed_steps: 1 } });
     expect(res.status).toBe(400);
-    expect(res.body.code).toBe('VALIDATION_ERROR');
+    expect(res.body.code).toBe('MASTERY_NOT_ALLOWED');
   });
 });

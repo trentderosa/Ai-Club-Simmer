@@ -26,7 +26,7 @@ import {
   SLOW_CHECK_IN_HINT,
   SLOW_CHECK_IN_HINT_MS,
 } from '../../domain/check-in-retry';
-import { revealedLabel } from '../../domain/mastery';
+import { countsForRun, revealedLabel } from '../../domain/mastery';
 import { errorCopy } from '../../domain/error-messages';
 import { isApiError } from '../../api';
 import { useFlowCache } from '../../state/flow-cache';
@@ -77,9 +77,10 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
   const [error, setError] = useState<string | null>(null);
   const [idempotencyKey] = useState(newIdempotencyKey);
   const [slowHint, setSlowHint] = useState(false);
-  // N1: only send mastery when cook mode recorded a real session.
-  // A missing payload earns no badge, so a skipped cook cannot look like a perfect run.
-  const mastery = slot.is_final ? (cache.getMastery(slot.slot_id)?.counts ?? undefined) : undefined;
+  // F8: send the server-side session cook mode started. The server reads the
+  // reveal counts from it. Without one (cook mode skipped) no mastery badge.
+  const masteryRun = slot.is_final ? cache.getMastery(slot.slot_id) : null;
+  const mastery = masteryRun ? countsForRun(masteryRun) : null;
 
   useEffect(() => {
     if (!saving) return;
@@ -104,7 +105,7 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
           rating,
           went_well: wentWell.trim() || undefined,
           was_hard: wasHard.trim() || undefined,
-          mastery,
+          mastery_session_id: masteryRun?.sessionId,
           idempotency_key: idempotencyKey,
         },
         session.accessToken,

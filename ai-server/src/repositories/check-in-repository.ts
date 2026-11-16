@@ -12,9 +12,12 @@ export interface CreateCheckInParams {
   difficulty_rating: 'easy' | 'ok' | 'hard';
   went_well: string | null;
   was_hard: string | null;
-  /** F8 mastery challenge only (final slot): steps hidden / revealed. */
-  hidden_steps?: number | null;
-  revealed_steps?: number | null;
+  /**
+   * F8 mastery challenge only (final slot): the server-side session. The
+   * database copies hidden/revealed counts from it; a session already used
+   * by another check-in throws CheckInMasterySessionError.
+   */
+  mastery_session_id?: string | null;
   /**
    * When set (the client's idempotency_key), used as check_ins.id.
    * A second create with the same id and the same user/recipe/slot returns

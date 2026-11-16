@@ -264,17 +264,19 @@ describe('XP Award Logic (F7)', () => {
       );
 
       expect(result.success).toBe(false);
-      expect(result.error).toMatch(/policy|violates/i);
+      expect(result.error).toMatch(/permission denied/i);
     });
 
-    it('client can create check-in with matching recipe/slot', async () => {
+    it('client cannot create check-ins at all, even with a matching recipe/slot (only the ai-server writes them)', async () => {
       const result = await db.tryClientInsertCheckInAsRole(
         testUser.id,
         userRecipeId1,
         slotId1
       );
 
-      expect(result.success).toBe(true);
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/permission denied/i);
+      expect(await db.hasClientInsertPolicy('check_ins')).toBe(false);
     });
   });
 

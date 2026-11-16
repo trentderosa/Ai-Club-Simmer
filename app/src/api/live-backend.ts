@@ -149,6 +149,8 @@ export function createLiveBackend(opts: {
     },
 
     submitCheckIn: (input, token) => ai.submitCheckIn(input, token),
+    startMastery: (slotId, token) => ai.startMastery(slotId, token),
+    revealMasteryStep: (sessionId, stepIndex, token) => ai.revealMasteryStep(sessionId, stepIndex, token),
 
     cookAnything: (dish, token) => ai.cookAnything(dish, token),
 

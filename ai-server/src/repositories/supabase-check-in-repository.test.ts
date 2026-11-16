@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'crypto';
-import { CheckInIdempotencyConflict } from '../types/check-in.js';
+import { CheckInIdempotencyConflict, CheckInMasterySessionError } from '../types/check-in.js';
 import { SupabaseCheckInRepository } from './supabase-check-in-repository.js';
 
 const mockFetch = vi.fn();
@@ -144,8 +144,6 @@ describe('SupabaseCheckInRepository', () => {
         difficulty_rating: 'ok',
         went_well: 'Sauce was great',
         was_hard: 'Timing tricky',
-        hidden_steps: null,
-        revealed_steps: null,
       });
     });
 
@@ -345,6 +343,68 @@ describe('SupabaseCheckInRepository', () => {
           was_hard: null,
         })
       ).rejects.toBeInstanceOf(CheckInIdempotencyConflict);
+    });
+
+    describe('F8 mastery sessions', () => {
+      const sessionId = randomUUID();
+      const base = {
+        user_id: testUserId,
+        user_recipe_id: testRecipeId,
+        slot_id: 10,
+        difficulty_rating: 'ok' as const,
+        went_well: null,
+        was_hard: null,
+        mastery_session_id: sessionId,
+      };
+
+      it('sends mastery_session_id and never client counts', async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          json: () => [{ id: randomUUID(), ...base, is_repeat: false, created_at: '2026-11-16T12:00:00Z' }],
+        });
+        await repository.create(base);
+        const body = JSON.parse((mockFetch.mock.calls[0] as [string, RequestInit])[1].body as string);
+        expect(body.mastery_session_id).toBe(sessionId);
+        expect(body).not.toHaveProperty('hidden_steps');
+        expect(body).not.toHaveProperty('revealed_steps');
+      });
+
+      it('a 409 on the session (new id) is MASTERY_SESSION_USED', async () => {
+        mockFetch
+          .mockResolvedValueOnce({
+            ok: false,
+            status: 409,
+            text: () => '{"code":"23505","message":"duplicate key value violates unique constraint \\"check_ins_mastery_session_id_key\\""}',
+          })
+          .mockResolvedValueOnce({ ok: true, json: () => [] });
+        const err = await repository.create({ ...base, id: randomUUID() }).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(CheckInMasterySessionError);
+        expect((err as CheckInMasterySessionError).code).toBe('MASTERY_SESSION_USED');
+      });
+
+      it('a 409 that is a replay of the same check-in returns the existing row', async () => {
+        const id = randomUUID();
+        mockFetch
+          .mockResolvedValueOnce({ ok: false, status: 409, text: () => 'check_ins_mastery_session_id_key' })
+          .mockResolvedValueOnce({
+            ok: true,
+            json: () => [{ id, ...base, is_repeat: false, created_at: '2026-11-16T12:00:00Z' }],
+          });
+        const result = await repository.create({ ...base, id });
+        expect(result.created).toBe(false);
+        expect(result.id).toBe(id);
+      });
+
+      it('a session for another user/recipe is INVALID_MASTERY_SESSION', async () => {
+        mockFetch.mockResolvedValueOnce({
+          ok: false,
+          status: 400,
+          text: () => '{"code":"P0001","message":"mastery session does not match this check-in"}',
+        });
+        const err = await repository.create(base).catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(CheckInMasterySessionError);
+        expect((err as CheckInMasterySessionError).code).toBe('INVALID_MASTERY_SESSION');
+      });
     });
 
   describe('getById', () => {

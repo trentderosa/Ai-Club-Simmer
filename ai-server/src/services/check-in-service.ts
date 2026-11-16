@@ -81,8 +81,7 @@ export class CheckInService {
       difficulty_rating: input.rating,
       went_well: input.went_well ?? null,
       was_hard: input.was_hard ?? null,
-      hidden_steps: input.mastery?.hidden_steps ?? null,
-      revealed_steps: input.mastery?.revealed_steps ?? null,
+      mastery_session_id: input.mastery_session_id ?? null,
     });
 
     const xp = await this.awardXp(this.xpAwarder, checkIn.id, checkIn.slot_id);
@@ -107,12 +106,12 @@ export class CheckInService {
   }
 
   /**
-   * F8: mastery reveal counts are only allowed on the final slot. Returns
-   * false when they are sent for any other slot. Without a path repository
-   * (dev) the database trigger is the only check.
+   * F8: a mastery session (or the deprecated client counts) is only allowed
+   * on the final slot. Returns false when sent for any other slot. Without a
+   * path repository (dev) the database trigger is the only check.
    */
   async isMasteryInputAllowed(input: CheckInInput): Promise<boolean> {
-    if (!input.mastery || !this.pathRepository) return true;
+    if ((!input.mastery && !input.mastery_session_id) || !this.pathRepository) return true;
     if (input.slot_id === undefined) return false;
     const slot = await this.pathRepository.getPathSlot(input.slot_id);
     return slot?.isFinal === true;

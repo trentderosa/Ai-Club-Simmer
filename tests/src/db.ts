@@ -225,6 +225,13 @@ export class TestDatabase {
       GRANT SELECT ON generated_recipe_check_ins TO authenticated;
       REVOKE EXECUTE ON FUNCTION public.award_generated_recipe_xp(UUID) FROM PUBLIC, anon, authenticated;
       GRANT EXECUTE ON FUNCTION public.award_generated_recipe_xp(UUID) TO service_role;
+
+      -- 20261116000000_mastery_sessions.sql: re-assert after broad GRANTs
+      REVOKE ALL ON mastery_sessions FROM PUBLIC, anon, authenticated;
+      GRANT SELECT, INSERT, UPDATE ON mastery_sessions TO service_role;
+      REVOKE INSERT ON check_ins FROM anon, authenticated;
+      REVOKE SELECT ON user_recipes FROM anon, authenticated;
+      GRANT SELECT (id, user_id, slot_id, video_ids, created_at) ON user_recipes TO authenticated;
     `);
 
     // Match migration guard: only revoke when the function exists
@@ -246,6 +253,7 @@ export class TestDatabase {
     await this.pool.query('DELETE FROM user_generated_recipes');
     await this.pool.query('DELETE FROM xp_events');
     await this.pool.query('DELETE FROM check_ins');
+    await this.pool.query('DELETE FROM mastery_sessions');
     await this.pool.query('DELETE FROM technique_videos');
     await this.pool.query('DELETE FROM user_recipes');
     await this.pool.query('DELETE FROM user_slot_completions');
@@ -307,12 +315,12 @@ export class TestDatabase {
    * Create a user_recipe. Uses service-role style insert (superuser bypasses RLS)
    * since clients can no longer insert recipes directly (S5 fix).
    */
-  async createUserRecipe(userId: string, slotId: number): Promise<string> {
+  async createUserRecipe(userId: string, slotId: number, recipeJson?: object): Promise<string> {
     const result = await this.pool.query(
       `INSERT INTO user_recipes (user_id, slot_id, recipe_json)
-       VALUES ($1, $2, '{"title": "Test Recipe", "steps": []}')
+       VALUES ($1, $2, COALESCE($3::jsonb, '{"title": "Test Recipe", "steps": []}'::jsonb))
        RETURNING id`,
-      [userId, slotId]
+      [userId, slotId, recipeJson ? JSON.stringify(recipeJson) : null]
     );
     return result.rows[0].id;
   }

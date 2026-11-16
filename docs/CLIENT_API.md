@@ -15,7 +15,7 @@ The app never holds the service-role key or the YouTube key, and it never calls 
 | Recipe + cook mode (F3, F4, F5) | AI server `POST /api/recipes/generate/:slotId` |
 | Cook anything (F11) | AI server `POST /api/recipes/cook-anything`, then `user_generated_recipes` select for a saved recipe |
 | Check-in (F6, F7, F9, F11) | AI server `POST /api/check-ins` (path: `user_recipe_id` + `slot_id`; free-form: `generated_recipe_id`) |
-| Mastery challenge (F8) | Same two AI-server calls on slot 10, plus `mastery` in the check-in |
+| Mastery challenge (F8) | Same recipe call on slot 10, plus `POST /api/mastery/sessions`, `POST /api/mastery/sessions/:id/reveal`, and `mastery_session_id` in the check-in |
 | Badges (F9) | `rpc('get_my_badges')` |
 | Recipe book (F10) | `rpc('get_my_recipe_book')`, then `user_recipes` select for a full recipe |
 
@@ -170,14 +170,14 @@ Content-Type: application/json
   "rating": "hard",                 // 'easy' | 'ok' | 'hard'
   "went_well": "Nice texture",      // optional, max 500 chars
   "was_hard": "Heat control",       // optional, max 500 chars
-  "mastery": { "hidden_steps": 4, "revealed_steps": 1 },  // slot 10 only (F8)
+  "mastery_session_id": "<uuid>",   // slot 10 only (F8): from POST /api/mastery/sessions
   "idempotency_key": "<uuid>"       // optional; required for safe retries (see below)
 }
 ```
 
 For a path check-in, send `user_recipe_id` and `slot_id`. For a Cook anything check-in, send `generated_recipe_id` instead (the row in `user_generated_recipes`; RLS returns only your rows). Do not mix the two shapes.
 
-`user_recipe_id`: read it with `supabase.from('user_recipes').select('id').eq('slot_id', slotId).single()` (RLS returns only your rows).
+`user_recipe_id`: read it with `supabase.from('user_recipes').select('id').eq('slot_id', slotId).single()` (RLS returns only your rows). Clients can select `id`, `user_id`, `slot_id`, `video_ids` and `created_at` from `user_recipes`, but not `recipe_json`; recipes come from the AI server.
 
 `idempotency_key` is a client-generated UUID, unique for one check-in attempt. The server stores it as `check_ins.id` (the existing primary key; no new column). Send the same key if you retry after a timeout or drop: the first write wins, a second POST with that key returns the original check-in and does not insert another row or award XP again (`award_slot_xp` is already `UNIQUE(check_in_id)`). A replay also skips a second Coach's note generation and returns a short "already saved" note. A key that already belongs to a different user, recipe, or slot returns `409 { code: "IDEMPOTENCY_CONFLICT" }`. Older clients that omit the key keep the previous behavior (a new id each time). After a timeout, the client should re-read `get_my_plan()` and only re-POST if this slot's `times_completed` did not go up.
 
@@ -201,7 +201,9 @@ Response `201`:
 - **Repeat suggestion (F6):** if `suggest_repeat` is true, ask "That one was tough. Cook it again before moving on?" **Cook again** reopens the same slot, which is allowed because done slots stay open. **Skip** goes back to the plan. The path never changes either way.
 - **Errors:**
   - `400 INVALID_RECIPE`: the recipe doesn't belong to the user or the slot.
-  - `400 MASTERY_NOT_ALLOWED`: `mastery` was sent on a slot other than 10.
+  - `400 MASTERY_NOT_ALLOWED`: `mastery_session_id` was sent on a slot other than 10.
+  - `400 INVALID_MASTERY_SESSION`: the session belongs to a different user, slot or recipe.
+  - `409 MASTERY_SESSION_USED`: that session already backs another check-in. Start a new one.
   - `400 VALIDATION_ERROR`
   - `409 IDEMPOTENCY_CONFLICT`: the key was already used for a different check-in
   - `401`
@@ -211,12 +213,41 @@ After a check-in, re-fetch `get_my_plan` and `get_my_plan_summary`: the next slo
 
 ## F8. Mastery challenge (slot 10)
 
-Use the same recipe call. In challenge mode:
-- Start every step hidden except steps with `isSafetyStep: true`, which are always shown.
-- Each hidden step has a **Reveal** button.
-- Show "Revealed X of Y hidden steps".
+The recipe call for slot 10 returns every non-safety step **masked**: `instruction` is a placeholder, `whyItMatters` is left out, and the step has `isHidden: true`. `techniqueName` stays, so the video can still show. Safety steps (`isSafetyStep: true`) come back in full.
 
-Send `mastery: { hidden_steps: Y, revealed_steps: X }` with the check-in only when cook mode recorded those counts. If the reveal state is unknown, omit `mastery`. Finishing and checking in completes the slot (XP and the book entry labeled Mastered are unchanged). The `mastery` badge is awarded only when `revealed_steps` is 0; a missing payload earns no badge. Finishing slot 10 last also earns `path_weeknight_basics`. Reveal counts are client-reported.
+When cook mode opens, start or resume the mastery session:
+
+```
+POST {AI_SERVER}/api/mastery/sessions
+Authorization: Bearer <access_token>
+{ "slot_id": 10 }
+```
+
+Response `201`:
+
+```jsonc
+{
+  "session_id": "<uuid>",
+  "hidden_step_indices": [2, 3, 5],          // 0-based
+  "revealed_steps": { "3": { "instruction": "...", "isSafetyStep": false } }  // already revealed in this session
+}
+```
+
+The server keeps one open session per user until a check-in uses it. Calling this again (after an app restart, say) returns the same session with its reveals, so the count can't be reset. Errors: `400 SLOT_NOT_FINAL`, `404 RECIPE_NOT_FOUND` (open the recipe first), `403 SLOT_LOCKED`, `401`, `429`.
+
+To reveal a step:
+
+```
+POST {AI_SERVER}/api/mastery/sessions/{session_id}/reveal
+Authorization: Bearer <access_token>
+{ "step_index": 3 }
+```
+
+Response `200`: `{ "step_index": 3, "step": { ...full step... }, "hidden_step_indices": [...], "revealed_step_indices": [...] }`. The server records the reveal before it sends the text, and repeating a reveal is safe. Errors: `400 STEP_NOT_HIDDEN` (a safety step or out-of-range index), `404 MASTERY_SESSION_NOT_FOUND`, `409 MASTERY_SESSION_USED` (already checked in).
+
+Show "Revealed X of Y hidden steps", where Y is `hidden_step_indices.length` and X is the number of steps revealed. Send `mastery_session_id` with the check-in. The server copies the counts from the session; the app never sends them. Finishing and checking in completes the slot (XP and the book entry labeled Mastered are unchanged). The `mastery` badge is awarded only when the session has zero reveals. A check-in without a session earns no badge. Finishing slot 10 last also earns `path_weeknight_basics`.
+
+The old `mastery: { hidden_steps, revealed_steps }` field is still accepted so older builds don't fail, but it is ignored.
 
 ## F9. Badges screen
 

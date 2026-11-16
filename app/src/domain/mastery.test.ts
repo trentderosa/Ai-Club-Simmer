@@ -1,44 +1,62 @@
 import { RECIPES } from '../api/mock/fixtures';
 import {
-  hiddenStepCount,
+  HIDDEN_STEP_INSTRUCTION,
+  countsForRun,
+  displayStep,
   hiddenStepIndices,
+  isStepHidden,
   isValidMasteryCounts,
-  masteryCountsFromReveals,
+  maskRecipeForMastery,
   qualifiesForMasteryBadge,
   revealedLabel,
+  runFromStart,
+  runWithReveal,
+  type MasteryRun,
 } from './mastery';
 
 const roast = RECIPES[10];
 
-describe('mastery reveal counting', () => {
-  it('treats isSafetyStep as always visible and counts the rest as hidden', () => {
+describe('mastery masking', () => {
+  it('hides every non-safety step', () => {
     expect(roast.steps.map((s) => s.isSafetyStep)).toEqual([true, true, false, false, true, false]);
     expect(hiddenStepIndices(roast.steps)).toEqual([2, 3, 5]);
-    expect(hiddenStepCount(roast.steps)).toBe(3);
   });
 
-  it('starts at revealed 0 of Y and counts each hidden step only once', () => {
-    expect(masteryCountsFromReveals(roast.steps, [])).toEqual({ hidden_steps: 3, revealed_steps: 0 });
-    expect(masteryCountsFromReveals(roast.steps, [2])).toEqual({ hidden_steps: 3, revealed_steps: 1 });
-    expect(masteryCountsFromReveals(roast.steps, new Set([2, 3, 5]))).toEqual({
-      hidden_steps: 3,
-      revealed_steps: 3,
-    });
-    expect(masteryCountsFromReveals(roast.steps, [2, 2, 3])).toEqual({ hidden_steps: 3, revealed_steps: 2 });
+  it('masks hidden steps like the server and leaves safety steps alone', () => {
+    const masked = maskRecipeForMastery(roast);
+    expect(masked.steps[2]).toMatchObject({ instruction: HIDDEN_STEP_INSTRUCTION, isHidden: true, isSafetyStep: false });
+    expect(masked.steps[2].whyItMatters).toBeUndefined();
+    expect(masked.steps[0]).toEqual(roast.steps[0]);
+    expect(JSON.stringify(masked)).not.toContain(roast.steps[3].instruction);
+  });
+});
+
+describe('mastery runs', () => {
+  const start = { session_id: '20000000-0000-4000-8000-000000000001', hidden_step_indices: [2, 3, 5], revealed_steps: {} };
+
+  it('starts at revealed 0 of Y', () => {
+    const run = runFromStart(start);
+    expect(countsForRun(run)).toEqual({ hidden_steps: 3, revealed_steps: 0 });
+    expect(isStepHidden(run, 2)).toBe(true);
+    expect(isStepHidden(run, 0)).toBe(false);
   });
 
-  it('ignores safety-step indices and unknown indices so revealed never exceeds hidden', () => {
-    const counts = masteryCountsFromReveals(roast.steps, [0, 1, 2, 4, 9, 99]);
-    expect(counts).toEqual({ hidden_steps: 3, revealed_steps: 1 });
-    expect(isValidMasteryCounts(counts)).toBe(true);
-    expect(counts.revealed_steps).toBeLessThanOrEqual(counts.hidden_steps);
+  it('a reveal swaps in the real step and counts once', () => {
+    const masked = maskRecipeForMastery(roast);
+    let run: MasteryRun = runFromStart(start);
+    const reveal = { step_index: 3, step: roast.steps[3], hidden_step_indices: [2, 3, 5], revealed_step_indices: [3] };
+    run = runWithReveal(run, reveal);
+    run = runWithReveal(run, reveal);
+    expect(countsForRun(run)).toEqual({ hidden_steps: 3, revealed_steps: 1 });
+    expect(isStepHidden(run, 3)).toBe(false);
+    expect(displayStep(masked, run, 3)).toEqual(roast.steps[3]);
+    expect(displayStep(masked, run, 2).isHidden).toBe(true);
   });
 
-  it('keeps the revealed ≤ hidden invariant on an all-safety recipe', () => {
-    const onlySafety = [{ isSafetyStep: true }, { isSafetyStep: true }];
-    const counts = masteryCountsFromReveals(onlySafety, [0, 1]);
-    expect(counts).toEqual({ hidden_steps: 0, revealed_steps: 0 });
-    expect(isValidMasteryCounts(counts)).toBe(true);
+  it('resumes the revealed steps from the server', () => {
+    const run = runFromStart({ ...start, revealed_steps: { '5': roast.steps[5] } });
+    expect(countsForRun(run)).toEqual({ hidden_steps: 3, revealed_steps: 1 });
+    expect(run.revealed[5]).toEqual(roast.steps[5]);
   });
 
   it('formats the cook-mode indicator', () => {
@@ -57,9 +75,8 @@ describe('isValidMasteryCounts', () => {
 });
 
 describe('qualifiesForMasteryBadge', () => {
-  it('is true only for a present payload with zero reveals', () => {
+  it('is true only for a present run with zero reveals', () => {
     expect(qualifiesForMasteryBadge({ hidden_steps: 3, revealed_steps: 0 })).toBe(true);
-    expect(qualifiesForMasteryBadge({ hidden_steps: 0, revealed_steps: 0 })).toBe(true);
     expect(qualifiesForMasteryBadge({ hidden_steps: 3, revealed_steps: 1 })).toBe(false);
     expect(qualifiesForMasteryBadge(undefined)).toBe(false);
     expect(qualifiesForMasteryBadge(null)).toBe(false);

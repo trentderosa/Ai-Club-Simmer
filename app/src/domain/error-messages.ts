@@ -20,6 +20,7 @@ const COPY: Record<ApiErrorKind, ErrorCopy> = {
   generation_failed: { title: 'The recipe didn’t come out right', body: 'Your coach tried three times and couldn’t write a usable recipe. Give it another go.', action: 'retry' },
   rate_limited: { title: 'Slow down a little', body: 'Too many requests in a short time. Wait a minute, then try again.', action: 'retry' },
   invalid_recipe: { title: 'That recipe doesn’t match', body: 'This check-in doesn’t line up with your saved recipe. Open the recipe again, then check in.', action: 'back' },
+  mastery_session_used: { title: 'Already checked in', body: 'This cook was already saved. Open cook mode again to start a fresh mastery run.', action: 'back' },
   validation: { title: 'Something’s off with that', body: 'Some of the details weren’t accepted. Check them and try again.', action: 'retry' },
   unavailable: { title: 'Sign-in service is down', body: 'The server couldn’t check your login just now. Try again in a moment.', action: 'retry' },
   server: { title: 'Something went wrong', body: 'The server hit an error. Try again in a moment.', action: 'retry' },

@@ -23,6 +23,8 @@ import {
   type RecipeBookEntry,
   type RecipeResponse,
   type CookAnythingResponse,
+  type MasteryRevealResponse,
+  type MasteryStartResponse,
 } from '../schemas';
 import {
   BADGES,
@@ -39,7 +41,7 @@ import {
   VIDEOS,
 } from './fixtures';
 import { normalizeDishName, trimDishQuery, clientDishError } from '../../domain/dish-name';
-import { qualifiesForMasteryBadge } from '../../domain/mastery';
+import { hiddenStepIndices, maskRecipeForMastery, qualifiesForMasteryBadge } from '../../domain/mastery';
 import { awardXp, derivePlan, deriveSummary } from './mock-plan';
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -59,6 +61,16 @@ interface MockState {
   generatedByName: Map<string, CookAnythingResponse>;
   generatedCompletions: Set<string>;
   masteryEarnedAt: string | null;
+  /** F8 server-side mastery sessions, like the mastery_sessions table. */
+  masterySessions: Map<string, MockMasterySession>;
+}
+
+interface MockMasterySession {
+  id: string;
+  slotId: number;
+  hidden: number[];
+  revealed: Set<number>;
+  used: boolean;
 }
 
 export interface MockOptions {
@@ -91,6 +103,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     generatedByName: new Map(),
     generatedCompletions: new Set(),
     masteryEarnedAt: null,
+    masterySessions: new Map(),
   };
 
   function setSession(s: AppSession | null) {
@@ -122,6 +135,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     state.generatedByName = new Map();
     state.generatedCompletions = new Set();
     state.masteryEarnedAt = null;
+    state.masterySessions = new Map();
     for (const s of SLOTS.slice(0, user.completedSlots)) {
       const extra = user.extraCooks[s.slot_id] ?? 0;
       state.completions[s.slot_id] = 1 + extra;
@@ -224,6 +238,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       state.generatedByName = new Map();
       state.generatedCompletions = new Set();
       state.masteryEarnedAt = null;
+      state.masterySessions = new Map();
       setSession({ userId: 'mock-user-new', email, firstName: firstName.trim() || null, accessToken: 'mock-access-token' });
       return { signedIn: true };
     },
@@ -289,9 +304,55 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
         throw new ApiError('onboarding_required', 'User profile not found. Please complete onboarding first.', 404);
       }
       state.recipeSlots.add(slotId);
-      const base = RECIPES[slotId];
+      const base = slot.is_final ? maskRecipeForMastery(RECIPES[slotId]) : RECIPES[slotId];
       const coachNote = MOCK_COACH_NOTES[slotId];
       return { recipe: coachNote ? { ...base, coachNote } : base, cached, videos: VIDEOS[slotId] ?? {} };
+    },
+
+    async startMastery(slotId): Promise<MasteryStartResponse> {
+      await delay(250);
+      requireSession();
+      const slot = SLOTS.find((s) => s.slot_id === slotId);
+      if (!slot?.is_final) {
+        throw new ApiError('validation', 'Only the final recipe on the path is a mastery challenge.', 400, 'SLOT_NOT_FINAL');
+      }
+      if (!opts.skipGating && !state.recipeSlots.has(slotId)) {
+        throw new ApiError('not_found', 'Open the recipe first so it can be written for you.', 404, 'RECIPE_NOT_FOUND');
+      }
+      let session = [...state.masterySessions.values()].find((m) => m.slotId === slotId && !m.used);
+      if (!session) {
+        session = {
+          id: `20000000-0000-4000-8000-${String(state.masterySessions.size + 1).padStart(12, '0')}`,
+          slotId,
+          hidden: hiddenStepIndices(RECIPES[slotId].steps),
+          revealed: new Set(),
+          used: false,
+        };
+        state.masterySessions.set(session.id, session);
+      }
+      const revealed_steps: MasteryStartResponse['revealed_steps'] = {};
+      for (const i of session.revealed) revealed_steps[String(i)] = RECIPES[slotId].steps[i];
+      return { session_id: session.id, hidden_step_indices: [...session.hidden], revealed_steps };
+    },
+
+    async revealMasteryStep(sessionId, stepIndex): Promise<MasteryRevealResponse> {
+      await delay(250);
+      requireSession();
+      const session = state.masterySessions.get(sessionId);
+      if (!session) throw new ApiError('not_found', 'Mastery session not found.', 404, 'MASTERY_SESSION_NOT_FOUND');
+      if (session.used) {
+        throw new ApiError('mastery_session_used', 'This mastery session is already checked in.', 409, 'MASTERY_SESSION_USED');
+      }
+      if (!session.hidden.includes(stepIndex)) {
+        throw new ApiError('validation', 'That step is not hidden in this challenge.', 400, 'STEP_NOT_HIDDEN');
+      }
+      session.revealed.add(stepIndex);
+      return {
+        step_index: stepIndex,
+        step: RECIPES[session.slotId].steps[stepIndex],
+        hidden_step_indices: [...session.hidden],
+        revealed_step_indices: [...session.revealed].sort((a, b) => a - b),
+      };
     },
 
     async getUserRecipeId(slotId) {
@@ -353,7 +414,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
         if (existing) return existing;
       }
       if (body.generated_recipe_id) {
-        if (body.mastery) {
+        if (body.mastery_session_id) {
           throw new ApiError(
             'validation',
             'mastery is only allowed for the final (mastery challenge) recipe',
@@ -395,13 +456,26 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       }
       const slot = SLOTS.find((s) => s.slot_id === body.slot_id);
       if (!slot) throw new ApiError('invalid_recipe', 'Unknown slot', 400, 'INVALID_RECIPE');
-      if (body.mastery && !slot.is_final) {
+      if (body.mastery_session_id && !slot.is_final) {
         throw new ApiError(
           'validation',
           'mastery is only allowed for the final (mastery challenge) recipe',
           400,
           'MASTERY_NOT_ALLOWED',
         );
+      }
+      // Like the database: counts come from the session, and a session backs one check-in.
+      let mastery: { hidden_steps: number; revealed_steps: number } | undefined;
+      if (body.mastery_session_id) {
+        const session = state.masterySessions.get(body.mastery_session_id);
+        if (!session || session.slotId !== slot.slot_id) {
+          throw new ApiError('validation', 'mastery_session_id does not match this check-in', 400, 'INVALID_MASTERY_SESSION');
+        }
+        if (session.used) {
+          throw new ApiError('mastery_session_used', 'This mastery session was already used for a check-in', 409, 'MASTERY_SESSION_USED');
+        }
+        session.used = true;
+        mastery = { hidden_steps: session.hidden.length, revealed_steps: session.revealed.size };
       }
 
       const first = (state.completions[slot.slot_id] ?? 0) === 0;
@@ -427,7 +501,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
         coach_note: reply.note,
         focus_area: reply.focus,
         xp,
-        badges: { status: 'ok', earned: badgesFor(slot.slot_id, first, body.mastery) },
+        badges: { status: 'ok', earned: badgesFor(slot.slot_id, first, mastery) },
         suggest_repeat: body.rating === 'hard',
       };
       if (body.idempotency_key) state.checkInsByKey.set(body.idempotency_key, response);
