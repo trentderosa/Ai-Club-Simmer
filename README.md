@@ -22,7 +22,7 @@ See [PRD.md](PRD.md) for the full MVP requirements, [docs/CLIENT_API.md](docs/CL
 
 ## App
 
-The Expo client covers the core loop plus the recipe book, profile, and Cook anything: sign up or sign in, onboarding, Today (the plan), recipe, cook mode (including the slot 10 mastery challenge, where non-safety steps start hidden and the mastery badge needs zero reveals), check-in, session complete, the recipe book and the profile (XP, badges, editable onboarding answers, sign-out), and typing a dish from Today. A small bottom bar switches between Today, the recipe book and You. Requires Node.js 22.13 or later (Expo SDK 58 needs it). Mock mode runs it with fake data and no backend:
+The Expo client covers the core loop plus the recipe book, profile, and Cook anything: sign up or sign in, onboarding, Today (the plan), recipe, cook mode (including the slot 10 mastery challenge, where non-safety steps start hidden and the mastery badge needs zero reveals), check-in, session complete, the recipe book and the profile (XP, badges, editable onboarding answers, sign-out), and typing a dish from Today. A small bottom bar switches between Today, the recipe book and You. Requires Node.js 22.13 or later (Expo SDK 58 needs it). Mock mode runs it with fake data and no backend. Mock check-ins celebrate the same badge catalog as the database: completion seals for slots 1–9 only, and the mastery seal only when the final cook reveals nothing.
 
 ```bash
 cd app

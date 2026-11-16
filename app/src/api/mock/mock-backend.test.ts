@@ -215,10 +215,10 @@ describe('mock mastery account and check-in payload', () => {
     expect(perfect.xp).toEqual({ status: 'awarded', xp_awarded: 181, is_first_completion: true, capped: false });
     expect(perfect.badges).toMatchObject({
       status: 'ok',
-      earned: expect.arrayContaining([
-        expect.objectContaining({ code: 'mastery', kind: 'mastery' }),
-        expect.objectContaining({ code: 'path_weeknight_basics' }),
-      ]),
+      earned: [
+        expect.objectContaining({ code: 'mastery', kind: 'mastery', name: 'Roast Chicken Mastery' }),
+        expect.objectContaining({ code: 'path_weeknight_basics', description: 'Finished all 10 recipes on the Weeknight basics path.' }),
+      ],
     });
     expect((await zero.getBadges()).find((x) => x.code === 'mastery')?.earned).toBe(true);
   });
@@ -238,8 +238,9 @@ describe('mock mastery account and check-in payload', () => {
     );
     expect(withReveals.xp).toEqual({ status: 'awarded', xp_awarded: 181, is_first_completion: true, capped: false });
     const codes = withReveals.badges.status === 'ok' ? withReveals.badges.earned.map((b) => b.code) : [];
-    expect(codes).toContain('path_weeknight_basics');
+    expect(codes).toEqual(['path_weeknight_basics']);
     expect(codes).not.toContain('mastery');
+    expect(codes).not.toContain('complete_slot_10');
     expect((await revealed.getBadges()).find((x) => x.code === 'mastery')?.earned).toBe(false);
 
     const missing = createMockBackend({ latency: 0 });
@@ -251,8 +252,9 @@ describe('mock mastery account and check-in payload', () => {
     );
     const missingCodes = noPayload.badges.status === 'ok' ? noPayload.badges.earned.map((b) => b.code) : [];
     expect(noPayload.xp).toMatchObject({ status: 'awarded', xp_awarded: 181, is_first_completion: true });
-    expect(missingCodes).toContain('path_weeknight_basics');
+    expect(missingCodes).toEqual(['path_weeknight_basics']);
     expect(missingCodes).not.toContain('mastery');
+    expect(missingCodes).not.toContain('complete_slot_10');
     expect((await missing.getBadges()).find((x) => x.code === 'mastery')?.earned).toBe(false);
   });
 

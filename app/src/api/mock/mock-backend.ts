@@ -157,6 +157,12 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     return derivePlan(SLOTS, state.completions, state.recipeSlots);
   }
 
+  function catalogBadge(code: string): CheckInBadge | undefined {
+    const badge = BADGES.find((b) => b.code === code);
+    if (!badge) return undefined;
+    return { code: badge.code, name: badge.name, description: badge.description, kind: badge.kind };
+  }
+
   function badgesFor(
     slotId: number,
     firstCompletion: boolean,
@@ -165,32 +171,22 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     const slot = SLOTS.find((s) => s.slot_id === slotId);
     if (!slot) return [];
     const earned: CheckInBadge[] = [];
-    if (firstCompletion) {
-      earned.push({
-        code: `complete_slot_${slot.slot_order}`,
-        name: slot.dish_name,
-        description: `Cooked ${slot.dish_name} and checked in.`,
-        kind: 'completion',
-      });
+    // Completion badges exist only for slots 1–9. Slot 10 is the mastery
+    // challenge, so a final-slot check-in must not invent complete_slot_10.
+    if (firstCompletion && !slot.is_final) {
+      const completion = catalogBadge(`complete_slot_${slot.slot_order}`);
+      if (completion) earned.push(completion);
     }
     // Mastery badge: only on a final-slot check-in with revealed_steps = 0.
     // A missing payload earns no badge. Repeats can still earn it later.
     if (slot.is_final && qualifiesForMasteryBadge(mastery) && !state.masteryEarnedAt) {
       state.masteryEarnedAt = new Date().toISOString();
-      earned.push({
-        code: 'mastery',
-        name: 'Roast Chicken Mastery',
-        description: 'Passed the mastery challenge: cooked Roast Chicken with the steps hidden.',
-        kind: 'mastery',
-      });
+      const masteryBadge = catalogBadge('mastery');
+      if (masteryBadge) earned.push(masteryBadge);
     }
     if (firstCompletion && currentPlan().every((p) => p.status === 'done')) {
-      earned.push({
-        code: 'path_weeknight_basics',
-        name: 'Weeknight Basics Graduate',
-        description: 'Finished every dish on the path.',
-        kind: 'path_milestone',
-      });
+      const milestone = catalogBadge('path_weeknight_basics');
+      if (milestone) earned.push(milestone);
     }
     return earned;
   }
