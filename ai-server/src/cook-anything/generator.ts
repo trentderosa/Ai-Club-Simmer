@@ -6,6 +6,7 @@ import {
   type RecipeGenerationResponse,
 } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
+import { logGenerationFailure } from '../services/generation-failure.js';
 import { buildCookAnythingPrompt } from './prompt.js';
 import { FreeformRecipeSchema } from './recipe-schema.js';
 
@@ -57,6 +58,10 @@ export async function generateCookAnythingRecipe(
     lastError instanceof ZodError
       ? `Schema validation failed: ${lastError.errors.map((e) => e.message).join(', ')}`
       : `Generation failed: ${lastError?.message || 'Unknown error'}`;
+
+  if (!(lastError instanceof ZodError)) {
+    logGenerationFailure(lastError);
+  }
 
   return {
     success: false,

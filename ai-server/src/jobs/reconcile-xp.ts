@@ -8,12 +8,14 @@
  *
  * Reads SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (service role; server-side
  * only), plus optional XP_AWARD_TIMEOUT_MS, XP_RECONCILE_LOOKBACK_HOURS,
- * XP_RECONCILE_MIN_AGE_SECONDS and XP_RECONCILE_BATCH_LIMIT.
+ * XP_RECONCILE_MIN_AGE_SECONDS and XP_RECONCILE_BATCH_LIMIT. The npm scripts
+ * load ai-server/.env when that file exists; already-set variables win.
  *
  * Exit codes: 0 = no failures, 1 = at least one award failed or the scan
  * failed, 2 = bad config or arguments.
  */
 import { pathToFileURL } from 'url';
+import { loadEnvFile } from '../load-env.js';
 import { loadReconcileConfig, type ReconcileConfig } from '../config.js';
 import { SupabaseGeneratedXpAwarder } from '../services/generated-xp-awarder.js';
 import { SupabaseXpAwarder, type XpAwarder } from '../services/xp-awarder.js';
@@ -110,6 +112,7 @@ export async function runReconcileCli(
 
 const entry = process.argv[1];
 if (entry && import.meta.url === pathToFileURL(entry).href) {
+  loadEnvFile();
   runReconcileCli(process.argv.slice(2), process.env).then(
     (code) => {
       process.exitCode = code;

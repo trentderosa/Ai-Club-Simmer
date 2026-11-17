@@ -41,10 +41,10 @@ Requires Node.js 18 or later (CI uses 20). For live recipe generation, a local [
 cd ai-server
 cp .env.example .env   # fill in placeholders; never commit real keys
 npm ci
-npm run dev            # tsx watch, default http://127.0.0.1:3001
+npm run dev            # tsx watch, default http://127.0.0.1:3001; loads .env if present
 ```
 
-To run the compiled server: `npm run build && npm start`.
+`npm run dev`, `npm start`, and `npm run reconcile:xp` (and `reconcile:xp:dev`) load `ai-server/.env` when that file exists. Already-set environment variables win, and a missing `.env` is fine — CI and tests do not need one. To run the compiled server: `npm run build && npm start`. If Ollama is down, the server log includes the cause (for example `ECONNREFUSED` and the `OLLAMA_BASE_URL` host); the client still gets a generic generation error.
 
 ```bash
 npm test               # vitest
@@ -92,8 +92,8 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `COOK_ANYTHING_RATE_LIMIT_MAX` | Max uncached Cook anything generations per user per window (default `5`, range `1`–`100`) |
 | `SUPABASE_URL` | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key (server only; never ship to the client) |
-| `SUPABASE_JWT_SECRET` | JWT secret for HS256 verification (provide this or the JWKS URI) |
-| `SUPABASE_JWKS_URI` | JWKS URL for RS256 verification (provide this or the JWT secret) |
+| `SUPABASE_JWT_SECRET` | Optional JWT secret for HS256 verification. This project's tokens are ES256, so prefer `SUPABASE_JWKS_URI`. |
+| `SUPABASE_JWKS_URI` | JWKS URL for this project's ES256 access tokens, `https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json`. Without this or `SUPABASE_JWT_SECRET`, startup fail-closes to stub in-memory storage and check-ins stay disabled. |
 | `ALLOW_STUB_AUTH` | Dev only: accept any Bearer token. Forbidden when `NODE_ENV=production`. |
 | `ENABLE_PREVIEW_ROUTE` | Dev only: enable the unauthenticated `/generate-preview` route. Ignored when `NODE_ENV=production`: the route stays off and startup logs a warning if this is set. |
 | `TRUST_PROXY` | Set to `true` when the server sits behind a reverse proxy. |
@@ -113,7 +113,7 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 
 ### Retrying failed XP awards
 
-If a check-in's XP award fails (for example a timeout), the check-in is kept without XP. To retry, run the reconcile job from `ai-server/` with `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set in the environment:
+If a check-in's XP award fails (for example a timeout), the check-in is kept without XP. To retry, run the reconcile job from `ai-server/`. It loads `ai-server/.env` when present (`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`); already-set environment variables still win:
 
 ```bash
 cd ai-server

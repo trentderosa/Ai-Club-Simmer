@@ -2,6 +2,7 @@ import { ZodError } from 'zod';
 import { Recipe, RecipeSchema, getRecipeJsonSchema } from '../schemas/recipe.js';
 import { UserProfile } from '../schemas/user.js';
 import type { OllamaClient } from './ollama-client.js';
+import { logGenerationFailure } from './generation-failure.js';
 
 export interface RecipeGenerationResult {
   success: true;
@@ -363,6 +364,10 @@ export async function generateRecipe(
     lastError instanceof ZodError
       ? `Schema validation failed: ${lastError.errors.map((e) => e.message).join(', ')}`
       : `Generation failed: ${lastError?.message || 'Unknown error'}`;
+
+  if (!(lastError instanceof ZodError)) {
+    logGenerationFailure(lastError);
+  }
 
   return {
     success: false,

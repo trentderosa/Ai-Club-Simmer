@@ -2,7 +2,7 @@
 
 *Learn to cook, one dish at a time.*
 JMU AI Club · Fall 2026 · Team: Trent DeRosa, Ezzeldin Mallek, Nathan Biru, Ian Bullette, Matthew Munoz
-Status: **Draft** · Last updated: 2026-11-16 · Target demo: ~early January 2027 (2 months)
+Status: **Draft** · Last updated: 2026-11-17 · Target demo: ~early January 2027 (2 months)
 
 ---
 
@@ -69,7 +69,7 @@ When a user opens a path slot for the first time, the app asks the local Ollama 
 - [ ] Steps involving heat, knives, boiling water, raw meat, or hot oil are flagged as safety steps.
 - [ ] Generation shows a loading state, and the user can't start cooking until the recipe has loaded.
 
-*Server side:* the AI server now reads the slot and the user's onboarding answers from Supabase (these were stubs that returned nothing, so live generation always failed with 404). The prompt also includes the user's last 3 check-ins, which drive the Coach's note (F6).
+*Server side:* the AI server now reads the slot and the user's onboarding answers from Supabase (these were stubs that returned nothing, so live generation always failed with 404). The prompt also includes the user's last 3 check-ins, which drive the Coach's note (F6). If Ollama is down, the server log includes the underlying cause (for example `ECONNREFUSED` and the `OLLAMA_BASE_URL` host); the client still gets a generic generation error.
 
 *Client (`app/`, UI Direction A):* the recipe screen calls `POST /api/recipes/generate/:slotId` with the user's access token, shows a loading state while the recipe is written (with a longer message after a few seconds), and maps each error to a screen: Retry for `500`, sign in again for `401`, back to the path for `403 SLOT_LOCKED`, and finish onboarding for the onboarding `404`. The Coach's note (F6) shows above the ingredients.
 
@@ -245,6 +245,8 @@ Do **not** build these. They're future work.
 - **Timeline:** ~2 months to a working demo. The team is part-time students.
 - **The AI only works while the AI-server laptop is running Ollama and the proxy.** Recipes that are already generated and saved still load without it.
 - **Secrets:** The YouTube API key and Supabase service-role key live only on the AI server, never in the app.
+- **Local env file:** `npm run dev`, `npm start`, and `npm run reconcile:xp` load `ai-server/.env` when that file exists. Already-set environment variables win, and CI/tests do not require a `.env` file.
+- **JWT / JWKS:** This project's Supabase access tokens are ES256. Set `SUPABASE_JWKS_URI` (for example `https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json`). Without that or `SUPABASE_JWT_SECRET`, the AI server fail-closes at startup to stub in-memory storage, and check-ins stay disabled.
 - **Preview route:** `POST /api/recipes/generate-preview` is unauthenticated and off unless `ENABLE_PREVIEW_ROUTE=true`. `NODE_ENV=production` keeps it off even when that flag is set, and startup logs a warning.
 - **CORS:** The AI server echoes only origins listed in `ALLOWED_ORIGINS`. It never sends `Access-Control-Allow-Origin: *`.
 - **YouTube quota:** The default quota is 10,000 units/day, and each search costs 100 units (about 100 searches/day), so searches must be cached.

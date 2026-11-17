@@ -23,7 +23,7 @@ Owner: TBD (PRD open question 2). Keep every key in `ai-server/.env` on the demo
 4. **Keys** (Project Settings → API), all into `ai-server/.env` on the demo laptop:
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY` (server only)
-   - `SUPABASE_JWT_SECRET` (HS256), or `SUPABASE_JWKS_URI` if the project uses asymmetric signing keys
+   - `SUPABASE_JWKS_URI` (`https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json`). This project's tokens are ES256; without this (or `SUPABASE_JWT_SECRET`), the server fail-closes to stub storage.
    - The **anon** key goes in the Expo app's config. It's safe to ship.
 5. Check the advisors: Database → Advisors (security and performance). These should come back clean except for the known `rls_auto_enable` helper.
 
