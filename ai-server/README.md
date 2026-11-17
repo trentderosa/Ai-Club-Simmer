@@ -112,7 +112,8 @@ shared across instances, and does not prune old user keys. That is enough for th
 `POST /api/check-ins` with `generated_recipe_id` awards XP via `award_generated_recipe_xp`
 (service role only). It uses the same slot formula, 50% repeats keyed on the normalized
 dish name, the shared 100 XP/week repeat cap, and a daily cap (`freeform_daily_cap`,
-default 200) that counts today's slot XP and free-form XP together.
+default 200) that counts today's slot XP and free-form XP together. A failed award leaves
+the check-in saved; `npm run reconcile:xp` retries it the same way as a path slot.
 
 ## XP on check-in
 
@@ -132,7 +133,8 @@ server stopped waiting. The reconcile job handles both cases.
 
 ## Reconcile missing XP awards
 
-`src/jobs/reconcile-xp.ts` retries awards for check-ins that have no `xp_events` row.
+`src/jobs/reconcile-xp.ts` retries awards for path check-ins that have no `xp_events` row
+and Cook anything check-ins that have no `generated_recipe_xp_events` row.
 
 ```bash
 npm run build
@@ -153,14 +155,19 @@ It needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in the environment (it d
 
 How it works:
 
-1. One PostgREST read, with the service role, of `check_ins` with no matching `xp_events` row
-   (`select=id,slot_id,created_at,xp_events(id)&xp_events=is.null`), in the window, oldest
-   first, up to the batch limit. It reads only ids, slot ids and timestamps. No migration was needed.
-2. For each one, in order, it calls `award_slot_xp(check_in_id)`. The database still applies
-   the formula, the 50% repeat rule and the 100 XP/week repeat cap.
+1. Two PostgREST reads, with the service role, in the window, each oldest first and capped
+   at the batch limit. One is `check_ins` with no matching `xp_events` row
+   (`select=id,slot_id,created_at,xp_events(id)&xp_events=is.null`). The other is
+   `generated_recipe_check_ins` with no matching `generated_recipe_xp_events` row
+   (`select=id,created_at,generated_recipe_xp_events(id)&generated_recipe_xp_events=is.null`).
+   The job merges them oldest first and keeps at most the batch limit. It reads only ids,
+   slot ids and timestamps. No migration was needed.
+2. For each one, in that order, it calls `award_slot_xp(check_in_id)` or
+   `award_generated_recipe_xp(check_in_id)`. The database still applies the formula, the
+   50% repeat rule, the 100 XP/week repeat cap and, for Cook anything, the daily cap.
 3. If a check-in got its award in the meantime (another run, or a late live award),
-   `UNIQUE(check_in_id)` rejects the second one (Postgres `23505`, HTTP 409). The job counts it
-   as `skipped`, not failed. So repeated or concurrent runs never double-award.
+   `UNIQUE(check_in_id)` on that XP table rejects the second one (Postgres `23505`, HTTP 409).
+   The job counts it as `skipped`, not failed. So repeated or concurrent runs never double-award.
 4. It logs `xp_reconcile_awarded` / `xp_reconcile_award_failed` per check-in and one
    `xp_reconcile_summary` line with `scanned`, `awarded`, `skipped` and `failed`.
 

@@ -1,6 +1,7 @@
 /**
  * Server-side XP awarding for cook-anything via award_generated_recipe_xp.
- * Same transport pattern as SupabaseXpAwarder / award_slot_xp.
+ * Same transport pattern as SupabaseXpAwarder / award_slot_xp. Called after a
+ * Cook anything check-in is saved, and again by the XP reconcile job.
  */
 import {
   DEFAULT_XP_AWARD_TIMEOUT_MS,

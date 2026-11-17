@@ -861,23 +861,39 @@ export class TestDatabase {
     );
   }
 
+  async backdateGeneratedCheckIn(checkInId: string, daysAgo: number): Promise<void> {
+    await this.pool.query(
+      `UPDATE generated_recipe_check_ins SET created_at = NOW() - make_interval(days => $2) WHERE id = $1`,
+      [checkInId, daysAgo]
+    );
+  }
+
   /**
-   * SQL twin of the ai-server reconcile scan (ai-server/src/jobs/supabase-reconcile-source.ts),
-   * which runs the same anti-join over PostgREST: check-ins in [from, to] with no
-   * xp_events row, oldest first, at most `limit`.
+   * SQL twin of the ai-server reconcile scan (ai-server/src/jobs/supabase-reconcile-source.ts).
+   * That job runs two PostgREST anti-joins (check_ins with no xp_events, and
+   * generated_recipe_check_ins with no generated_recipe_xp_events) and merges
+   * them oldest first, at most `limit`. This UNION is the same result.
    */
   async findCheckInsMissingXp(
     from: Date,
     to: Date,
     limit: number
-  ): Promise<{ check_in_id: string; slot_id: number; created_at: string }[]> {
+  ): Promise<{ check_in_id: string; slot_id: number | null; created_at: string; kind: 'slot' | 'generated' }[]> {
     const result = await this.pool.query(
-      `SELECT c.id AS check_in_id, c.slot_id, c.created_at
+      `SELECT c.id AS check_in_id, c.slot_id, c.created_at, 'slot'::text AS kind
          FROM check_ins c
         WHERE NOT EXISTS (SELECT 1 FROM xp_events e WHERE e.check_in_id = c.id)
           AND c.created_at >= $1
           AND c.created_at <= $2
-        ORDER BY c.created_at ASC, c.id ASC
+        UNION ALL
+       SELECT g.id, NULL::integer, g.created_at, 'generated'::text
+         FROM generated_recipe_check_ins g
+        WHERE NOT EXISTS (
+          SELECT 1 FROM generated_recipe_xp_events e WHERE e.check_in_id = g.id
+        )
+          AND g.created_at >= $1
+          AND g.created_at <= $2
+        ORDER BY created_at ASC, check_in_id ASC
         LIMIT $3`,
       [from, to, limit]
     );
@@ -885,6 +901,7 @@ export class TestDatabase {
       check_in_id: row.check_in_id,
       slot_id: row.slot_id,
       created_at: new Date(row.created_at).toISOString(),
+      kind: row.kind === 'generated' ? 'generated' : 'slot',
     }));
   }
 
