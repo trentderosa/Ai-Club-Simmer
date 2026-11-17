@@ -40,6 +40,7 @@ import {
   YouTubeDishVideoClient,
 } from './services/dish-video-finder.js';
 import { createDishPhotoRouter } from './routes/dish-photos.js';
+import { SupabaseKnownDishNames } from './services/known-dish-names.js';
 import { InMemoryGeneratedRecipeRepository } from './repositories/in-memory-generated-recipe-repository.js';
 import { SupabaseGeneratedRecipeRepository } from './repositories/supabase-generated-recipe-repository.js';
 import {
@@ -286,9 +287,22 @@ const cookAnythingRouter = createCookAnythingRouter(
   }
 );
 app.use('/api/recipes', cookAnythingRouter);
+const knownDishNames =
+  config.supabase.url && config.supabase.serviceRoleKey
+    ? new SupabaseKnownDishNames({
+        url: config.supabase.url,
+        serviceRoleKey: config.supabase.serviceRoleKey,
+      })
+    : null;
 app.use(
   '/api/dish-photos',
-  createDishPhotoRouter({ supabase: services.supabase, photoFinder: services.photoFinder })
+  createDishPhotoRouter({
+    supabase: services.supabase,
+    photoFinder: services.photoFinder,
+    listKnownDishNames: knownDishNames
+      ? (userId: string): Promise<Set<string>> => knownDishNames.listForUser(userId)
+      : undefined,
+  })
 );
 
 // Mount check-in router if JWT verifier and check-in service are available

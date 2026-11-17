@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   DISH_PHOTO_ERROR_COOLDOWN_MS,
+  DISH_PHOTO_NEGATIVE_CACHE_TTL_MS,
   MAX_PHOTO_AUTHOR_LENGTH,
   DishPhotoFinder,
   InMemoryDishPhotoCache,
@@ -169,29 +170,39 @@ describe('DishPhotoFinder', () => {
     expect(search.search).not.toHaveBeenCalled();
   });
 
-  it('does not store a miss, and searches again after the cooldown', async () => {
+  it('stores a genuine miss and does not search again until the TTL expires', async () => {
     const cache = new InMemoryDishPhotoCache();
     const search: DishPhotoSearchClient = { search: vi.fn().mockResolvedValue(null) };
     let now = new Date('2026-02-01T00:00:00.000Z');
     const finder = new DishPhotoFinder(cache, search, { warn: vi.fn() }, () => now);
     await expect(finder.findForDish('invisible stew')).resolves.toEqual({ photo: null, complete: true });
-    expect(cache.entries.size).toBe(0);
-    await expect(finder.findForDish('invisible stew')).resolves.toEqual({ photo: null, complete: false });
+    expect(cache.entries.get('invisible stew')?.photo).toBeNull();
+    await expect(finder.findForDish('invisible stew')).resolves.toEqual({ photo: null, complete: true });
     expect(search.search).toHaveBeenCalledTimes(1);
 
-    now = new Date(now.getTime() + DISH_PHOTO_ERROR_COOLDOWN_MS + 1);
+    now = new Date(now.getTime() + DISH_PHOTO_NEGATIVE_CACHE_TTL_MS + 1);
     (search.search as ReturnType<typeof vi.fn>).mockResolvedValueOnce(PHOTO);
     await expect(finder.findForDish('invisible stew')).resolves.toEqual({ photo: PHOTO, complete: true });
     expect(search.search).toHaveBeenCalledTimes(2);
     expect(cache.entries.get('invisible stew')?.photo).toEqual(PHOTO);
   });
 
-  it('ignores a previously cached miss and searches again', async () => {
+  it('honors a previously cached miss until the TTL expires', async () => {
     const cache = new InMemoryDishPhotoCache();
-    await cache.put({ normalizedDishName: 'pho', photo: null, fetchedAt: new Date('2026-02-01T00:00:00.000Z') });
+    const fetchedAt = new Date('2026-02-01T00:00:00.000Z');
+    await cache.put({ normalizedDishName: 'pho', photo: null, fetchedAt });
     const search: DishPhotoSearchClient = { search: vi.fn().mockResolvedValue(PHOTO) };
-    const finder = new DishPhotoFinder(cache, search);
-    await expect(finder.findForDish('pho')).resolves.toEqual({ photo: PHOTO, complete: true });
+    const fresh = new DishPhotoFinder(cache, search, { warn: vi.fn() }, () => fetchedAt);
+    await expect(fresh.findForDish('pho')).resolves.toEqual({ photo: null, complete: true });
+    expect(search.search).not.toHaveBeenCalled();
+
+    const expired = new DishPhotoFinder(
+      cache,
+      search,
+      { warn: vi.fn() },
+      () => new Date(fetchedAt.getTime() + DISH_PHOTO_NEGATIVE_CACHE_TTL_MS + 1)
+    );
+    await expect(expired.findForDish('pho')).resolves.toEqual({ photo: PHOTO, complete: true });
     expect(search.search).toHaveBeenCalledTimes(1);
   });
 

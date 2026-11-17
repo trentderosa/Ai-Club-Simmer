@@ -69,10 +69,15 @@ export class TestDatabase {
           CREATE ROLE anon NOLOGIN;
         END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-          CREATE ROLE service_role NOLOGIN;
+          CREATE ROLE service_role NOLOGIN BYPASSRLS;
         END IF;
       END
       $roles$;
+
+      -- Supabase's service_role has BYPASSRLS. ALTER covers a role created by
+      -- an older harness on a reused test database (CREATE IF NOT EXISTS
+      -- would otherwise leave it subject to RLS).
+      ALTER ROLE service_role WITH NOLOGIN BYPASSRLS;
 
       GRANT authenticated TO postgres;
       GRANT anon TO postgres;

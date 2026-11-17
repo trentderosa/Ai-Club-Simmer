@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  DISH_VIDEO_ERROR_COOLDOWN_MS,
   DISH_VIDEO_NEGATIVE_CACHE_TTL_MS,
   DishVideoFinder,
   InMemoryDishVideoCache,
   YouTubeDishVideoClient,
   dishVideoSearchQuery,
   dishVideoTitleMatches,
+  isYouTubeQuotaError,
   parseIsoDuration,
   selectDishVideos,
+  youtubeQuotaResetAt,
   type DishVideoDetails,
   type DishVideoHit,
   type DishVideoSearchClient,
@@ -99,18 +102,64 @@ describe('DishVideoFinder', () => {
     const expired = new DishVideoFinder(cache, search, { warn: vi.fn() }, () => later);
     await expired.findForDish('pho');
     expect(search.search).toHaveBeenCalledTimes(2);
+  });
 
+  it('cools a failed search so a second open does not hit YouTube', async () => {
+    const failing: DishVideoSearchClient = {
+      search: vi.fn().mockRejectedValue(new Error('YouTube search failed: 504 timeout')),
+    };
+    let now = new Date('2026-02-01T00:00:00.000Z');
+    const finder = new DishVideoFinder(new InMemoryDishVideoCache(), failing, { warn: vi.fn() }, () => now);
+    await expect(finder.findForDish('pho')).resolves.toEqual({ videos: [], complete: false });
+    await expect(finder.findForDish('pho')).resolves.toEqual({ videos: [], complete: false });
+    expect(failing.search).toHaveBeenCalledTimes(1);
+
+    await finder.findForDish('chicken parmesan');
+    expect(failing.search).toHaveBeenCalledTimes(2);
+
+    now = new Date(now.getTime() + DISH_VIDEO_ERROR_COOLDOWN_MS + 1);
+    await finder.findForDish('pho');
+    expect(failing.search).toHaveBeenCalledTimes(3);
+  });
+
+  it('stops all dish searches until the YouTube quota resets', async () => {
     const failing: DishVideoSearchClient = {
       search: vi.fn().mockRejectedValue(new Error('YouTube search failed: 403 quotaExceeded')),
     };
-    const broken = new DishVideoFinder(new InMemoryDishVideoCache(), failing, { warn: vi.fn() });
-    await expect(broken.findForDish('pho')).resolves.toEqual({ videos: [], complete: false });
-    await broken.findForDish('pho');
+    let now = new Date('2026-02-01T00:00:00.000Z'); // 16:00 the previous day, Pacific
+    const finder = new DishVideoFinder(new InMemoryDishVideoCache(), failing, { warn: vi.fn() }, () => now);
+    await expect(finder.findForDish('pho')).resolves.toEqual({ videos: [], complete: false });
+    await expect(finder.findForDish('pho')).resolves.toEqual({ videos: [], complete: false });
+    await expect(finder.findForDish('chicken parmesan')).resolves.toEqual({ videos: [], complete: false });
+    expect(failing.search).toHaveBeenCalledTimes(1);
+    expect(isYouTubeQuotaError(new Error('YouTube search failed: 403 dailyLimitExceeded'))).toBe(true);
+
+    const reset = youtubeQuotaResetAt(now);
+    now = new Date(reset.getTime() - 1);
+    await finder.findForDish('pad thai');
+    expect(failing.search).toHaveBeenCalledTimes(1);
+
+    now = reset;
+    await finder.findForDish('pad thai');
     expect(failing.search).toHaveBeenCalledTimes(2);
   });
 });
 
+describe('youtubeQuotaResetAt', () => {
+  it('returns the next midnight in America/Los_Angeles', () => {
+    // 16:00 UTC on 1 Feb 2026 is 08:00 PST the same day.
+    const reset = youtubeQuotaResetAt(new Date('2026-02-01T16:00:00.000Z'));
+    expect(reset.toISOString()).toBe('2026-02-02T08:00:00.000Z');
+  });
+
+  it('skips to the following midnight after a Pacific midnight', () => {
+    const justAfter = youtubeQuotaResetAt(new Date('2026-02-02T08:00:00.000Z'));
+    expect(justAfter.toISOString()).toBe('2026-02-03T08:00:00.000Z');
+  });
+});
+
 describe('YouTubeDishVideoClient', () => {
+
   it('searches for the dish recipe and sorts the detail response by views', async () => {
     const fetchFn = vi.fn((url: string): Promise<{ ok: boolean; json: () => Promise<unknown> }> => {
       const href = String(url);

@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { normalizeDishName } from '../cook-anything/dish-name.js';
+import { createAuthMiddleware } from '../middleware/authenticate.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
 import type { SupabaseService } from '../services/supabase.js';
 
@@ -12,44 +13,48 @@ const BodySchema = z.object({
 export interface DishPhotoRouterDeps {
   supabase: SupabaseService;
   photoFinder: DishPhotoFinder;
+  /**
+   * Names this user is allowed to look up (path slots + their Cook anything
+   * dishes). Required in production. When omitted (dev without Supabase),
+   * requested names are not filtered.
+   */
+  listKnownDishNames?: (userId: string) => Promise<ReadonlySet<string>>;
 }
 
 /**
  * Batch dish-photo lookup for screens that show a background before a recipe
  * response exists (Today, recipe book). Same finder and cache as recipe
  * generation. A miss or failure is null for that name and never fails the
- * request.
+ * request. Only the caller's known dish names are looked up.
  */
 export function createDishPhotoRouter(
   deps: DishPhotoRouterDeps,
   options: { rateLimit?: { windowMs: number; maxRequests: number } } = {}
 ): Router {
   const router = Router();
-  router.use(
-    rateLimit({
-      windowMs: options.rateLimit?.windowMs ?? 60_000,
-      max: options.rateLimit?.maxRequests ?? 30,
-      message: { error: 'Too many requests, please try again later' },
-      standardHeaders: true,
-      legacyHeaders: false,
-    })
-  );
+  const authenticate = createAuthMiddleware({
+    verify: (token: string) => deps.supabase.verifyToken(token),
+  });
+
+  // Per-user, after auth, so one account can't multiply the cap by rotating IPs.
+  const userLimiter = rateLimit({
+    windowMs: options.rateLimit?.windowMs ?? 60_000,
+    max: options.rateLimit?.maxRequests ?? 30,
+    message: { error: 'Too many requests, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false,
+    keyGenerator: (req: Request) => {
+      if (!req.userId) throw new Error('Rate limiter called without authenticated user');
+      return req.userId;
+    },
+    validate: { xForwardedForHeader: false },
+  });
 
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  router.post('/', async (req: Request, res: Response) => {
+  router.post('/', authenticate, userLimiter, async (req: Request, res: Response) => {
     try {
-      const authHeader = req.headers.authorization;
-      if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        res.status(401).json({ error: 'Missing or invalid authorization header' });
-        return;
-      }
-      const authResult = await deps.supabase.verifyToken(authHeader.slice(7));
-      if (!authResult.valid || !authResult.userId) {
-        if (authResult.error === 'service_unavailable') {
-          res.status(503).json({ error: 'Authentication service temporarily unavailable' });
-          return;
-        }
-        res.status(401).json({ error: 'Invalid or expired token' });
+      if (!req.userId) {
+        res.status(401).json({ error: 'Authentication required' });
         return;
       }
 
@@ -59,10 +64,32 @@ export function createDishPhotoRouter(
         return;
       }
 
-      const keys = [...new Set(parsed.data.dishes.map((name) => normalizeDishName(name)).filter((name) => name.length > 0))];
+      const requested = [
+        ...new Set(parsed.data.dishes.map((name) => normalizeDishName(name)).filter((name) => name.length > 0)),
+      ];
+
+      let allowed: ReadonlySet<string> | null = null;
+      if (deps.listKnownDishNames) {
+        try {
+          allowed = await deps.listKnownDishNames(req.userId);
+        } catch (error) {
+          console.warn('dish_photo_allowlist_failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          const photos: Record<string, DishPhoto | null> = {};
+          for (const key of requested) photos[key] = null;
+          res.json({ photos });
+          return;
+        }
+      }
+
       const photos: Record<string, DishPhoto | null> = {};
       await Promise.all(
-        keys.map(async (key) => {
+        requested.map(async (key) => {
+          if (allowed && !allowed.has(key)) {
+            photos[key] = null;
+            return;
+          }
           try {
             const lookup = await deps.photoFinder.findForDish(key);
             photos[key] = lookup.photo;

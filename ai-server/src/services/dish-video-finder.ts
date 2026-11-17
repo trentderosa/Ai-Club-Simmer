@@ -9,12 +9,15 @@
  *
  * Results, including a genuine empty set, are cached in dish_videos. A
  * failure (no key, quota, network, timeout) is not cached and the section
- * is hidden. The API key stays in this process; errors never include the
- * request URL.
+ * is hidden. Failed searches use a short per-dish cooldown; a quota
+ * exhaustion cools down every dish search until the YouTube quota resets
+ * (midnight Pacific). The API key stays in this process; errors never
+ * include the request URL.
  */
 import { z } from 'zod';
 import { normalizeDishName } from '../cook-anything/dish-name.js';
 import { isYouTubeVideoId, youtubeWatchUrl } from '../cook-anything/youtube-url.js';
+import { rememberUntil } from './cooldown-map.js';
 import { SupabaseRest, type SupabaseRestConfig } from './supabase-rest.js';
 
 export interface DishVideo {
@@ -58,6 +61,8 @@ export const DISH_VIDEO_LIMIT = 3;
 export const DISH_VIDEO_SEARCH_COUNT = 10;
 /** Re-try a cached empty result after this long. Found videos are kept. */
 export const DISH_VIDEO_NEGATIVE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** In-memory pause after a non-quota failure so a cached-recipe open doesn't search again immediately. */
+export const DISH_VIDEO_ERROR_COOLDOWN_MS = 60_000;
 const TITLE_SKIP_TOKENS = new Set(['and', 'with', 'the', 'for']);
 const MAX_TITLE_LENGTH = 200;
 
@@ -135,8 +140,35 @@ export function selectDishVideos(
   return videos;
 }
 
+/** YouTube Data API quota resets at midnight Pacific Time. */
+export function youtubeQuotaResetAt(now: Date): Date {
+  const dateInPacific = (instant: Date): string =>
+    new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Los_Angeles',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(instant);
+  const today = dateInPacific(now);
+  let lo = now.getTime();
+  let hi = lo + 36 * 60 * 60 * 1000;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (dateInPacific(new Date(mid)) === today) lo = mid + 1;
+    else hi = mid;
+  }
+  return new Date(lo);
+}
+
+export function isYouTubeQuotaError(error: unknown): boolean {
+  const message = errorMessage(error).toLowerCase();
+  return message.includes('quotaexceeded') || message.includes('dailylimitexceeded');
+}
+
 export class DishVideoFinder {
   private readonly inFlight = new Map<string, Promise<DishVideoLookupResult>>();
+  private readonly retryAfter = new Map<string, number>();
+  private quotaCooldownUntil = 0;
 
   constructor(
     private readonly cache: DishVideoCache,
@@ -173,12 +205,26 @@ export class DishVideoFinder {
       return { videos: cached.videos, complete: true };
     }
 
+    const nowMs = this.now().getTime();
+    if (nowMs < this.quotaCooldownUntil) {
+      return { videos: [], complete: false };
+    }
+    const cooldownUntil = this.retryAfter.get(key);
+    if (cooldownUntil !== undefined && nowMs < cooldownUntil) {
+      return { videos: [], complete: false };
+    }
+
     const query = dishVideoSearchQuery(key);
     let videos: DishVideo[];
     try {
       videos = await this.search.search(key);
     } catch (error) {
       this.logger.warn('dish_video_search_failed', { dish: key, error: errorMessage(error) });
+      if (isYouTubeQuotaError(error)) {
+        this.quotaCooldownUntil = Math.max(this.quotaCooldownUntil, youtubeQuotaResetAt(this.now()).getTime());
+      } else {
+        rememberUntil(this.retryAfter, key, nowMs + DISH_VIDEO_ERROR_COOLDOWN_MS, nowMs);
+      }
       return { videos: [], complete: false };
     }
     try {

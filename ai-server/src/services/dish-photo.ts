@@ -11,13 +11,14 @@
  *      Commons often returns the sized image on thumb.wikimedia.org; that host
  *      is rewritten to upload.wikimedia.org and dropped if it still isn't a
  *      raster there. The original upload URL is used when the thumb isn't.
- *   3. Cache a found photo only. A miss is not stored, so a later visit can
- *      try again (an in-memory cooldown avoids a burst). Older cached misses
- *      are ignored. Timeouts and other errors are not cached.
+ *   3. Cache a found photo, and cache a genuine "no photo" miss with a TTL so
+ *      repeated misses don't hammer Commons. Timeouts and other transient
+ *      errors are not cached (an in-memory cooldown avoids a burst).
  *   4. A failure, timeout, or miss returns photo: null. Recipe generation
  *      always succeeds.
  */
 import { z } from 'zod';
+import { rememberUntil } from './cooldown-map.js';
 import { SupabaseRest, type SupabaseRestConfig } from './supabase-rest.js';
 
 export const WIKIMEDIA_USER_AGENT =
@@ -27,11 +28,9 @@ export const WIKIMEDIA_THUMB_HOST = 'thumb.wikimedia.org';
 export const WIKIMEDIA_COMMONS_HOST = 'commons.wikimedia.org';
 export const DEFAULT_DISH_PHOTO_TIMEOUT_MS = 2500;
 export const DISH_PHOTO_TIMEOUT_MS = { default: 2500, min: 500, max: 10000 } as const;
-/**
- * In-memory pause after a timeout, error, or genuine miss so one recipe view
- * doesn't call Commons again immediately. The miss is not written to the
- * shared cache, so the next visit after this window searches again.
- */
+/** Re-try a cached "no photo" miss after this long. Found photos are kept. */
+export const DISH_PHOTO_NEGATIVE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** In-memory pause after a timeout or error so a cached-recipe hit doesn't call Commons again immediately. */
 export const DISH_PHOTO_ERROR_COOLDOWN_MS = 60_000;
 /** Stop trying broader queries once a title scores at least this well. */
 export const DISH_PHOTO_GOOD_MATCH_SCORE = 13;
@@ -157,6 +156,19 @@ const TITLE_FOOD = /\b(soup|bowl|noodle|noodles|plate|stew|salad|curry|roast|san
 const TITLE_SKIP_TOKENS = new Set(['and', 'with', 'the', 'for']);
 
 /**
+ * Extra Commons queries for a whole dish name, after the name itself.
+ * Add the next special case here instead of another branch in dishPhotoQueries.
+ */
+export const DISH_PHOTO_QUERY_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  pho: ['pho soup', 'vietnamese pho'],
+};
+
+/** Token expansions tried when the expanded word isn't already in the name. */
+export const DISH_PHOTO_TOKEN_ALIASES: Readonly<Record<string, string>> = {
+  parm: 'parmesan',
+};
+
+/**
  * Queries to try, most specific last, at most three. "pho" becomes
  * "pho", "pho soup", "vietnamese pho". "chicken parm" also tries
  * "chicken parmesan". Other single-word names try "soup" and "dish".
@@ -165,12 +177,21 @@ export function dishPhotoQueries(dishName: string): string[] {
   const name = dishName.trim().toLowerCase().replace(/\s+/g, ' ');
   if (!name) return [];
   const queries = [name];
-  if (name === 'pho') {
-    queries.push('pho soup', 'vietnamese pho');
-  } else if (/\bparm\b/.test(name) && !/\bparmesan\b/.test(name)) {
-    queries.push(name.replace(/\bparm\b/g, 'parmesan'));
-  } else if (!name.includes(' ') && !/\b(soup|stew|salad|bowl)\b/.test(name)) {
-    queries.push(`${name} soup`, `${name} dish`);
+  const aliases = DISH_PHOTO_QUERY_ALIASES[name];
+  if (aliases) {
+    queries.push(...aliases);
+  } else {
+    let expanded = name;
+    for (const [token, replacement] of Object.entries(DISH_PHOTO_TOKEN_ALIASES)) {
+      if (!new RegExp(`\\b${token}\\b`).test(expanded)) continue;
+      if (new RegExp(`\\b${replacement}\\b`).test(expanded)) continue;
+      expanded = expanded.replace(new RegExp(`\\b${token}\\b`, 'g'), replacement);
+    }
+    if (expanded !== name) {
+      queries.push(expanded);
+    } else if (!name.includes(' ') && !/\b(soup|stew|salad|bowl)\b/.test(name)) {
+      queries.push(`${name} soup`, `${name} dish`);
+    }
   }
   return [...new Set(queries)].slice(0, 3);
 }
@@ -322,14 +343,16 @@ export class DishPhotoFinder {
       this.logger.warn('dish_photo_cache_read_failed', { error: errorMessage(error) });
     }
 
-    // A stored photo is final. A stored miss (image_url null, including rows
-    // written before misses stopped being cached) is ignored so we can retry.
-    if (cached?.photo) {
+    if (
+      cached &&
+      (cached.photo || this.now().getTime() - cached.fetchedAt.getTime() < DISH_PHOTO_NEGATIVE_CACHE_TTL_MS)
+    ) {
       return { photo: cached.photo, complete: true };
     }
 
+    const nowMs = this.now().getTime();
     const cooldownUntil = this.retryAfter.get(key);
-    if (cooldownUntil !== undefined && this.now().getTime() < cooldownUntil) {
+    if (cooldownUntil !== undefined && nowMs < cooldownUntil) {
       return { photo: null, complete: false };
     }
 
@@ -338,13 +361,8 @@ export class DishPhotoFinder {
       photo = await this.search.search(key);
     } catch (error) {
       this.logger.warn('dish_photo_search_failed', { dish: key, error: errorMessage(error) });
-      this.retryAfter.set(key, this.now().getTime() + DISH_PHOTO_ERROR_COOLDOWN_MS);
+      rememberUntil(this.retryAfter, key, nowMs + DISH_PHOTO_ERROR_COOLDOWN_MS, nowMs);
       return { photo: null, complete: false };
-    }
-
-    if (!photo) {
-      this.retryAfter.set(key, this.now().getTime() + DISH_PHOTO_ERROR_COOLDOWN_MS);
-      return { photo: null, complete: true };
     }
 
     this.retryAfter.delete(key);

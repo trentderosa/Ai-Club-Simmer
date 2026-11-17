@@ -90,8 +90,9 @@ per normalized dish name (path slots and Cook anything). A follow-up `videos.lis
 keeps embeddable videos about 3–20 minutes long and returns at most 3, highest view count
 first, as `dish_videos`. Results are cached in `dish_videos` (migration
 `20261117201646_dish_videos.sql`). An empty result is retried after 7 days. Quota and
-network failures are not cached, `dish_videos` is `[]`, and the recipe still returns.
-Errors never include the request URL or the key.
+network failures are not cached; a failed search uses a short per-dish cooldown, and a
+quota exhaustion pauses every dish search until midnight Pacific. `dish_videos` is `[]`,
+and the recipe still returns. Errors never include the request URL or the key.
 
 Results are stored in `user_recipes.video_ids` only when the lookup is complete, meaning every
 technique got a video or a genuine "no result". If any search failed, timed out, ran past the
@@ -131,7 +132,7 @@ collapsed whitespace, punctuation stripped). A saved row in `user_generated_reci
 that user and normalized name is returned as `cached: true` and does not count against the
 per-user generation rate limit (`COOK_ANYTHING_RATE_LIMIT_*`, default 5 uncached
 generations per hour). Otherwise the server generates through the existing Ollama recipe
-path, looks up videos the same way as a path slot, looks up a Wikimedia Commons dish photo (`src/services/dish-photo.ts`; CC0 / public domain / CC BY / CC BY-SA only; a found photo is cached in `dish_photos` and stored as `photo_json`; a miss is not cached) and dish videos (`dish_videos`), clamps the XP *counts* (not the
+path, looks up videos the same way as a path slot, looks up a Wikimedia Commons dish photo (`src/services/dish-photo.ts`; CC0 / public domain / CC BY / CC BY-SA only; a found photo is cached in `dish_photos` and stored as `photo_json`; a genuine miss is cached for 7 days) and dish videos (`dish_videos`), clamps the XP *counts* (not the
 saved recipe body) to `FREEFORM_COUNT_BOUNDS` (1–10 / 1–12 / 1–45), and stores the
 frozen `xp_value`. A later save of the same dish cannot raise those counts. A fully
 clamped recipe has `xp_value` 177, below roast chicken (181). The daily cap

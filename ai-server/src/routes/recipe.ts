@@ -286,9 +286,12 @@ export function createRecipeRouter(
       const existingRecipe = await deps.supabase.getSavedRecipe(userId, slotId);
       if (existingRecipe) {
         // null = never stored (or the last lookup was incomplete): look again.
+        const mediaPromise = dishMedia(slot.dishName);
         const storedVideos = await deps.supabase.getSavedVideos(userId, slotId);
-        const videos = storedVideos ?? (await attachVideos(userId, slotId, existingRecipe));
-        const media = await dishMedia(slot.dishName);
+        const [videos, media] = await Promise.all([
+          storedVideos ? Promise.resolve(storedVideos) : attachVideos(userId, slotId, existingRecipe),
+          mediaPromise,
+        ]);
         // F8: the final slot's hidden steps are only served by a mastery reveal.
         res.json({
           recipe: slot.isFinal ? maskRecipeForMastery(existingRecipe) : existingRecipe,
