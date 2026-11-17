@@ -13,6 +13,7 @@ import {
   type DishPhoto,
   type DishPhotoSearchClient,
 } from '../services/dish-photo.js';
+import { DishVideoFinder, InMemoryDishVideoCache, type DishVideoSearchClient } from '../services/dish-video-finder.js';
 import { computeFreeformXp } from '../cook-anything/clamp.js';
 import { FREEFORM_COUNT_BOUNDS } from '../cook-anything/constants.js';
 
@@ -87,14 +88,15 @@ function createApp(
   supabase: SupabaseService,
   repo = new InMemoryGeneratedRecipeRepository(),
   options?: { generationRateLimit?: { windowMs: number; maxGenerations: number } },
-  photoFinder?: DishPhotoFinder | null
+  photoFinder?: DishPhotoFinder | null,
+  dishVideoFinder?: DishVideoFinder | null
 ): { app: express.Express; repo: InMemoryGeneratedRecipeRepository } {
   const app = express();
   app.use(express.json());
   app.use(
     '/api/recipes',
     createCookAnythingRouter(
-      { ollamaClient: ollama, supabase, generatedRecipes: repo, photoFinder },
+      { ollamaClient: ollama, supabase, generatedRecipes: repo, photoFinder, dishVideoFinder },
       { rateLimit: { windowMs: 60_000, maxRequests: 100 }, ...options }
     )
   );
@@ -280,6 +282,46 @@ describe('POST /api/recipes/cook-anything', () => {
     expect(second.body.cached).toBe(true);
     expect(second.body.photo).toEqual(samplePhoto);
     expect(search.search).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds dish videos and still returns the recipe when that search fails', async () => {
+    const search: DishVideoSearchClient = {
+      search: vi
+        .fn()
+        .mockResolvedValueOnce([{ videoId: 'phohigh001', title: 'Authentic pho recipe', channelTitle: 'Street' }])
+        .mockRejectedValueOnce(new Error('YouTube search failed: 403 quotaExceeded')),
+    };
+    const finder = new DishVideoFinder(new InMemoryDishVideoCache(), search, { warn: vi.fn() });
+    const { app } = createApp(
+      mockOllama(validRecipe),
+      mockSupabase(),
+      new InMemoryGeneratedRecipeRepository(),
+      undefined,
+      null,
+      finder
+    );
+    const first = await request(app)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'Pho' });
+    expect(first.status).toBe(200);
+    expect(first.body.dish_videos).toEqual([
+      {
+        videoId: 'phohigh001',
+        title: 'Authentic pho recipe',
+        channelTitle: 'Street',
+        url: 'https://www.youtube.com/watch?v=phohigh001',
+      },
+    ]);
+    expect(first.body.recipe.title).toBe('Pad Thai');
+
+    const second = await request(app)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'Ramen' });
+    expect(second.status).toBe(200);
+    expect(second.body.dish_videos).toEqual([]);
+    expect(second.body.recipe.title).toBe('Pad Thai');
   });
 
   it('still returns the recipe when the photo lookup throws', async () => {

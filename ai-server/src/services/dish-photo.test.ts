@@ -6,8 +6,12 @@ import {
   DishPhotoFinder,
   InMemoryDishPhotoCache,
   WikimediaCommonsClient,
+  canonicalLicenseUrl,
   clipAttribution,
+  commonsDisplayUrl,
   commonsFileUrlFromTitle,
+  dishPhotoQueries,
+  dishTitleScore,
   isAllowedCommonsFileUrl,
   isAllowedCommonsLicense,
   isAllowedImageUrl,
@@ -166,20 +170,40 @@ describe('DishPhotoFinder', () => {
     expect(search.search).not.toHaveBeenCalled();
   });
 
-  it('caches a genuine miss and does not search again until the TTL expires', async () => {
+  it('stores a genuine miss and does not search again until the TTL expires', async () => {
     const cache = new InMemoryDishPhotoCache();
     const search: DishPhotoSearchClient = { search: vi.fn().mockResolvedValue(null) };
-    const now = new Date('2026-02-01T00:00:00.000Z');
+    let now = new Date('2026-02-01T00:00:00.000Z');
     const finder = new DishPhotoFinder(cache, search, { warn: vi.fn() }, () => now);
     await expect(finder.findForDish('invisible stew')).resolves.toEqual({ photo: null, complete: true });
+    expect(cache.entries.get('invisible stew')?.photo).toBeNull();
     await expect(finder.findForDish('invisible stew')).resolves.toEqual({ photo: null, complete: true });
     expect(search.search).toHaveBeenCalledTimes(1);
 
-    const later = new Date(now.getTime() + DISH_PHOTO_NEGATIVE_CACHE_TTL_MS + 1);
-    const expired = new DishPhotoFinder(cache, search, { warn: vi.fn() }, () => later);
+    now = new Date(now.getTime() + DISH_PHOTO_NEGATIVE_CACHE_TTL_MS + 1);
     (search.search as ReturnType<typeof vi.fn>).mockResolvedValueOnce(PHOTO);
-    await expect(expired.findForDish('invisible stew')).resolves.toEqual({ photo: PHOTO, complete: true });
+    await expect(finder.findForDish('invisible stew')).resolves.toEqual({ photo: PHOTO, complete: true });
     expect(search.search).toHaveBeenCalledTimes(2);
+    expect(cache.entries.get('invisible stew')?.photo).toEqual(PHOTO);
+  });
+
+  it('honors a previously cached miss until the TTL expires', async () => {
+    const cache = new InMemoryDishPhotoCache();
+    const fetchedAt = new Date('2026-02-01T00:00:00.000Z');
+    await cache.put({ normalizedDishName: 'pho', photo: null, fetchedAt });
+    const search: DishPhotoSearchClient = { search: vi.fn().mockResolvedValue(PHOTO) };
+    const fresh = new DishPhotoFinder(cache, search, { warn: vi.fn() }, () => fetchedAt);
+    await expect(fresh.findForDish('pho')).resolves.toEqual({ photo: null, complete: true });
+    expect(search.search).not.toHaveBeenCalled();
+
+    const expired = new DishPhotoFinder(
+      cache,
+      search,
+      { warn: vi.fn() },
+      () => new Date(fetchedAt.getTime() + DISH_PHOTO_NEGATIVE_CACHE_TTL_MS + 1)
+    );
+    await expect(expired.findForDish('pho')).resolves.toEqual({ photo: PHOTO, complete: true });
+    expect(search.search).toHaveBeenCalledTimes(1);
   });
 
   it('does not cache a thrown search, and cools down retries for a minute', async () => {
@@ -198,6 +222,54 @@ describe('DishPhotoFinder', () => {
     await expect(finder.findForDish('pad thai')).resolves.toEqual({ photo: null, complete: false });
     expect(search.search).toHaveBeenCalledTimes(2);
     expect(cache.entries.size).toBe(0);
+  });
+});
+
+describe('dish photo queries and display URLs', () => {
+  it('tries a more specific query after the dish name', () => {
+    expect(dishPhotoQueries('pho')).toEqual(['pho', 'pho soup', 'vietnamese pho']);
+    expect(dishPhotoQueries('chicken parm')).toEqual(['chicken parm', 'chicken parmesan']);
+    expect(dishPhotoQueries('chicken parmesan')).toEqual(['chicken parmesan']);
+    expect(dishTitleScore('File:Menu of Pho 2025.jpg', 'pho')).toBe(-1);
+    expect(dishTitleScore('File:Chicken parmesan.jpg', 'chicken parmesan')).toBeGreaterThan(
+      dishTitleScore('File:Chicken parmesan mise en place.jpg', 'chicken parmesan')
+    );
+    expect(dishTitleScore('File:Soup - Pho Tau Bay.jpg', 'pho')).toBeGreaterThan(
+      dishTitleScore('File:Sate Pho, Pho 21, Paris.jpg', 'pho')
+    );
+  });
+
+  it('rewrites thumb.wikimedia.org onto upload.wikimedia.org and upgrades http license deeds', () => {
+    expect(
+      commonsDisplayUrl(
+        'https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c4/Menu_of_Pho.jpg/1280px-Menu_of_Pho.jpg?utm_source=commons',
+        'https://upload.wikimedia.org/wikipedia/commons/c/c4/Menu_of_Pho.jpg',
+        'image/jpeg'
+      )
+    ).toBe('https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Menu_of_Pho.jpg/1280px-Menu_of_Pho.jpg');
+    expect(canonicalLicenseUrl('http://creativecommons.org/publicdomain/zero/1.0/deed.en')).toBe(
+      'https://creativecommons.org/publicdomain/zero/1.0/deed.en'
+    );
+    expect(canonicalLicenseUrl('http://evil.example/license')).toBeNull();
+  });
+
+  it('accepts a Commons photo whose thumb host is not upload.wikimedia.org', () => {
+    expect(
+      photoFromCommonsPage('File:Pho.jpg', {
+        url: 'https://upload.wikimedia.org/wikipedia/commons/c/c4/Pho.jpg',
+        thumburl: 'https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c4/Pho.jpg/1280px-Pho.jpg',
+        descriptionurl: 'https://commons.wikimedia.org/wiki/File:Pho.jpg',
+        mime: 'image/jpeg',
+        extmetadata: {
+          Artist: { value: 'Ada Cook' },
+          LicenseShortName: { value: 'CC0' },
+          LicenseUrl: { value: 'http://creativecommons.org/publicdomain/zero/1.0/deed.en' },
+        },
+      })
+    ).toMatchObject({
+      url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/c/c4/Pho.jpg/1280px-Pho.jpg',
+      credit: { license: 'CC0', licenseUrl: 'https://creativecommons.org/publicdomain/zero/1.0/deed.en' },
+    });
   });
 });
 

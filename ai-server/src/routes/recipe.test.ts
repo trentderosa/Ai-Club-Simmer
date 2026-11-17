@@ -8,6 +8,8 @@ import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 import type { PathSlot } from '../services/recipe-generator.js';
+import { DishPhotoFinder, InMemoryDishPhotoCache, type DishPhoto, type DishPhotoSearchClient } from '../services/dish-photo.js';
+import { DishVideoFinder, InMemoryDishVideoCache, type DishVideoSearchClient } from '../services/dish-video-finder.js';
 
 const validRecipe: Recipe = {
   title: 'Test Recipe',
@@ -63,7 +65,12 @@ function createMockSupabase(
 }
 
 function createApp(
-  deps: { ollamaClient: OllamaClient; supabase: SupabaseService },
+  deps: {
+    ollamaClient: OllamaClient;
+    supabase: SupabaseService;
+    photoFinder?: DishPhotoFinder | null;
+    dishVideoFinder?: DishVideoFinder | null;
+  },
   options: { enablePreviewRoute?: boolean; rateLimit?: { windowMs: number; maxRequests: number } } = {}
 ): express.Express {
   const app = express();
@@ -217,6 +224,42 @@ describe('POST /api/recipes/generate/:slotId', () => {
     expect(response.body.recipe).toEqual(validRecipe);
     expect(ollamaClient.generate).toHaveBeenCalled();
     expect(supabase.saveRecipe).toHaveBeenCalled();
+  });
+
+  it('returns a dish photo and dish videos for a path recipe, and hides videos when YouTube fails', async () => {
+    const photo: DishPhoto = {
+      url: 'https://upload.wikimedia.org/wikipedia/commons/a/a8/Example.jpg',
+      credit: {
+        author: 'Jane Cook',
+        license: 'CC BY-SA 4.0',
+        licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0/',
+        sourceUrl: 'https://commons.wikimedia.org/wiki/File:Example.jpg',
+      },
+    };
+    const photoSearch: DishPhotoSearchClient = { search: vi.fn().mockResolvedValue(photo) };
+    const videoSearch: DishVideoSearchClient = {
+      search: vi.fn().mockRejectedValue(new Error('YouTube search failed: 403 quotaExceeded')),
+    };
+    const app = createApp({
+      ollamaClient: createMockOllamaClient(),
+      supabase: createMockSupabase({
+        tokenValid: true,
+        pathSlot: mockSlot,
+        userProfile: mockUserProfile,
+      }),
+      photoFinder: new DishPhotoFinder(new InMemoryDishPhotoCache(), photoSearch),
+      dishVideoFinder: new DishVideoFinder(new InMemoryDishVideoCache(), videoSearch, { warn: vi.fn() }),
+    });
+
+    const response = await request(app)
+      .post('/api/recipes/generate/1')
+      .set('Authorization', 'Bearer valid-token');
+
+    expect(response.status).toBe(200);
+    expect(response.body.photo).toEqual(photo);
+    expect(response.body.dish_videos).toEqual([]);
+    expect(response.body.recipe.title).toBe('Test Recipe');
+    expect(photoSearch.search).toHaveBeenCalledWith('test dish');
   });
 
   it('hides internal error details from client', async () => {

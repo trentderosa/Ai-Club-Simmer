@@ -37,6 +37,8 @@ describe('parseResponse: recipe', () => {
     const out = await parseResponse(res(200, { recipe, cached: false, videos }), RecipeResponseSchema, 'recipe');
     expect(out.recipe.title).toBe('Fluffy Scrambled Eggs');
     expect(out.videos['Whisk eggs'].videoId).toBe('abc123XYZ_-');
+    expect(out.photo).toBeNull();
+    expect(out.dish_videos).toEqual([]);
   });
 
   it('treats null or missing videos as {}', async () => {

@@ -69,10 +69,15 @@ export class TestDatabase {
           CREATE ROLE anon NOLOGIN;
         END IF;
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
-          CREATE ROLE service_role NOLOGIN;
+          CREATE ROLE service_role NOLOGIN BYPASSRLS;
         END IF;
       END
       $roles$;
+
+      -- Supabase's service_role has BYPASSRLS. ALTER covers a role created by
+      -- an older harness on a reused test database (CREATE IF NOT EXISTS
+      -- would otherwise leave it subject to RLS).
+      ALTER ROLE service_role WITH NOLOGIN BYPASSRLS;
 
       GRANT authenticated TO postgres;
       GRANT anon TO postgres;
@@ -230,6 +235,10 @@ export class TestDatabase {
       REVOKE ALL ON dish_photos FROM PUBLIC, anon, authenticated;
       GRANT ALL ON dish_photos TO service_role;
 
+      -- 20261117201646_dish_videos.sql: re-assert after broad GRANTs
+      REVOKE ALL ON dish_videos FROM PUBLIC, anon, authenticated;
+      GRANT ALL ON dish_videos TO service_role;
+
       -- 20261116000000_mastery_sessions.sql: re-assert after broad GRANTs
       REVOKE ALL ON mastery_sessions FROM PUBLIC, anon, authenticated;
       GRANT SELECT, INSERT, UPDATE ON mastery_sessions TO service_role;
@@ -259,6 +268,7 @@ export class TestDatabase {
     await this.pool.query('DELETE FROM check_ins');
     await this.pool.query('DELETE FROM mastery_sessions');
     await this.pool.query('DELETE FROM technique_videos');
+    await this.pool.query('DELETE FROM dish_videos');
     await this.pool.query('DELETE FROM dish_photos');
     await this.pool.query('DELETE FROM user_recipes');
     await this.pool.query('DELETE FROM user_slot_completions');

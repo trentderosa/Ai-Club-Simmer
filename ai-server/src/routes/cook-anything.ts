@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
+import type { DishVideo, DishVideoFinder } from '../services/dish-video-finder.js';
 import type { RecipeVideos, VideoFinder, VideoLookupResult } from '../services/video-finder.js';
 import type { GeneratedRecipeRepository } from '../repositories/generated-recipe-repository.js';
 import { DishValidationError, validateDishQuery } from '../cook-anything/dish-name.js';
@@ -10,7 +11,7 @@ import { clampRecipeCounts, computeFreeformXp } from '../cook-anything/clamp.js'
 import { COOK_ANYTHING_MAX_DISH_LENGTH } from '../cook-anything/constants.js';
 import { GenerationRateLimiter } from '../cook-anything/rate-limit.js';
 import { generateCookAnythingRecipe } from '../cook-anything/generator.js';
-import { sanitizeRecipeVideos } from '../cook-anything/youtube-url.js';
+import { sanitizeRecipeVideos, youtubeWatchUrl } from '../cook-anything/youtube-url.js';
 
 export interface CookAnythingRouterDeps {
   ollamaClient: OllamaClient;
@@ -18,6 +19,7 @@ export interface CookAnythingRouterDeps {
   generatedRecipes: GeneratedRecipeRepository;
   videoFinder?: VideoFinder | null;
   photoFinder?: DishPhotoFinder | null;
+  dishVideoFinder?: DishVideoFinder | null;
 }
 
 export interface CookAnythingRouterOptions {
@@ -104,6 +106,22 @@ export function createCookAnythingRouter(
     return lookup.photo;
   }
 
+  async function attachDishVideos(normalizedDishName: string): Promise<DishVideo[]> {
+    if (!deps.dishVideoFinder) return [];
+    try {
+      const lookup = await deps.dishVideoFinder.findForDish(normalizedDishName);
+      return lookup.videos.flatMap((video) => {
+        const url = youtubeWatchUrl(video.videoId);
+        return url ? [{ ...video, url }] : [];
+      });
+    } catch (error) {
+      console.warn('cook_anything_dish_videos_failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return [];
+    }
+  }
+
   type CookAnythingHttpResponse = {
     generated_recipe_id: string;
     dish_query: string;
@@ -111,6 +129,7 @@ export function createCookAnythingRouter(
     recipe: unknown;
     cached: boolean;
     videos: RecipeVideos;
+    dish_videos: DishVideo[];
     photo: DishPhoto | null;
     xp_value: number;
     counts: { steps: number; ingredients: number; minutes: number };
@@ -129,6 +148,7 @@ export function createCookAnythingRouter(
       xpValue: number;
     },
     videos: RecipeVideos,
+    dishVideos: DishVideo[],
     photo: DishPhoto | null,
     cached: boolean
   ): CookAnythingHttpResponse {
@@ -139,6 +159,7 @@ export function createCookAnythingRouter(
       recipe: saved.recipe,
       cached,
       videos,
+      dish_videos: dishVideos,
       photo,
       xp_value: saved.xpValue,
       counts: {
@@ -212,13 +233,14 @@ export function createCookAnythingRouter(
       );
       if (existing) {
         const storedVideos = existing.videos;
-        const [videos, photo] = await Promise.all([
+        const [videos, photo, dishVideos] = await Promise.all([
           storedVideos
             ? Promise.resolve(storedVideos)
             : attachVideos(existing.id, userId, existing.recipe),
           attachPhoto(existing.id, userId, existing.normalizedDishName, existing.photo),
+          attachDishVideos(existing.normalizedDishName),
         ]);
-        res.json(toResponse(existing, sanitizeRecipeVideos(videos), photo, true));
+        res.json(toResponse(existing, sanitizeRecipeVideos(videos), dishVideos, photo, true));
         return;
       }
 
@@ -270,11 +292,12 @@ export function createCookAnythingRouter(
           timeEstimateMinutes: clamped.timeEstimateMinutes,
           xpValue,
         });
-        const [videos, photo] = await Promise.all([
+        const [videos, photo, dishVideos] = await Promise.all([
           attachVideos(saved.id, userId, saved.recipe),
           attachPhoto(saved.id, userId, saved.normalizedDishName, saved.photo),
+          attachDishVideos(saved.normalizedDishName),
         ]);
-        return toResponse(saved, videos, photo, false);
+        return toResponse(saved, videos, dishVideos, photo, false);
       })();
 
       inFlight.set(flightKey, work);

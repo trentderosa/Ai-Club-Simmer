@@ -13,6 +13,7 @@ import {
   CheckInResponseSchema,
   RecipeResponseSchema,
   CookAnythingResponseSchema,
+  DishPhotosResponseSchema,
   MasteryRevealResponseSchema,
   MasteryStartResponseSchema,
   type CheckInInput,
@@ -21,6 +22,7 @@ import {
   type CheckInResponse,
   type RecipeResponse,
   type CookAnythingResponse,
+  type DishPhoto,
 } from './schemas';
 
 export { CHECK_IN_TIMEOUT_MS, RECIPE_TIMEOUT_MS };
@@ -29,6 +31,7 @@ export interface AiServerClient {
   generateRecipe(slotId: number, accessToken: string): Promise<RecipeResponse>;
   submitCheckIn(input: CheckInInput, accessToken: string): Promise<CheckInResponse>;
   cookAnything(dish: string, accessToken: string): Promise<CookAnythingResponse>;
+  dishPhotos(names: string[], accessToken: string): Promise<Record<string, DishPhoto | null>>;
   startMastery(slotId: number, accessToken: string): Promise<MasteryStartResponse>;
   revealMasteryStep(sessionId: string, stepIndex: number, accessToken: string): Promise<MasteryRevealResponse>;
 }
@@ -74,6 +77,10 @@ export function createAiServerClient(baseUrl: string, fetchFn: FetchFn = fetch):
       post('/api/check-ins', input, token, CheckInResponseSchema, 'check-in', CHECK_IN_TIMEOUT_MS),
     cookAnything: (dish, token) =>
       post('/api/recipes/cook-anything', { dish }, token, CookAnythingResponseSchema, 'recipe', RECIPE_TIMEOUT_MS),
+    dishPhotos: async (names, token) => {
+      const parsed = await post('/api/dish-photos', { dishes: names }, token, DishPhotosResponseSchema, 'recipe', 8000);
+      return parsed.photos;
+    },
     startMastery: (slotId, token) =>
       post('/api/mastery/sessions', { slot_id: slotId }, token, MasteryStartResponseSchema, 'mastery', MASTERY_TIMEOUT_MS),
     revealMasteryStep: (sessionId, stepIndex, token) =>

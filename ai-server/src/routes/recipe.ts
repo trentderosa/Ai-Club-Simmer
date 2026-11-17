@@ -6,6 +6,10 @@ import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
 import type { RecipeVideos, VideoFinder, VideoLookupResult } from '../services/video-finder.js';
+import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
+import type { DishVideo, DishVideoFinder } from '../services/dish-video-finder.js';
+import { normalizeDishName } from '../cook-anything/dish-name.js';
+import { youtubeWatchUrl } from '../cook-anything/youtube-url.js';
 import { maskRecipeForMastery } from '../mastery/mask.js';
 import {
   UserProfile,
@@ -39,6 +43,8 @@ export interface RecipeRouterDeps {
   supabase: SupabaseService;
   /** F4 technique videos. Without it (no YOUTUBE_API_KEY) recipes have no videos. */
   videoFinder?: VideoFinder | null;
+  photoFinder?: DishPhotoFinder | null;
+  dishVideoFinder?: DishVideoFinder | null;
 }
 
 export interface RecipeRouterOptions {
@@ -138,6 +144,40 @@ export function createRecipeRouter(
       });
     }
     return lookup.videos;
+  }
+
+  async function dishMedia(dishName: string): Promise<{ photo: DishPhoto | null; dish_videos: DishVideo[] }> {
+    const key = normalizeDishName(dishName);
+    const [photo, dishVideos] = await Promise.all([
+      (async (): Promise<DishPhoto | null> => {
+        if (!key || !deps.photoFinder) return null;
+        try {
+          const lookup = await deps.photoFinder.findForDish(key);
+          return lookup.photo;
+        } catch (error) {
+          console.warn('recipe_photo_failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return null;
+        }
+      })(),
+      (async (): Promise<DishVideo[]> => {
+        if (!key || !deps.dishVideoFinder) return [];
+        try {
+          const lookup = await deps.dishVideoFinder.findForDish(key);
+          return lookup.videos.flatMap((video) => {
+            const url = youtubeWatchUrl(video.videoId);
+            return url ? [{ ...video, url }] : [];
+          });
+        } catch (error) {
+          console.warn('recipe_dish_videos_failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return [];
+        }
+      })(),
+    ]);
+    return { photo, dish_videos: dishVideos };
   }
 
   async function singleFlightGenerate(
@@ -246,13 +286,18 @@ export function createRecipeRouter(
       const existingRecipe = await deps.supabase.getSavedRecipe(userId, slotId);
       if (existingRecipe) {
         // null = never stored (or the last lookup was incomplete): look again.
+        const mediaPromise = dishMedia(slot.dishName);
         const storedVideos = await deps.supabase.getSavedVideos(userId, slotId);
-        const videos = storedVideos ?? (await attachVideos(userId, slotId, existingRecipe));
+        const [videos, media] = await Promise.all([
+          storedVideos ? Promise.resolve(storedVideos) : attachVideos(userId, slotId, existingRecipe),
+          mediaPromise,
+        ]);
         // F8: the final slot's hidden steps are only served by a mastery reveal.
         res.json({
           recipe: slot.isFinal ? maskRecipeForMastery(existingRecipe) : existingRecipe,
           cached: true,
           videos,
+          ...media,
         });
         return;
       }
@@ -293,10 +338,12 @@ export function createRecipeRouter(
         return;
       }
 
+      const media = await dishMedia(slot.dishName);
       res.json({
         recipe: slot.isFinal ? maskRecipeForMastery(result.recipe) : result.recipe,
         cached: false,
         videos: result.videos,
+        ...media,
       });
     } catch (error) {
       console.error('Recipe generation error:', error);

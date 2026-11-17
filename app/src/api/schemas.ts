@@ -161,12 +161,12 @@ export const VideosSchema = z
   .transform((v) => v ?? {});
 export type Videos = Record<string, Video>;
 
-export const RecipeResponseSchema = z.object({
-  recipe: RecipeSchema,
-  cached: z.boolean(),
-  videos: VideosSchema,
-});
-export type RecipeResponse = z.infer<typeof RecipeResponseSchema>;
+export const DishVideosSchema = z
+  .array(VideoSchema)
+  .max(3)
+  .nullish()
+  .transform((v) => v ?? []);
+export type DishVideos = z.infer<typeof DishVideosSchema>;
 
 export const CookAnythingCountsSchema = z.object({
   steps: z.number().int().min(1),
@@ -194,6 +194,21 @@ export function parseStoredDishPhoto(raw: unknown): DishPhoto | null {
   return parsed.success ? parsed.data : null;
 }
 
+export const RecipeResponseSchema = z.object({
+  recipe: RecipeSchema,
+  cached: z.boolean(),
+  videos: VideosSchema,
+  /** Commons photo of the dish. Null when nothing matched; the hero uses board.jpg. */
+  photo: DishPhotoSchema.nullish().transform((v) => v ?? null),
+  /** 1–3 videos of someone making this dish. Empty hides the section. */
+  dish_videos: DishVideosSchema,
+});
+export type RecipeResponse = z.infer<typeof RecipeResponseSchema>;
+
+export const DishPhotosResponseSchema = z.object({
+  photos: z.record(z.string(), DishPhotoSchema.nullable()),
+});
+
 export const CookAnythingResponseSchema = z.object({
   generated_recipe_id: z.string(),
   dish_query: z.string(),
@@ -201,6 +216,7 @@ export const CookAnythingResponseSchema = z.object({
   recipe: RecipeSchema,
   cached: z.boolean(),
   videos: VideosSchema,
+  dish_videos: DishVideosSchema,
   /** Missing on older saved rows (before the photo migration). */
   photo: DishPhotoSchema.nullish().transform((v) => v ?? null),
   xp_value: z.number().int().min(1),

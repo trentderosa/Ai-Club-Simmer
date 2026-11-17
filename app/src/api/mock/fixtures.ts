@@ -229,6 +229,11 @@ export const CANNED_COOK_ANYTHING_VIDEOS: Videos = {
   'Cook pasta al dente': { videoId: 'mockVideoCA1', title: 'Cooking pasta al dente', channelTitle: 'Placeholder' },
 };
 
+/** Placeholder "watch someone make it" rows. Mock mode does not open them. */
+export const CANNED_DISH_VIDEOS = [
+  { videoId: 'mockDishVid1', title: 'How to make it', channelTitle: 'Placeholder' },
+];
+
 /**
  * Canned Commons-shaped photo for mock Cook anything recipes. The URL is a
  * real upload.wikimedia.org path so the hero credit UI can be exercised;

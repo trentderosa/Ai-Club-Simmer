@@ -25,6 +25,7 @@ export function createBackend(c: AppConfig): Backend {
     revealMasteryStep: mock.revealMasteryStep,
     cookAnything: mock.cookAnything,
     getGeneratedRecipe: mock.getGeneratedRecipe,
+    dishPhotos: mock.dishPhotos,
   };
 }
 

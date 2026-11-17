@@ -1,19 +1,18 @@
 /**
  * Generated recipe detail for a free-form "Cook anything" dish.
  */
-import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Linking, Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { Recipe, Videos } from '../../api';
+import type { Recipe, Video, Videos } from '../../api';
 import { Button, IconButton } from '../../components/button';
+import { DishPhotoFill } from '../../components/dish-photo';
 import { SectionHead } from '../../components/layout';
 import { ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
 import { VideoRow } from '../../components/video';
-import { heroPhotoForGenerated } from '../../domain/generated-recipe-photo';
 import { useSession } from '../../state/session';
 import { useErrorAction } from '../../state/use-error-action';
 import { useGeneratedRecipe } from '../../state/use-generated-recipe';
@@ -55,12 +54,12 @@ export default function GeneratedRecipeScreen() {
   return (
     <View style={styles.fill}>
       <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
-        <Hero
-          key={`${res.generated_recipe_id}:${res.photo?.url ?? 'none'}`}
-          photo={res.photo}
-          top={insets.top + 4}
-          onBack={back}
-        />
+        <View style={styles.hero}>
+          <DishPhotoFill key={res.photo?.url ?? 'none'} photo={res.photo} linkCredit />
+          <View style={[styles.float, { top: insets.top + 4 }]}>
+            <IconButton icon="back" label="Back" onPress={back} filled />
+          </View>
+        </View>
 
         <View style={styles.titleBlock}>
           <T variant="overline">Cook anything{res.cached ? ' · Saved recipe' : ''}</T>
@@ -89,6 +88,7 @@ export default function GeneratedRecipeScreen() {
 
         <Ingredients recipe={recipe} />
         <VideoSection recipe={recipe} videos={videos} placeholder={backend.label !== 'live'} />
+        <DishVideoSection videos={res.dish_videos} placeholder={backend.label !== 'live'} />
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) + 12 }]}>
@@ -98,51 +98,6 @@ export default function GeneratedRecipeScreen() {
           style={{ flex: 1 }}
         />
       </View>
-    </View>
-  );
-}
-
-function Hero({
-  photo,
-  top,
-  onBack,
-}: {
-  photo: Parameters<typeof heroPhotoForGenerated>[0];
-  top: number;
-  onBack: () => void;
-}) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const hero = imageFailed ? heroPhotoForGenerated(null) : heroPhotoForGenerated(photo);
-  const credit = hero.credit;
-  const openSource = hero.sourceUrl
-    ? () => {
-        void Linking.openURL(hero.sourceUrl as string);
-      }
-    : undefined;
-  return (
-    <View style={styles.hero}>
-      <Image
-        source={hero.source}
-        style={StyleSheet.absoluteFill}
-        contentFit="cover"
-        accessibilityIgnoresInvertColors
-        onError={() => setImageFailed(true)}
-      />
-      <View style={[styles.float, { top }]}>
-        <IconButton icon="back" label="Back" onPress={onBack} filled />
-      </View>
-      {openSource ? (
-        <Pressable
-          accessibilityRole="link"
-          accessibilityLabel={credit}
-          onPress={openSource}
-          style={styles.creditHit}
-        >
-          <T style={styles.credit} numberOfLines={1}>{credit}</T>
-        </Pressable>
-      ) : (
-        <T style={[styles.credit, styles.creditHit]} numberOfLines={1}>{credit}</T>
-      )}
     </View>
   );
 }
@@ -183,6 +138,18 @@ function Ingredients({ recipe }: { recipe: Recipe }) {
   );
 }
 
+function DishVideoSection({ videos, placeholder }: { videos: Video[]; placeholder: boolean }) {
+  if (!videos.length) return null;
+  return (
+    <View style={styles.sec}>
+      <SectionHead title="Watch someone make it" aside={videos.length === 1 ? '1 video' : `${videos.length} videos`} />
+      {videos.map((video) => (
+        <VideoRow key={video.videoId} video={video} placeholder={placeholder} caption={`YouTube${placeholder ? ' · placeholder' : ''}`} />
+      ))}
+    </View>
+  );
+}
+
 function VideoSection({ recipe, videos, placeholder }: { recipe: Recipe; videos: Videos; placeholder: boolean }) {
   const rows = recipe.steps.flatMap((s, i) => {
     const v = s.techniqueName ? videos[s.techniqueName] : undefined;
@@ -206,8 +173,6 @@ const styles = StyleSheet.create({
   bar: { height: 52, justifyContent: 'center', paddingLeft: 12 },
   hero: { height: 330, backgroundColor: color.paperDeep, overflow: 'hidden' },
   float: { position: 'absolute', left: 12 },
-  creditHit: { position: 'absolute', right: 10, bottom: 8 },
-  credit: { fontSize: 10, lineHeight: 13, color: 'rgba(255,255,255,0.85)', letterSpacing: 0.3 },
   titleBlock: { paddingTop: 22, paddingHorizontal: space.gutter },
   title: { marginTop: 10, fontSize: 34, lineHeight: 38 },
   facts: { flexDirection: 'row', marginTop: 18, marginHorizontal: space.gutter, borderTopWidth: 1, borderTopColor: color.ink, borderBottomWidth: 1, borderBottomColor: color.rule },
