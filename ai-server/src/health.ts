@@ -3,6 +3,9 @@ import type { Express, Request, Response as ExpressResponse } from 'express';
 /** Per-check limit. Checks run together, so the route waits at most this long. */
 export const DEEP_HEALTH_TIMEOUT_MS = 2000;
 
+/** How long GET /health/deep reuses the last report (ok or fail). */
+export const DEEP_HEALTH_CACHE_TTL_MS = 5000;
+
 export type HealthStatus = 'ok' | 'fail';
 
 /** Fixed codes only. Never a URL, key, or error message. */
@@ -30,6 +33,8 @@ export interface DeepHealthDeps {
   /** Present or not. The value is never copied into the report. */
   youtubeApiKey?: string;
   timeoutMs?: number;
+  /** Override for tests. Default is DEEP_HEALTH_CACHE_TTL_MS. */
+  cacheTtlMs?: number;
   fetchImpl?: typeof fetch;
 }
 
@@ -42,17 +47,40 @@ export function mountHealthRoutes(app: Express, deps: DeepHealthDeps): void {
     res.json({ status: 'ok', timestamp: new Date().toISOString() });
   });
 
+  let cached: { report: DeepHealthReport; expiresAt: number } | null = null;
+  let inflight: Promise<DeepHealthReport> | null = null;
+  const cacheTtlMs = deps.cacheTtlMs ?? DEEP_HEALTH_CACHE_TTL_MS;
+
+  function getDeepHealthReport(): Promise<DeepHealthReport> {
+    const now = Date.now();
+    if (cached && now < cached.expiresAt) {
+      return Promise.resolve(cached.report);
+    }
+    if (inflight) {
+      return inflight;
+    }
+    inflight = runDeepHealthCheck(deps)
+      .then((report) => {
+        cached = { report, expiresAt: Date.now() + cacheTtlMs };
+        if (report.status === 'fail') {
+          console.warn('health_deep_failed', {
+            ollama: report.checks.ollama.reason ?? report.checks.ollama.status,
+            supabase: report.checks.supabase.reason ?? report.checks.supabase.status,
+            youtube: report.checks.youtube.reason ?? report.checks.youtube.status,
+          });
+        }
+        return report;
+      })
+      .finally(() => {
+        inflight = null;
+      });
+    return inflight;
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
   app.get('/health/deep', async (_req: Request, res: ExpressResponse) => {
-    const report = await runDeepHealthCheck(deps);
-    if (report.status === 'fail') {
-      console.warn('health_deep_failed', {
-        ollama: report.checks.ollama.reason ?? report.checks.ollama.status,
-        supabase: report.checks.supabase.reason ?? report.checks.supabase.status,
-        youtube: report.checks.youtube.reason ?? report.checks.youtube.status,
-      });
-    }
-    res.json(report);
+    const report = await getDeepHealthReport();
+    res.status(report.status === 'ok' ? 200 : 503).json(report);
   });
 }
 
@@ -88,7 +116,7 @@ async function checkOllama(
   }
   let tagsUrl: string;
   try {
-    tagsUrl = new URL('/api/tags', withTrailingSlash(baseUrl)).toString();
+    tagsUrl = new URL('api/tags', withTrailingSlash(baseUrl)).toString();
   } catch {
     return { status: 'fail', reason: 'not_configured' };
   }
@@ -119,7 +147,7 @@ async function checkSupabase(
   }
   let queryUrl: string;
   try {
-    const endpoint = new URL('/rest/v1/path_slots', withTrailingSlash(url));
+    const endpoint = new URL('rest/v1/path_slots', withTrailingSlash(url));
     endpoint.searchParams.set('select', 'id');
     endpoint.searchParams.set('limit', '1');
     queryUrl = endpoint.toString();

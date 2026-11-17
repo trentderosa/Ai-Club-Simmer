@@ -243,7 +243,7 @@ Do **not** build these. They're future work.
 
 **Constraints**
 - **Timeline:** ~2 months to a working demo. The team is part-time students.
-- **The AI only works while the AI-server laptop is running Ollama and the proxy.** Recipes that are already generated and saved still load without it. `GET /health` only checks that the process is up. `GET /health/deep` reports whether the configured Ollama model answers, whether a cheap service-role read of `path_slots` succeeds, and whether the YouTube key is set. It does not call the YouTube API, and the response has no keys, URLs, or error text.
+- **The AI only works while the AI-server laptop is running Ollama and the proxy.** Recipes that are already generated and saved still load without it. `GET /health` only checks that the process is up. `GET /health/deep` reports whether the configured Ollama model answers, whether a cheap service-role read of `path_slots` succeeds, and whether the YouTube key is set. It does not call the YouTube API, and the response has no keys, URLs, or error text. The route stays unauthenticated. It returns HTTP 503 when any check fails and 200 when all are ok. The report (ok or fail) is cached for 5 seconds, and concurrent requests share one in-flight check.
 - **Secrets:** The YouTube API key and Supabase service-role key live only on the AI server, never in the app.
 - **Preview route:** `POST /api/recipes/generate-preview` is unauthenticated and off unless `ENABLE_PREVIEW_ROUTE=true`. `NODE_ENV=production` keeps it off even when that flag is set, and startup logs a warning.
 - **CORS:** The AI server echoes only origins listed in `ALLOWED_ORIGINS`. It never sends `Access-Control-Allow-Origin: *`.

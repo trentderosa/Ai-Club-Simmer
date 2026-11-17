@@ -1,7 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { mountHealthRoutes, runDeepHealthCheck, type DeepHealthDeps } from './health.js';
+import {
+  DEEP_HEALTH_CACHE_TTL_MS,
+  mountHealthRoutes,
+  runDeepHealthCheck,
+  type DeepHealthDeps,
+} from './health.js';
 
 const SERVICE_ROLE = 'service-role-secret-value';
 const YOUTUBE_KEY = 'youtube-key-secret-value';
@@ -41,6 +46,31 @@ function okFetch(): typeof fetch {
   }) as typeof fetch;
 }
 
+function fetchCalls(fetchImpl: typeof fetch): [string, RequestInit?][] {
+  return (fetchImpl as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls;
+}
+
+function hangUntilAborted(_input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> {
+  return new Promise((_resolve, reject) => {
+    const signal = init?.signal;
+    if (!signal) {
+      return;
+    }
+    if (signal.aborted) {
+      reject(signal.reason ?? new DOMException('The operation was aborted.', 'AbortError'));
+      return;
+    }
+    signal.addEventListener('abort', () => {
+      reject(signal.reason ?? new DOMException('The operation was aborted.', 'TimeoutError'));
+    });
+  });
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
 describe('GET /health', () => {
   it('stays fast and does not call dependencies', async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
@@ -79,17 +109,139 @@ describe('GET /health/deep', () => {
     expect(body).not.toContain(OLLAMA_URL);
     expect(body).not.toContain(SUPABASE_URL);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
-    const urls = (fetchImpl as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls.map(
-      (call) => call[0]
-    );
+    const urls = fetchCalls(fetchImpl).map((call) => call[0]);
     expect(urls.some((url) => url.includes('googleapis.com'))).toBe(false);
-    const supabaseCall = (fetchImpl as unknown as { mock: { calls: [string, RequestInit?][] } }).mock.calls.find(
-      (call) => call[0].includes('/rest/v1/path_slots')
-    );
+    const supabaseCall = fetchCalls(fetchImpl).find((call) => call[0].includes('/rest/v1/path_slots'));
     expect(supabaseCall?.[1]?.headers).toMatchObject({
       apikey: SERVICE_ROLE,
       Authorization: `Bearer ${SERVICE_ROLE}`,
     });
+  });
+
+  it('returns 503 when a check fails and does not leak secrets', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const leaked = `connect ECONNREFUSED ${OLLAMA_URL}/api/tags key=${SERVICE_ROLE}`;
+    const fetchImpl = vi.fn((input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return Promise.reject(new Error(leaked));
+      }
+      if (url.includes('/rest/v1/path_slots')) {
+        return Promise.resolve(jsonResponse([{ id: 1 }]));
+      }
+      return Promise.reject(new Error(`unexpected url ${url}`));
+    }) as typeof fetch;
+
+    const app = express();
+    mountHealthRoutes(app, deps(fetchImpl));
+    const response = await request(app).get('/health/deep');
+    const body = JSON.stringify(response.body);
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      status: 'fail',
+      checks: {
+        ollama: { status: 'fail', reason: 'unreachable' },
+        supabase: { status: 'ok' },
+        youtube: { status: 'ok' },
+      },
+    });
+    expect(body).not.toContain(leaked);
+    expect(body).not.toContain(SERVICE_ROLE);
+    expect(body).not.toContain('ECONNREFUSED');
+    expect(body).not.toContain(OLLAMA_URL);
+    expect(warn).toHaveBeenCalledWith(
+      'health_deep_failed',
+      expect.objectContaining({ ollama: 'unreachable' })
+    );
+  });
+
+  it('reuses the cached report within the TTL so two calls hit upstream only once', async () => {
+    const fetchImpl = okFetch();
+    const app = express();
+    mountHealthRoutes(app, deps(fetchImpl));
+
+    const first = await request(app).get('/health/deep');
+    const second = await request(app).get('/health/deep');
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.body).toEqual(first.body);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('refreshes the report after the TTL expires', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = okFetch();
+    const app = express();
+    mountHealthRoutes(app, deps(fetchImpl));
+
+    const first = await request(app).get('/health/deep');
+    expect(first.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(DEEP_HEALTH_CACHE_TTL_MS - 1);
+    const cached = await request(app).get('/health/deep');
+    expect(cached.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const refreshed = await request(app).get('/health/deep');
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.body).toEqual(first.body);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it('coalesces concurrent calls onto one in-flight check', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetchImpl = vi.fn(async (input: Parameters<typeof fetch>[0]) => {
+      await gate;
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return jsonResponse({ models: [{ name: 'llama3.2:latest' }] });
+      }
+      if (url.includes('/rest/v1/path_slots')) {
+        return jsonResponse([{ id: 1 }]);
+      }
+      throw new Error(`unexpected url ${url}`);
+    }) as typeof fetch;
+
+    const app = express();
+    mountHealthRoutes(app, deps(fetchImpl));
+
+    const pending = Promise.all([request(app).get('/health/deep'), request(app).get('/health/deep')]);
+    await vi.waitFor(() => expect(fetchImpl).toHaveBeenCalledTimes(2));
+    release();
+
+    const [a, b] = await pending;
+    expect(a.status).toBe(200);
+    expect(b.status).toBe(200);
+    expect(a.body).toEqual(b.body);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a path on the Ollama or Supabase base URL', async () => {
+    const fetchImpl = okFetch();
+    const ollamaBaseUrl = 'http://127.0.0.1:11434/ollama';
+    const supabaseUrl = 'https://example.supabase.co/prefix';
+    const app = express();
+    mountHealthRoutes(app, deps(fetchImpl, { ollamaBaseUrl, supabaseUrl }));
+
+    const response = await request(app).get('/health/deep');
+    const urls = fetchCalls(fetchImpl).map((call) => call[0]);
+
+    expect(response.status).toBe(200);
+    expect(urls).toEqual(
+      expect.arrayContaining([
+        'http://127.0.0.1:11434/ollama/api/tags',
+        'https://example.supabase.co/prefix/rest/v1/path_slots?select=id&limit=1',
+      ])
+    );
+    expect(urls.some((url) => url === 'http://127.0.0.1:11434/api/tags')).toBe(false);
+    expect(urls.some((url) => url.startsWith('https://example.supabase.co/rest/v1/path_slots'))).toBe(false);
   });
 
   it('reports fail when Ollama is down and does not echo the error', async () => {
@@ -141,5 +293,102 @@ describe('GET /health/deep', () => {
     expect(body).not.toContain(leaked);
     expect(body).not.toContain(SERVICE_ROLE);
     expect(body).not.toContain(SUPABASE_URL);
+  });
+
+  it('reports timeout when a dependency fetch never resolves', async () => {
+    const fetchImpl = vi.fn((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return hangUntilAborted(input, init);
+      }
+      if (url.includes('/rest/v1/path_slots')) {
+        return Promise.resolve(jsonResponse([{ id: 1 }]));
+      }
+      return Promise.reject(new Error(`unexpected url ${url}`));
+    }) as typeof fetch;
+
+    const report = await runDeepHealthCheck(deps(fetchImpl));
+
+    expect(report.status).toBe('fail');
+    expect(report.checks.ollama).toEqual({ status: 'fail', reason: 'timeout' });
+    expect(report.checks.supabase).toEqual({ status: 'ok' });
+    expect(report.checks.youtube).toEqual({ status: 'ok' });
+  });
+
+  it('reports model_missing when the configured model is not listed', async () => {
+    const fetchImpl = vi.fn((input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return Promise.resolve(jsonResponse({ models: [{ name: 'other-model:latest' }] }));
+      }
+      if (url.includes('/rest/v1/path_slots')) {
+        return Promise.resolve(jsonResponse([{ id: 1 }]));
+      }
+      return Promise.reject(new Error(`unexpected url ${url}`));
+    }) as typeof fetch;
+
+    const report = await runDeepHealthCheck(deps(fetchImpl));
+
+    expect(report.status).toBe('fail');
+    expect(report.checks.ollama).toEqual({ status: 'fail', reason: 'model_missing' });
+    expect(report.checks.supabase).toEqual({ status: 'ok' });
+    expect(report.checks.youtube).toEqual({ status: 'ok' });
+  });
+
+  it('reports not_configured and overall fail when the YouTube key is missing', async () => {
+    const report = await runDeepHealthCheck(deps(okFetch(), { youtubeApiKey: undefined }));
+
+    expect(report.status).toBe('fail');
+    expect(report.checks.ollama).toEqual({ status: 'ok' });
+    expect(report.checks.supabase).toEqual({ status: 'ok' });
+    expect(report.checks.youtube).toEqual({ status: 'fail', reason: 'not_configured' });
+  });
+
+  it('expires a failed report after the same TTL', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = vi.fn((input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return Promise.reject(new Error('down'));
+      }
+      if (url.includes('/rest/v1/path_slots')) {
+        return Promise.resolve(jsonResponse([{ id: 1 }]));
+      }
+      return Promise.reject(new Error(`unexpected url ${url}`));
+    }) as typeof fetch;
+
+    const app = express();
+    mountHealthRoutes(app, deps(fetchImpl));
+
+    const first = await request(app).get('/health/deep');
+    expect(first.status).toBe(503);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(DEEP_HEALTH_CACHE_TTL_MS);
+    const refreshed = await request(app).get('/health/deep');
+    expect(refreshed.status).toBe(503);
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+  });
+
+  it('reports unreachable when Ollama returns a non-JSON body', async () => {
+    const fetchImpl = vi.fn((input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return Promise.resolve(new Response('<html>ok</html>', { status: 200, headers: { 'Content-Type': 'text/html' } }));
+      }
+      if (url.includes('/rest/v1/path_slots')) {
+        return Promise.resolve(jsonResponse([{ id: 1 }]));
+      }
+      return Promise.reject(new Error(`unexpected url ${url}`));
+    }) as typeof fetch;
+
+    const report = await runDeepHealthCheck(deps(fetchImpl));
+
+    expect(report.status).toBe('fail');
+    expect(report.checks.ollama).toEqual({ status: 'fail', reason: 'unreachable' });
+    expect(report.checks.supabase).toEqual({ status: 'ok' });
+    expect(report.checks.youtube).toEqual({ status: 'ok' });
+    expect(JSON.stringify(report)).not.toContain('<html>');
   });
 });

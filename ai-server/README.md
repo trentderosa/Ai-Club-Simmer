@@ -56,7 +56,7 @@ With `NODE_ENV=production`, the server exits at startup and names any missing va
 - **Supabase:** one row from `path_slots` (`select=id&limit=1`) using the service-role key.
 - **YouTube:** the API key is set. The Data API is not called, so this does not spend quota.
 
-`status` is `ok` only when all three are `ok`. A failure includes a reason of `not_configured`, `unreachable`, `timeout`, or `model_missing`. The body never includes keys, request URLs, response bodies, or stack traces. A missing YouTube key is `not_configured`, which makes the overall status `fail` even when Ollama and Supabase are up.
+`status` is `ok` only when all three are `ok`. A failure includes a reason of `not_configured`, `unreachable`, `timeout`, or `model_missing`. The HTTP status is 200 when `status` is `ok` and 503 when it is `fail`; the body shape is unchanged. The last report (ok or fail) is cached for 5 seconds (`DEEP_HEALTH_CACHE_TTL_MS`). Concurrent requests reuse one in-flight check, so repeated hits make at most one Ollama `/api/tags` call and one Supabase `path_slots` read per window. The body never includes keys, request URLs, response bodies, or stack traces. A missing YouTube key is `not_configured`, which makes the overall status `fail` even when Ollama and Supabase are up.
 
 ## Recipes: path order and videos
 
