@@ -101,12 +101,14 @@ describe('reconcileXpAwards', () => {
     expect(logger.error).toHaveBeenNthCalledWith(1, 'xp_reconcile_award_failed', {
       check_in_id: rows[0].check_in_id,
       slot_id: 1,
+      kind: 'slot',
       reason: 'timeout',
       error: 'award_slot_xp timed out after 5000ms',
     });
     expect(logger.error).toHaveBeenNthCalledWith(2, 'xp_reconcile_award_failed', {
       check_in_id: rows[1].check_in_id,
       slot_id: 1,
+      kind: 'slot',
       reason: 'unknown',
       error: 'boom',
     });
@@ -124,7 +126,83 @@ describe('reconcileXpAwards', () => {
     expect(logger.info).toHaveBeenCalledWith('xp_reconcile_candidate', {
       check_in_id: rows[0].check_in_id,
       slot_id: 1,
+      kind: 'slot',
       created_at: rows[0].created_at,
+    });
+  });
+
+  it('retries a cook-anything check-in with the generated awarder and leaves the slot awarder alone', async () => {
+    const generated: ReconcileCandidate = {
+      check_in_id: randomUUID(),
+      slot_id: null,
+      created_at: '2026-11-12T18:00:00.000Z',
+      kind: 'generated',
+    };
+    const slot = candidate(3);
+    const awarder: XpAwarder = { award: vi.fn().mockResolvedValue(result(62)) };
+    const generatedAwarder: XpAwarder = { award: vi.fn().mockResolvedValue(result(84)) };
+    const logger = makeLogger();
+
+    const summary = await reconcileXpAwards(
+      sourceOf([generated, slot]),
+      awarder,
+      OPTIONS,
+      logger,
+      generatedAwarder
+    );
+
+    expect(vi.mocked(generatedAwarder.award).mock.calls).toEqual([[generated.check_in_id]]);
+    expect(vi.mocked(awarder.award).mock.calls).toEqual([[slot.check_in_id]]);
+    expect(summary).toMatchObject({ scanned: 2, awarded: 2, skipped: 0, failed: 0 });
+    expect(logger.info).toHaveBeenCalledWith('xp_reconcile_awarded', {
+      check_in_id: generated.check_in_id,
+      slot_id: null,
+      kind: 'generated',
+      xp_awarded: 84,
+      is_first_completion: true,
+      capped: false,
+    });
+  });
+
+  it('counts already_awarded on a cook-anything check-in as skipped', async () => {
+    const generated: ReconcileCandidate = {
+      check_in_id: randomUUID(),
+      slot_id: null,
+      created_at: '2026-11-12T18:00:00.000Z',
+      kind: 'generated',
+    };
+    const generatedAwarder: XpAwarder = {
+      award: vi.fn().mockRejectedValue(new XpAwardError('already_awarded', 'award_generated_recipe_xp failed: 409', 409)),
+    };
+
+    const summary = await reconcileXpAwards(
+      sourceOf([generated]),
+      { award: vi.fn() },
+      OPTIONS,
+      makeLogger(),
+      generatedAwarder
+    );
+
+    expect(summary).toMatchObject({ scanned: 1, awarded: 0, skipped: 1, failed: 0 });
+  });
+
+  it('fails a cook-anything candidate when no generated awarder is configured', async () => {
+    const generated: ReconcileCandidate = {
+      check_in_id: randomUUID(),
+      slot_id: null,
+      created_at: '2026-11-12T18:00:00.000Z',
+      kind: 'generated',
+    };
+    const logger = makeLogger();
+    const summary = await reconcileXpAwards(sourceOf([generated]), { award: vi.fn() }, OPTIONS, logger);
+
+    expect(summary).toMatchObject({ scanned: 1, awarded: 0, failed: 1 });
+    expect(logger.error).toHaveBeenCalledWith('xp_reconcile_award_failed', {
+      check_in_id: generated.check_in_id,
+      slot_id: null,
+      kind: 'generated',
+      reason: 'unknown',
+      error: 'Cook-anything reconcile awarder is not configured',
     });
   });
 

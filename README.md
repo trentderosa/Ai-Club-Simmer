@@ -119,7 +119,7 @@ If a check-in's XP award fails (for example a timeout), the check-in is kept wit
 cd ai-server
 npm run build
 npm run reconcile:xp -- --dry-run   # list check-ins missing XP, award nothing
-npm run reconcile:xp                # award them via award_slot_xp
+npm run reconcile:xp                # award path slots via award_slot_xp and Cook anything via award_generated_recipe_xp
 ```
 
-It's safe to run repeatedly. Nothing schedules it yet. See [ai-server/README.md](ai-server/README.md#reconcile-missing-xp-awards).
+Path check-ins missing an `xp_events` row and Cook anything check-ins missing a `generated_recipe_xp_events` row are both included, oldest first, in one batch. It's safe to run repeatedly. Nothing schedules it yet. See [ai-server/README.md](ai-server/README.md#reconcile-missing-xp-awards).

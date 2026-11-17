@@ -97,12 +97,38 @@ describe('runReconcileCli', () => {
 
   it('--dry-run does not award', async () => {
     const award = vi.fn();
+    const generatedAward = vi.fn();
     const code = await runReconcileCli(['--dry-run'], ENV, {
       logger: logger(),
       createSource: () => oneCandidate,
       createAwarder: () => ({ award }),
+      createGeneratedAwarder: () => ({ award: generatedAward }),
     });
     expect(code).toBe(0);
     expect(award).not.toHaveBeenCalled();
+    expect(generatedAward).not.toHaveBeenCalled();
+  });
+
+  it('awards a cook-anything candidate with the generated awarder', async () => {
+    const award = vi.fn();
+    const generatedAward = vi.fn().mockResolvedValue({
+      xp_awarded: 84,
+      is_first_completion: true,
+      weekly_repeat_remaining: 100,
+      capped: false,
+    });
+    const code = await runReconcileCli([], ENV, {
+      logger: logger(),
+      createSource: () => ({
+        findCheckInsMissingXp: vi.fn().mockResolvedValue([
+          { check_in_id: 'g1', slot_id: null, created_at: '2026-11-12T20:00:00Z', kind: 'generated' },
+        ]),
+      }),
+      createAwarder: () => ({ award }),
+      createGeneratedAwarder: () => ({ award: generatedAward }),
+    });
+    expect(code).toBe(0);
+    expect(award).not.toHaveBeenCalled();
+    expect(generatedAward).toHaveBeenCalledWith('g1');
   });
 });

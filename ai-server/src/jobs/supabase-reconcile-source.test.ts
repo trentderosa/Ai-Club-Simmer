@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SupabaseReconcileSource } from './supabase-reconcile-source.js';
+import { mergeReconcileCandidates, SupabaseReconcileSource } from './supabase-reconcile-source.js';
 
 const mockFetch = vi.fn();
 const KEY = 'test-service-role-key';
@@ -26,41 +26,71 @@ describe('SupabaseReconcileSource', () => {
     vi.unstubAllGlobals();
   });
 
-  it('queries check_ins with no xp_events row inside the window, oldest first, bounded', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () =>
-        Promise.resolve([
-          { id: 'c1', slot_id: 1, created_at: '2026-11-10T12:00:00+00:00', xp_events: null },
-        ]),
+  function ok(rows: unknown[]): { ok: true; json: () => Promise<unknown[]> } {
+    return { ok: true, json: () => Promise.resolve(rows) };
+  }
+
+  it('queries both check-in tables for rows with no XP event, oldest first, bounded', async () => {
+    mockFetch.mockImplementation((rawUrl: string) => {
+      const url = new URL(rawUrl);
+      if (url.pathname.endsWith('/check_ins')) {
+        return ok([
+          { id: 'slot-new', slot_id: 2, created_at: '2026-11-11T12:00:00.000Z', xp_events: null },
+          { id: 'slot-old', slot_id: 1, created_at: '2026-11-10T12:00:00.000Z', xp_events: null },
+        ]);
+      }
+      return ok([
+        { id: 'gen-mid', created_at: '2026-11-10T18:00:00.000Z', generated_recipe_xp_events: null },
+      ]);
     });
 
-    const rows = await source.findCheckInsMissingXp(WINDOW);
+    const rows = await source.findCheckInsMissingXp({ ...WINDOW, limit: 2 });
 
-    const [rawUrl, options] = mockFetch.mock.calls[0] as [string, RequestInit];
-    const url = new URL(rawUrl);
-    expect(url.origin + url.pathname).toBe('https://test-project.supabase.co/rest/v1/check_ins');
-    expect(url.searchParams.get('select')).toBe('id,slot_id,created_at,xp_events(id)');
-    expect(url.searchParams.get('xp_events')).toBe('is.null');
-    expect(url.searchParams.getAll('created_at')).toEqual([
-      'gte.2026-11-05T22:00:00.000Z',
-      'lte.2026-11-12T21:58:00.000Z',
+    const calls = mockFetch.mock.calls.map(([rawUrl, options]) => ({
+      url: new URL(rawUrl as string),
+      options: options as RequestInit,
+    }));
+    const slot = calls.find((call) => call.url.pathname.endsWith('/check_ins'));
+    const generated = calls.find((call) => call.url.pathname.endsWith('/generated_recipe_check_ins'));
+    expect(slot).toBeDefined();
+    expect(generated).toBeDefined();
+    expect(slot!.url.origin + slot!.url.pathname).toBe(
+      'https://test-project.supabase.co/rest/v1/check_ins'
+    );
+    expect(slot!.url.searchParams.get('select')).toBe('id,slot_id,created_at,xp_events(id)');
+    expect(slot!.url.searchParams.get('xp_events')).toBe('is.null');
+    expect(generated!.url.searchParams.get('select')).toBe(
+      'id,created_at,generated_recipe_xp_events(id)'
+    );
+    expect(generated!.url.searchParams.get('generated_recipe_xp_events')).toBe('is.null');
+    for (const call of [slot!, generated!]) {
+      expect(call.url.searchParams.getAll('created_at')).toEqual([
+        'gte.2026-11-05T22:00:00.000Z',
+        'lte.2026-11-12T21:58:00.000Z',
+      ]);
+      expect(call.url.searchParams.get('order')).toBe('created_at.asc,id.asc');
+      expect(call.url.searchParams.get('limit')).toBe('2');
+      expect(call.options.method).toBe('GET');
+      expect(call.options.signal).toBeInstanceOf(AbortSignal);
+      expect(call.options.headers).toMatchObject({ apikey: KEY, Authorization: `Bearer ${KEY}` });
+    }
+    expect(rows).toEqual([
+      { check_in_id: 'slot-old', slot_id: 1, created_at: '2026-11-10T12:00:00.000Z', kind: 'slot' },
+      { check_in_id: 'gen-mid', slot_id: null, created_at: '2026-11-10T18:00:00.000Z', kind: 'generated' },
     ]);
-    expect(url.searchParams.get('order')).toBe('created_at.asc,id.asc');
-    expect(url.searchParams.get('limit')).toBe('50');
-    expect(options.method).toBe('GET');
-    expect(options.signal).toBeInstanceOf(AbortSignal);
-    expect(options.headers).toMatchObject({ apikey: KEY, Authorization: `Bearer ${KEY}` });
-    expect(rows).toEqual([{ check_in_id: 'c1', slot_id: 1, created_at: '2026-11-10T12:00:00+00:00' }]);
   });
 
   it('never selects check-in text or user ids', () => {
-    const select = new URL(source.buildUrl(WINDOW)).searchParams.get('select') ?? '';
-    expect(select).not.toMatch(/went_well|was_hard|user_id|\*/);
+    for (const select of [
+      new URL(source.buildUrl(WINDOW)).searchParams.get('select') ?? '',
+      new URL(source.buildGeneratedUrl(WINDOW)).searchParams.get('select') ?? '',
+    ]) {
+      expect(select).not.toMatch(/went_well|was_hard|user_id|dish|\*/);
+    }
   });
 
   it('throws on a non-OK response without leaking the key', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: false, status: 500, text: () => Promise.resolve('oops') });
+    mockFetch.mockResolvedValue({ ok: false, status: 500, text: () => Promise.resolve('oops') });
     const err = await source.findCheckInsMissingXp(WINDOW).catch((e: Error) => e);
     expect((err as Error).message).toBe('Database error listing check-ins missing XP: 500 oops');
     expect((err as Error).message).not.toContain(KEY);
@@ -72,7 +102,7 @@ describe('SupabaseReconcileSource', () => {
       serviceRoleKey: KEY,
       timeoutMs: 20,
     });
-    mockFetch.mockImplementationOnce(
+    mockFetch.mockImplementation(
       (_url: string, options: RequestInit) =>
         new Promise((_resolve, reject) => {
           options.signal?.addEventListener('abort', () => reject(new Error('aborted')));
@@ -81,5 +111,19 @@ describe('SupabaseReconcileSource', () => {
     await expect(slow.findCheckInsMissingXp(WINDOW)).rejects.toThrow(
       'Listing check-ins missing XP timed out after 20ms'
     );
+  });
+});
+
+describe('mergeReconcileCandidates', () => {
+  it('orders by created_at then id and applies the shared limit', () => {
+    const merged = mergeReconcileCandidates(
+      [
+        { check_in_id: 'b', slot_id: 2, created_at: '2026-11-11T00:00:00.000Z', kind: 'slot' },
+        { check_in_id: 'a', slot_id: null, created_at: '2026-11-10T00:00:00.000Z', kind: 'generated' },
+        { check_in_id: 'c', slot_id: null, created_at: '2026-11-11T00:00:00.000Z', kind: 'generated' },
+      ],
+      2
+    );
+    expect(merged.map((row) => row.check_in_id)).toEqual(['a', 'b']);
   });
 });

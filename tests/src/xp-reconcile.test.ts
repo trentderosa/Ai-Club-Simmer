@@ -14,10 +14,11 @@ import { XpAwardError, type XpAwarder } from '../../ai-server/src/services/xp-aw
  * XP reconcile job at the database level.
  *
  * Drives the ai-server's reconcileXpAwards() against real Postgres:
- * - the candidate scan is the SQL twin of the PostgREST anti-join the job uses
- * - awards go through award_slot_xp as service_role (the production path)
- * - a unique violation on xp_events(check_in_id) maps to "already_awarded",
- *   exactly as PostgREST's 409/23505 does in SupabaseXpAwarder
+ * - the candidate scan is the SQL twin of the two PostgREST anti-joins the job uses
+ * - path awards go through award_slot_xp and Cook anything awards through
+ *   award_generated_recipe_xp, both as service_role (the production path)
+ * - a unique violation on either XP table's check_in_id maps to "already_awarded",
+ *   exactly as PostgREST's 409/23505 does in the awarders
  * Fake users and data only.
  */
 describe('XP reconcile job (failed or missing awards)', () => {
@@ -36,23 +37,39 @@ describe('XP reconcile job (failed or missing awards)', () => {
     findCheckInsMissingXp: (window) => db.findCheckInsMissingXp(window.from, window.to, window.limit),
   });
 
-  const awarder = (): XpAwarder => ({
-    async award(checkInId) {
-      try {
-        const row = await db.awardSlotXp(checkInId);
-        return {
-          xp_awarded: row.out_xp_awarded,
-          is_first_completion: row.out_is_first_completion,
-          weekly_repeat_remaining: row.out_weekly_repeat_remaining,
-          capped: row.out_capped,
-        };
-      } catch (e) {
-        if ((e as { code?: string }).code === '23505') {
-          throw new XpAwardError('already_awarded', 'award_slot_xp failed: 409 duplicate', 409);
-        }
-        throw e;
+  const awardFromRpc = async (
+    run: (checkInId: string) => Promise<{
+      out_xp_awarded: number;
+      out_is_first_completion: boolean;
+      out_weekly_repeat_remaining: number;
+      out_capped: boolean;
+    }>,
+    checkInId: string,
+    rpcName: string
+  ) => {
+    try {
+      const row = await run(checkInId);
+      return {
+        xp_awarded: row.out_xp_awarded,
+        is_first_completion: row.out_is_first_completion,
+        weekly_repeat_remaining: row.out_weekly_repeat_remaining,
+        capped: row.out_capped,
+      };
+    } catch (e) {
+      if ((e as { code?: string }).code === '23505') {
+        throw new XpAwardError('already_awarded', `${rpcName} failed: 409 duplicate`, 409);
       }
-    },
+      throw e;
+    }
+  };
+
+  const awarder = (): XpAwarder => ({
+    award: (checkInId) => awardFromRpc((id) => db.awardSlotXp(id), checkInId, 'award_slot_xp'),
+  });
+
+  const generatedAwarder = (): XpAwarder => ({
+    award: (checkInId) =>
+      awardFromRpc((id) => db.awardGeneratedRecipeXp(id), checkInId, 'award_generated_recipe_xp'),
   });
 
   // now slightly in the future and min age 0 so rows created during the test are in the window.
@@ -65,7 +82,7 @@ describe('XP reconcile job (failed or missing awards)', () => {
   });
 
   const reconcile = (overrides: Partial<ReconcileOptions> = {}): Promise<ReconcileSummary> =>
-    reconcileXpAwards(source(), awarder(), options(overrides), silent);
+    reconcileXpAwards(source(), awarder(), options(overrides), silent, generatedAwarder());
 
   beforeAll(async () => {
     db = new TestDatabase();
@@ -133,7 +150,7 @@ describe('XP reconcile job (failed or missing awards)', () => {
       },
     };
 
-    const summary = await reconcileXpAwards(racing, awarder(), options(), silent);
+    const summary = await reconcileXpAwards(racing, awarder(), options(), silent, generatedAwarder());
 
     expect(summary).toMatchObject({ scanned: 1, awarded: 0, skipped: 1, failed: 0 });
     expect(await db.getXpEventCount(checkInId)).toBe(1);
@@ -219,5 +236,72 @@ describe('XP reconcile job (failed or missing awards)', () => {
     const summary = await reconcile({ dryRun: true });
     expect(summary).toMatchObject({ scanned: 1, awarded: 0, dry_run: true });
     expect(await db.getXpEventCount(checkInId)).toBe(0);
+  });
+
+  it('awards a missing cook-anything award exactly once', async () => {
+    const recipe = await db.createGeneratedRecipe(user.id, {
+      stepCount: 5,
+      ingredientCount: 6,
+      timeEstimateMinutes: 20,
+    });
+    const checkInId = await db.createGeneratedCheckIn(user.id, recipe.id);
+    expect(await db.countGeneratedXpEvents(checkInId)).toBe(0);
+
+    const dry = await reconcile({ dryRun: true });
+    expect(dry).toMatchObject({ scanned: 1, awarded: 0, dry_run: true });
+    expect(await db.countGeneratedXpEvents(checkInId)).toBe(0);
+
+    const first = await reconcile();
+    expect(first).toMatchObject({ scanned: 1, awarded: 1, skipped: 0, failed: 0 });
+    expect(await db.countGeneratedXpEvents(checkInId)).toBe(1);
+    expect(await db.getUserTotalXp(user.id)).toBe(recipe.xp_value);
+
+    const second = await reconcile();
+    expect(second).toMatchObject({ scanned: 0, awarded: 0 });
+    expect(await db.countGeneratedXpEvents(checkInId)).toBe(1);
+    expect(await db.getUserTotalXp(user.id)).toBe(recipe.xp_value);
+  });
+
+  it('shares the batch with path check-ins, oldest first, and skips a late cook-anything award', async () => {
+    const recipe = await db.createGeneratedRecipe(user.id, {
+      dishQuery: 'Pad Thai',
+      normalizedDishName: 'pad thai',
+      stepCount: 5,
+      ingredientCount: 6,
+      timeEstimateMinutes: 20,
+    });
+    const older = await db.createGeneratedCheckIn(user.id, recipe.id);
+    await db.backdateGeneratedCheckIn(older, 1);
+    const outside = await db.createGeneratedCheckIn(user.id, recipe.id);
+    await db.backdateGeneratedCheckIn(outside, 10);
+    const newer = await db.createCheckIn(user.id, recipe1, slot1);
+
+    const limited = await reconcile({ batchLimit: 1 });
+    expect(limited).toMatchObject({ scanned: 1, awarded: 1, batch_full: true });
+    expect(await db.countGeneratedXpEvents(older)).toBe(1);
+    expect(await db.getXpEventCount(newer)).toBe(0);
+    expect(await db.countGeneratedXpEvents(outside)).toBe(0);
+
+    const pending = await db.createGeneratedCheckIn(user.id, recipe.id);
+    await db.backdateGeneratedCheckIn(pending, 0);
+    const racing: ReconcileCandidateSource = {
+      async findCheckInsMissingXp(window) {
+        const rows = await db.findCheckInsMissingXp(window.from, window.to, window.limit);
+        await db.awardGeneratedRecipeXp(pending);
+        return rows;
+      },
+    };
+    const raced = await reconcileXpAwards(racing, awarder(), options(), silent, generatedAwarder());
+    expect(raced.failed).toBe(0);
+    expect(raced.skipped).toBe(1);
+    expect(await db.countGeneratedXpEvents(pending)).toBe(1);
+    expect(await db.getXpEventCount(newer)).toBe(1);
+    expect(await db.countGeneratedXpEvents(outside)).toBe(0);
+
+    const fresh = await db.createGeneratedCheckIn(user.id, recipe.id);
+    const tooNew = await reconcile({ now: new Date(), minAgeSeconds: 3600 });
+    expect(tooNew.scanned).toBe(0);
+    expect(await db.countGeneratedXpEvents(fresh)).toBe(0);
+    expect(await db.countGeneratedXpEvents(outside)).toBe(0);
   });
 });
