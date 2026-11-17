@@ -10,12 +10,21 @@ check-ins, awards XP (path slots and Cook anything), and reports earned badges. 
 ```bash
 cp .env.example .env   # fill in values; .env is gitignored
 npm ci
-npm run dev
+npm run dev            # loads .env if present
 npm run lint && npm run typecheck && npm test
 ```
 
-Without Supabase settings, dev mode uses in-memory storage and check-ins return
-`xp: { status: "skipped" }`.
+`npm run dev`, `npm start`, and `npm run reconcile:xp` (and `reconcile:xp:dev`)
+load `.env` from this directory when the file exists. Already-set environment
+variables win, and a missing `.env` is a no-op, so CI and tests do not need one.
+
+Without `SUPABASE_JWKS_URI` or `SUPABASE_JWT_SECRET`, startup fail-closes to stub
+in-memory storage: auth and check-ins stay disabled, and recipes are not saved to
+Supabase. Check-ins then return `xp: { status: "skipped" }`.
+
+If recipe generation fails because Ollama is unreachable, the server log includes
+the underlying cause (for example `ECONNREFUSED` and the `OLLAMA_BASE_URL` host).
+The client still gets a generic `Recipe generation failed. Please try again.` error.
 
 ## CORS
 
@@ -36,7 +45,8 @@ Set these in the server's environment (never in the repo, chat, or logs):
 | --- | --- |
 | `SUPABASE_URL` | Project URL, e.g. `https://<project-ref>.supabase.co` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. Server-side only. Used to save check-ins and call `award_slot_xp` / `award_generated_recipe_xp` |
-| `SUPABASE_JWT_SECRET` **or** `SUPABASE_JWKS_URI` | Verifies user access tokens (HS256 secret or RS256 JWKS URL) |
+| `SUPABASE_JWKS_URI` | JWKS URL for this project's ES256 access tokens: `https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json`. Without this or `SUPABASE_JWT_SECRET`, startup fail-closes to stub storage. |
+| `SUPABASE_JWT_SECRET` | Optional HS256 secret. Prefer `SUPABASE_JWKS_URI` — this project's tokens are ES256. |
 | `XP_AWARD_TIMEOUT_MS` | Optional. Timeout for each `award_slot_xp` call (default `5000` ms, range `100`–`60000`). An invalid value stops startup |
 | `YOUTUBE_API_KEY` | Optional. Enables technique videos (F4). Server-side only |
 | `YOUTUBE_TIMEOUT_MS` | Optional. Timeout for each YouTube search (default `5000` ms, range `100`–`60000`) |
@@ -155,8 +165,8 @@ npm run reconcile:xp                # award them
 npm run reconcile:xp:dev            # same, via tsx without building
 ```
 
-It needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` in the environment (it doesn't read
-`.env` itself; for example `node --env-file=.env dist/jobs/reconcile-xp.js`). Optional settings:
+It needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`. The npm scripts load `.env` when
+that file exists; already-set environment variables still win. Optional settings:
 
 | Variable | Default | Range | Purpose |
 | --- | --- | --- | --- |

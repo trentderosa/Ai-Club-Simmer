@@ -241,6 +241,53 @@ describe('POST /api/recipes/generate/:slotId', () => {
     expect(response.body.error).not.toContain('192.168.1.100');
     expect(response.body.error).not.toContain('Internal:');
   });
+
+  it('logs the fetch cause and Ollama host but keeps the client error generic', async () => {
+    const fetchError = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:11434'), {
+        code: 'ECONNREFUSED',
+      }),
+    });
+    const ollamaClient: OllamaClient = {
+      generate: vi.fn().mockRejectedValue(fetchError),
+    };
+    const previousBaseUrl = process.env.OLLAMA_BASE_URL;
+    process.env.OLLAMA_BASE_URL = 'http://ollama.internal:11434';
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      const app = createApp({
+        ollamaClient,
+        supabase: createMockSupabase({
+          tokenValid: true,
+          pathSlot: mockSlot,
+          userProfile: mockUserProfile,
+        }),
+      });
+
+      const response = await request(app)
+        .post('/api/recipes/generate/1')
+        .set('Authorization', 'Bearer valid-token');
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({
+        error: 'Recipe generation failed. Please try again.',
+        type: 'generation_failed',
+        attempts: 3,
+      });
+      expect(JSON.stringify(response.body)).not.toContain('ECONNREFUSED');
+      expect(JSON.stringify(response.body)).not.toContain('ollama.internal');
+
+      const logs = JSON.stringify(errorSpy.mock.calls);
+      expect(logs).toContain('recipe_generation_failed');
+      expect(logs).toContain('ECONNREFUSED');
+      expect(logs).toContain('ollama.internal:11434');
+    } finally {
+      errorSpy.mockRestore();
+      if (previousBaseUrl === undefined) delete process.env.OLLAMA_BASE_URL;
+      else process.env.OLLAMA_BASE_URL = previousBaseUrl;
+    }
+  });
 });
 
 describe('POST /api/recipes/generate-preview', () => {

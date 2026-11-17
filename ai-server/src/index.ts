@@ -1,4 +1,5 @@
 import express from 'express';
+import { loadEnvFile } from './load-env.js';
 import { assertProductionConfig, loadConfig } from './config.js';
 import { createCorsMiddleware } from './middleware/cors.js';
 import { createOllamaClient } from './services/ollama-client.js';
@@ -36,6 +37,8 @@ import { SupabaseGeneratedXpAwarder } from './services/generated-xp-awarder.js';
 import { createCookAnythingRouter } from './routes/cook-anything.js';
 import { mountHealthRoutes } from './health.js';
 import type { GeneratedRecipeRepository } from './repositories/generated-recipe-repository.js';
+
+loadEnvFile();
 
 const config = loadConfig();
 
