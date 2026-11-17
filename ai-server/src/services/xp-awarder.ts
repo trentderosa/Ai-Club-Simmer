@@ -28,11 +28,12 @@ export const DEFAULT_XP_AWARD_TIMEOUT_MS = 5000;
  * Why an award failed. Logged as `reason`; never contains secrets.
  * - timeout: the call exceeded the timeout and was aborted. The database may
  *   still have committed the award; the reconcile job sorts that out safely.
- * - already_awarded: an xp_events row already exists for this check-in
- *   (UNIQUE(check_in_id) -> Postgres 23505 -> PostgREST 409) and the existing
- *   row could not be read back. award() itself returns that row on 409 when
- *   it can, so a retried check-in still reports the original XP. Reconcile
- *   treats a thrown already_awarded as done, not failed.
+ * - already_awarded: an XP row already exists for this check-in
+ *   (UNIQUE(check_in_id) on xp_events or generated_recipe_xp_events ->
+ *   Postgres 23505 -> PostgREST 409) and the existing row could not be read
+ *   back. award() itself returns that row on 409 when it can, so a retried
+ *   check-in still reports the original XP. Reconcile treats a thrown
+ *   already_awarded as done, not failed.
  * - http: any other non-OK response.
  * - network: fetch rejected for a reason other than the timeout.
  * - invalid_response: OK response without a result row.

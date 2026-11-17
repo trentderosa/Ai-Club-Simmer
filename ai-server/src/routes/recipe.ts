@@ -313,8 +313,9 @@ export function createRecipeRouter(
      * Preview endpoint for testing recipe generation without auth or persistence.
      * Useful for development and testing the LLM integration.
      *
-     * SECURITY: This route is disabled by default. Enable with ENABLE_PREVIEW_ROUTE=true.
-     * It is rate-limited but not authenticated, so should only be used in dev environments.
+     * SECURITY: This route is disabled by default. Enable with ENABLE_PREVIEW_ROUTE=true
+     * outside production. NODE_ENV=production forces it off (isPreviewRouteEnabled).
+     * It is rate-limited but not authenticated, so it is only for dev environments.
      *
      * Requires full slot and userProfile in request body.
      * Does not save the recipe or check for cached versions.

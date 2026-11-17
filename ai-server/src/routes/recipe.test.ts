@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { createRecipeRouter } from './recipe.js';
+import { isPreviewRouteEnabled } from '../config.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
@@ -284,6 +285,65 @@ describe('POST /api/recipes/generate-preview', () => {
 
     expect(response.status).toBe(200);
     expect(response.body.recipe).toEqual(validRecipe);
+  });
+
+  it('stays off in production even when ENABLE_PREVIEW_ROUTE=true', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const enabled = isPreviewRouteEnabled({
+      NODE_ENV: 'production',
+      ENABLE_PREVIEW_ROUTE: 'true',
+    });
+
+    const app = createApp(
+      {
+        ollamaClient: createMockOllamaClient(),
+        supabase: createMockSupabase(),
+      },
+      { enablePreviewRoute: enabled }
+    );
+
+    const response = await request(app)
+      .post('/api/recipes/generate-preview')
+      .send({
+        slot: mockSlot,
+        userProfile: mockUserProfile,
+      });
+
+    expect(enabled).toBe(false);
+    expect(response.status).toBe(404);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('ENABLE_PREVIEW_ROUTE=true is ignored when NODE_ENV=production')
+    );
+    warn.mockRestore();
+  });
+
+  it('turns on in dev when ENABLE_PREVIEW_ROUTE=true', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const enabled = isPreviewRouteEnabled({
+      NODE_ENV: 'development',
+      ENABLE_PREVIEW_ROUTE: 'true',
+    });
+
+    const app = createApp(
+      {
+        ollamaClient: createMockOllamaClient(),
+        supabase: createMockSupabase(),
+      },
+      { enablePreviewRoute: enabled }
+    );
+
+    const response = await request(app)
+      .post('/api/recipes/generate-preview')
+      .send({
+        slot: mockSlot,
+        userProfile: mockUserProfile,
+      });
+
+    expect(enabled).toBe(true);
+    expect(response.status).toBe(200);
+    expect(response.body.recipe).toEqual(validRecipe);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('returns 400 for invalid request body when enabled', async () => {

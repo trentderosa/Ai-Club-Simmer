@@ -1,5 +1,6 @@
 /**
- * CLI: re-run award_slot_xp for check-ins that have no XP award yet.
+ * CLI: re-run award_slot_xp or award_generated_recipe_xp for check-ins that
+ * have no XP award yet.
  *
  *   npm run build && npm run reconcile:xp              # award
  *   npm run reconcile:xp -- --dry-run                  # list only
@@ -14,6 +15,7 @@
  */
 import { pathToFileURL } from 'url';
 import { loadReconcileConfig, type ReconcileConfig } from '../config.js';
+import { SupabaseGeneratedXpAwarder } from '../services/generated-xp-awarder.js';
 import { SupabaseXpAwarder, type XpAwarder } from '../services/xp-awarder.js';
 import {
   reconcileXpAwards,
@@ -25,6 +27,8 @@ import { SupabaseReconcileSource } from './supabase-reconcile-source.js';
 export interface ReconcileCliDeps {
   createSource?: (config: ReconcileConfig) => ReconcileCandidateSource;
   createAwarder?: (config: ReconcileConfig) => XpAwarder;
+  /** Cook anything awards. Defaults to SupabaseGeneratedXpAwarder. */
+  createGeneratedAwarder?: (config: ReconcileConfig) => XpAwarder;
   logger?: ReconcileLogger;
   now?: Date;
 }
@@ -73,6 +77,13 @@ export async function runReconcileCli(
       serviceRoleKey: config.serviceRoleKey,
       timeoutMs: config.timeoutMs,
     });
+  const generatedAwarder =
+    deps.createGeneratedAwarder?.(config) ??
+    new SupabaseGeneratedXpAwarder({
+      url: config.url,
+      serviceRoleKey: config.serviceRoleKey,
+      timeoutMs: config.timeoutMs,
+    });
 
   try {
     const summary = await reconcileXpAwards(
@@ -85,7 +96,8 @@ export async function runReconcileCli(
         dryRun: argv.includes('--dry-run'),
         now: deps.now,
       },
-      logger
+      logger,
+      generatedAwarder
     );
     return summary.failed > 0 ? 1 : 0;
   } catch (error) {

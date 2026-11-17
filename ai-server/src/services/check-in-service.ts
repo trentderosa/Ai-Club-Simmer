@@ -50,10 +50,11 @@ export class CheckInService {
    * 2. Persist raw text to repository (N2: store raw, sanitize only for prompt).
    *    When input.idempotency_key is set, it becomes check_ins.id so a retry
    *    of the same attempt returns the existing row instead of inserting another.
-   * 3. Award XP server-side via award_slot_xp (service role). A failed award
-   *    (including a timeout, XP_AWARD_TIMEOUT_MS) is logged with a reason and
-   *    reported as xp.status = 'failed'; the check-in stays saved, and
-   *    `npm run reconcile:xp` re-runs the award later.
+   * 3. Award XP server-side (service role): award_slot_xp for a path slot,
+   *    award_generated_recipe_xp for Cook anything. A failed award (including
+   *    a timeout, XP_AWARD_TIMEOUT_MS) is logged with a reason and reported
+   *    as xp.status = 'failed'; the check-in stays saved, and
+   *    `npm run reconcile:xp` re-runs the matching award later.
    * 4. Look up badges this check-in earned (F9). A failed lookup is logged
    *    and reported as badges.status = 'failed'; badges are derived from
    *    check-ins, so they still appear on the badges screen.
