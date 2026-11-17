@@ -29,6 +29,7 @@ import {
 import {
   BADGES,
   CANNED_COOK_ANYTHING_COUNTS,
+  CANNED_DISH_VIDEOS,
   CANNED_COOK_ANYTHING_VIDEOS,
   CANNED_COOK_ANYTHING_XP,
   cannedCookAnythingPhoto,
@@ -309,7 +310,13 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       state.recipeSlots.add(slotId);
       const base = slot.is_final ? maskRecipeForMastery(RECIPES[slotId]) : RECIPES[slotId];
       const coachNote = MOCK_COACH_NOTES[slotId];
-      return { recipe: coachNote ? { ...base, coachNote } : base, cached, videos: VIDEOS[slotId] ?? {} };
+      return {
+        recipe: coachNote ? { ...base, coachNote } : base,
+        cached,
+        videos: VIDEOS[slotId] ?? {},
+        photo: cannedCookAnythingPhoto(normalizeDishName(slot.dish_name)),
+        dish_videos: CANNED_DISH_VIDEOS,
+      };
     },
 
     async startMastery(slotId): Promise<MasteryStartResponse> {
@@ -392,6 +399,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
         recipe: cannedCookAnythingRecipe(pretty),
         cached: false,
         videos: CANNED_COOK_ANYTHING_VIDEOS,
+        dish_videos: CANNED_DISH_VIDEOS,
         photo: cannedCookAnythingPhoto(normalized),
         xp_value: CANNED_COOK_ANYTHING_XP,
         counts: { ...CANNED_COOK_ANYTHING_COUNTS },
@@ -407,6 +415,17 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
         if (saved.generated_recipe_id === id) return { ...saved, cached: true };
       }
       throw new ApiError('not_found', 'No saved recipe for that dish yet.');
+    },
+
+    async dishPhotos(names) {
+      requireSession();
+      const photos: Record<string, ReturnType<typeof cannedCookAnythingPhoto>> = {};
+      for (const name of names) {
+        const key = normalizeDishName(name);
+        if (!key) continue;
+        photos[key] = cannedCookAnythingPhoto(key);
+      }
+      return photos;
     },
 
     async submitCheckIn(input): Promise<CheckInResponse> {

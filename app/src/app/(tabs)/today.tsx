@@ -3,20 +3,21 @@
  * Data: get_my_plan + get_my_plan_summary, re-read every time the screen
  * gains focus (so a check-in shows up when you come back).
  */
-import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useRef } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { PlanSlot, PlanSummary } from '../../api';
+import { DishPhotoFill } from '../../components/dish-photo';
 import { Icon } from '../../components/icon';
 import { gutter } from '../../components/layout';
 import { PathList } from '../../components/path';
 import { EmptyState, ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
+import { normalizeDishName } from '../../domain/dish-name';
 import { formatToday, greetingFor } from '../../domain/greeting';
-import { photoForSlot } from '../../domain/slot-photos';
+import { useDishPhotos } from '../../state/use-dish-photos';
 import { useFlowCache } from '../../state/flow-cache';
 import { useSession } from '../../state/session';
 import { useAsync } from '../../state/use-async';
@@ -162,7 +163,8 @@ function scheduleLine(s: PlanSummary): string {
 }
 
 function NextUp({ slot, total, onOpen }: { slot: PlanSlot; total: number; onOpen: () => void }) {
-  const photo = photoForSlot(slot.slot_order);
+  const photos = useDishPhotos([slot.dish_name]);
+  const photo = photos[normalizeDishName(slot.dish_name)] ?? null;
   return (
     <Pressable
       onPress={onOpen}
@@ -171,7 +173,7 @@ function NextUp({ slot, total, onOpen }: { slot: PlanSlot; total: number; onOpen
       style={({ pressed }) => [styles.next, pressed && { opacity: 0.85 }]}
     >
       <View style={styles.photo}>
-        {photo ? <Image source={photo.source} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}
+        <DishPhotoFill photo={photo} creditStyle={styles.todayCredit} />
         <View style={styles.photoLabel}>
           <T variant="overline" color="ink">
             {slot.is_final ? 'Final recipe · Mastery challenge' : `Recipe ${slot.slot_order} of ${total}`}
@@ -219,6 +221,7 @@ const styles = StyleSheet.create({
   next: { marginTop: 22, marginHorizontal: space.gutter },
   photo: { height: 168, borderRadius: radius.md, overflow: 'hidden', backgroundColor: color.paperDeep, justifyContent: 'flex-end' },
   photoLabel: { alignSelf: 'flex-start', margin: 12, backgroundColor: color.paper, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 4 },
+  todayCredit: { top: 8, bottom: undefined },
   meta: { flexDirection: 'row', alignItems: 'flex-end', marginTop: 14, gap: 12 },
   nextTitle: { fontSize: 28, lineHeight: 32 },
   go: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.tomato, alignItems: 'center', justifyContent: 'center' },

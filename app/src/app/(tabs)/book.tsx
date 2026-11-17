@@ -3,13 +3,13 @@
  * The latest dish is a photo feature, earlier ones are rows, and the rest of
  * the path sits under "Still to come". Tapping an entry opens the recipe screen.
  */
-import { Image } from 'expo-image';
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { PlanSlot, RecipeBookEntry } from '../../api';
+import { DishPhotoFill } from '../../components/dish-photo';
 import { Icon } from '../../components/icon';
 import { gutter } from '../../components/layout';
 import { EmptyState, ErrorState, LoadingState } from '../../components/states';
@@ -24,7 +24,8 @@ import {
   sortBookEntries,
   upcomingDishes,
 } from '../../domain/recipe-book';
-import { photoForSlot } from '../../domain/slot-photos';
+import { normalizeDishName } from '../../domain/dish-name';
+import { useDishPhotos } from '../../state/use-dish-photos';
 import { useSession } from '../../state/session';
 import { useAsync } from '../../state/use-async';
 import { useErrorAction } from '../../state/use-error-action';
@@ -140,6 +141,7 @@ function BookBody({
   onOpen: (slotId: number) => void;
   onClear: () => void;
 }) {
+  const photos = useDishPhotos(visible.map((entry) => entry.dish_name));
   if (book.length === 0) {
     return <EmptyState title="Your book is empty" body={EMPTY_BOOK_COPY} />;
   }
@@ -150,10 +152,10 @@ function BookBody({
   const [feature, ...rows] = visible;
   return (
     <>
-      <FeaturedEntry entry={feature} technique={techniqueBySlot[feature.slot_id]} onOpen={() => onOpen(feature.slot_id)} />
+      <FeaturedEntry entry={feature} photo={photos[normalizeDishName(feature.dish_name)] ?? null} technique={techniqueBySlot[feature.slot_id]} onOpen={() => onOpen(feature.slot_id)} />
       {rows.length > 0 ? <View style={[gutter, styles.listRule]} /> : null}
       {rows.map((entry) => (
-        <BookRow key={entry.slot_id} entry={entry} technique={techniqueBySlot[entry.slot_id]} onOpen={() => onOpen(entry.slot_id)} />
+        <BookRow key={entry.slot_id} entry={entry} photo={photos[normalizeDishName(entry.dish_name)] ?? null} technique={techniqueBySlot[entry.slot_id]} onOpen={() => onOpen(entry.slot_id)} />
       ))}
       {!querying && upcoming.length > 0 ? (
         <>
@@ -175,8 +177,7 @@ function BookBody({
   );
 }
 
-function FeaturedEntry({ entry, technique, onOpen }: { entry: RecipeBookEntry; technique?: string; onOpen: () => void }) {
-  const photo = photoForSlot(entry.slot_order);
+function FeaturedEntry({ entry, photo, technique, onOpen }: { entry: RecipeBookEntry; photo: Parameters<typeof DishPhotoFill>[0]['photo']; technique?: string; onOpen: () => void }) {
   const added = formatAddedOn(entry.added_at);
   return (
     <Pressable
@@ -186,7 +187,7 @@ function FeaturedEntry({ entry, technique, onOpen }: { entry: RecipeBookEntry; t
       style={({ pressed }) => [styles.feature, pressed && { opacity: 0.85 }]}
     >
       <View style={styles.featurePhoto}>
-        {photo ? <Image source={photo.source} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}
+        <DishPhotoFill photo={photo} />
       </View>
       <View style={styles.featureMeta}>
         <BookLabel label={entry.label} times={entry.times_cooked} />
@@ -202,8 +203,7 @@ function FeaturedEntry({ entry, technique, onOpen }: { entry: RecipeBookEntry; t
   );
 }
 
-function BookRow({ entry, technique, onOpen }: { entry: RecipeBookEntry; technique?: string; onOpen: () => void }) {
-  const photo = photoForSlot(entry.slot_order);
+function BookRow({ entry, photo, technique, onOpen }: { entry: RecipeBookEntry; photo: Parameters<typeof DishPhotoFill>[0]['photo']; technique?: string; onOpen: () => void }) {
   return (
     <Pressable
       onPress={onOpen}
@@ -220,7 +220,9 @@ function BookRow({ entry, technique, onOpen }: { entry: RecipeBookEntry; techniq
           {byline(entry, technique)}
         </T>
       </View>
-      <View style={styles.thumb}>{photo ? <Image source={photo.source} style={StyleSheet.absoluteFill} contentFit="cover" /> : null}</View>
+      <View style={styles.thumb}>
+        <DishPhotoFill photo={photo} creditStyle={styles.thumbCredit} />
+      </View>
     </Pressable>
   );
 }
@@ -261,6 +263,7 @@ const styles = StyleSheet.create({
   listRule: { height: 1, backgroundColor: color.ink, marginTop: 18 },
   row: { marginHorizontal: space.gutter, flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: color.rule },
   thumb: { width: 76, height: 76, borderRadius: radius.sm, overflow: 'hidden', backgroundColor: color.paperDeep },
+  thumbCredit: { right: 2, bottom: 2, maxWidth: '100%' },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   future: { marginHorizontal: space.gutter, flexDirection: 'row', alignItems: 'baseline', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: color.rule, borderStyle: 'dashed' },
   futureNum: { width: 34, fontFamily: font.display, fontSize: 16, lineHeight: 22, color: color.ink3 },

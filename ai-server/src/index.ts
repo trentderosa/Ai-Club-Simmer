@@ -33,6 +33,13 @@ import {
   SupabaseDishPhotoCache,
   WikimediaCommonsClient,
 } from './services/dish-photo.js';
+import {
+  DishVideoFinder,
+  InMemoryDishVideoCache,
+  SupabaseDishVideoCache,
+  YouTubeDishVideoClient,
+} from './services/dish-video-finder.js';
+import { createDishPhotoRouter } from './routes/dish-photos.js';
 import { InMemoryGeneratedRecipeRepository } from './repositories/in-memory-generated-recipe-repository.js';
 import { SupabaseGeneratedRecipeRepository } from './repositories/supabase-generated-recipe-repository.js';
 import {
@@ -68,6 +75,7 @@ interface ServiceConfig {
   jwtVerifier: JwtVerifier | null;
   checkInService: CheckInService | null;
   videoFinder: VideoFinder | null;
+  dishVideoFinder: DishVideoFinder | null;
   photoFinder: DishPhotoFinder;
   generatedRecipes: GeneratedRecipeRepository;
   /** F8 server-side mastery sessions. Needs Supabase (no in-memory version). */
@@ -101,6 +109,23 @@ function createVideoFinder(): VideoFinder | null {
  * Cook anything dish photos: Wikimedia Commons, no API key. The cache is the
  * shared dish_photos table when Supabase is configured, else in memory (dev).
  */
+/**
+ * Dish recipe videos ("how to make {dish}"). Same YouTube key as technique
+ * videos, cached per normalized dish name in dish_videos.
+ */
+function createDishVideoFinder(): DishVideoFinder | null {
+  if (!config.youtube.apiKey) return null;
+  const { url, serviceRoleKey } = config.supabase;
+  const cache =
+    url && serviceRoleKey
+      ? new SupabaseDishVideoCache({ url, serviceRoleKey })
+      : new InMemoryDishVideoCache();
+  return new DishVideoFinder(
+    cache,
+    new YouTubeDishVideoClient({ apiKey: config.youtube.apiKey, timeoutMs: config.youtube.timeoutMs })
+  );
+}
+
 function createPhotoFinder(): DishPhotoFinder {
   const { url, serviceRoleKey } = config.supabase;
   const cache =
@@ -130,6 +155,7 @@ function createServicesFromConfig(): ServiceConfig {
       jwtVerifier: null,
       checkInService: null,
       videoFinder: null,
+      dishVideoFinder: null,
       photoFinder: createPhotoFinder(),
       generatedRecipes: new InMemoryGeneratedRecipeRepository(),
       masteryRepository: null,
@@ -145,6 +171,7 @@ function createServicesFromConfig(): ServiceConfig {
       jwtVerifier: null,
       checkInService: null,
       videoFinder: null,
+      dishVideoFinder: null,
       photoFinder: createPhotoFinder(),
       generatedRecipes: new InMemoryGeneratedRecipeRepository(),
       masteryRepository: null,
@@ -218,6 +245,7 @@ function createServicesFromConfig(): ServiceConfig {
     jwtVerifier,
     checkInService,
     videoFinder: createVideoFinder(),
+    dishVideoFinder: createDishVideoFinder(),
     photoFinder: createPhotoFinder(),
     generatedRecipes,
     masteryRepository: url && serviceRoleKey ? new SupabaseMasteryRepository({ url, serviceRoleKey }) : null,
@@ -231,6 +259,8 @@ const recipeRouter = createRecipeRouter(
     ollamaClient,
     supabase: services.supabase,
     videoFinder: services.videoFinder,
+    photoFinder: services.photoFinder,
+    dishVideoFinder: services.dishVideoFinder,
   },
   {
     enablePreviewRoute: config.enablePreviewRoute,
@@ -247,6 +277,7 @@ const cookAnythingRouter = createCookAnythingRouter(
     generatedRecipes: services.generatedRecipes,
     videoFinder: services.videoFinder,
     photoFinder: services.photoFinder,
+    dishVideoFinder: services.dishVideoFinder,
   },
   {
     rateLimit: config.rateLimit,
@@ -255,6 +286,10 @@ const cookAnythingRouter = createCookAnythingRouter(
   }
 );
 app.use('/api/recipes', cookAnythingRouter);
+app.use(
+  '/api/dish-photos',
+  createDishPhotoRouter({ supabase: services.supabase, photoFinder: services.photoFinder })
+);
 
 // Mount check-in router if JWT verifier and check-in service are available
 if (services.jwtVerifier && services.checkInService) {
@@ -297,6 +332,7 @@ app.listen(config.port, config.host, () => {
   console.info(`Model: ${config.ollama.model}`);
   console.info(`Preview route: ${config.enablePreviewRoute ? 'ENABLED' : 'disabled'}`);
   console.info(`Technique videos: ${services.videoFinder ? 'ENABLED' : 'disabled'}`);
+  console.info(`Dish videos: ${services.dishVideoFinder ? 'ENABLED' : 'disabled'}`);
   console.info('Dish photos: ENABLED');
   console.info(`Stub auth: ${isStubAuthAllowed() ? 'ENABLED (dev only)' : 'disabled'}`);
   console.info(`CORS origins: ${config.allowedOrigins.join(', ')}`);

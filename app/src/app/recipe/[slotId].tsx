@@ -3,20 +3,19 @@
  * POST /api/recipes/generate/:slotId: the first call writes the recipe with
  * the local model (10-60 s), later calls return the saved one.
  */
-import { Image } from 'expo-image';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { Recipe, Videos } from '../../api';
+import type { Recipe, Video, Videos } from '../../api';
 import { Button, IconButton } from '../../components/button';
+import { DishPhotoFill } from '../../components/dish-photo';
 import { SectionHead } from '../../components/layout';
 import { ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
 import { VideoRow } from '../../components/video';
 import { REPEAT_XP_NOTE } from '../../domain/recipe-book';
-import { photoForSlot } from '../../domain/slot-photos';
 import { useSession } from '../../state/session';
 import { useErrorAction } from '../../state/use-error-action';
 import { useSlotRecipe } from '../../state/use-slot-recipe';
@@ -54,18 +53,16 @@ export default function RecipeScreen() {
   }
 
   const { slot, recipe: res } = data.data;
-  const { recipe, videos } = res;
-  const photo = photoForSlot(slot.slot_order);
+  const { recipe, videos, photo, dish_videos: dishVideos } = res;
 
   return (
     <View style={styles.fill}>
       <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
         <View style={styles.hero}>
-          {photo ? <Image source={photo.source} style={StyleSheet.absoluteFill} contentFit="cover" accessibilityIgnoresInvertColors /> : null}
+          <DishPhotoFill photo={photo} linkCredit />
           <View style={[styles.float, { top: insets.top + 4 }]}>
             <IconButton icon="back" label="Back" onPress={back} filled />
           </View>
-          {photo ? <T style={styles.credit}>{photo.credit}</T> : null}
         </View>
 
         <View style={styles.titleBlock}>
@@ -102,6 +99,7 @@ export default function RecipeScreen() {
 
         <Ingredients recipe={recipe} />
         <VideoSection recipe={recipe} videos={videos} placeholder={backend.label !== 'live'} />
+        <DishVideoSection videos={dishVideos} placeholder={backend.label !== 'live'} />
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) + 12 }]}>
@@ -151,6 +149,18 @@ function Ingredients({ recipe }: { recipe: Recipe }) {
   );
 }
 
+function DishVideoSection({ videos, placeholder }: { videos: Video[]; placeholder: boolean }) {
+  if (!videos.length) return null;
+  return (
+    <View style={styles.sec}>
+      <SectionHead title="Watch someone make it" aside={videos.length === 1 ? '1 video' : `${videos.length} videos`} />
+      {videos.map((video) => (
+        <VideoRow key={video.videoId} video={video} placeholder={placeholder} caption={`YouTube${placeholder ? ' · placeholder' : ''}`} />
+      ))}
+    </View>
+  );
+}
+
 function VideoSection({ recipe, videos, placeholder }: { recipe: Recipe; videos: Videos; placeholder: boolean }) {
   // One row per step whose technique has a video. Missing entries just don't show (videos can be partial).
   const rows = recipe.steps.flatMap((s, i) => {
@@ -175,7 +185,6 @@ const styles = StyleSheet.create({
   bar: { height: 52, justifyContent: 'center', paddingLeft: 12 },
   hero: { height: 330, backgroundColor: color.paperDeep, overflow: 'hidden' },
   float: { position: 'absolute', left: 12 },
-  credit: { position: 'absolute', right: 10, bottom: 8, fontSize: 10, lineHeight: 13, color: 'rgba(255,255,255,0.85)', letterSpacing: 0.3 },
   titleBlock: { paddingTop: 22, paddingHorizontal: space.gutter },
   title: { marginTop: 10, fontSize: 34, lineHeight: 38 },
   facts: { flexDirection: 'row', marginTop: 18, marginHorizontal: space.gutter, borderTopWidth: 1, borderTopColor: color.ink, borderBottomWidth: 1, borderBottomColor: color.rule },

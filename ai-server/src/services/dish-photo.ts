@@ -3,13 +3,17 @@
  *
  * When a free-form recipe is generated, look up one still photo of the dish:
  *   1. Read the shared cache (dish_photos), keyed by normalizeDishName.
- *   2. On a miss, search Wikimedia Commons (no API key). Accept only CC0,
- *      Public Domain, CC BY, or CC BY-SA (any version). Reject NC, ND, fair
- *      use, and everything else. Image URLs must be https://upload.wikimedia.org
- *      raster files (jpeg/png/webp).
- *   3. Cache a found photo, and cache a genuine "no photo" miss with a TTL so
- *      repeated misses don't hammer the API. Timeouts and other transient
- *      errors are not cached.
+ *   2. On a miss, search Wikimedia Commons (no API key). Try the dish name,
+ *      then a more specific query (for example "pho", then "pho soup", then
+ *      "Vietnamese pho"). Accept only CC0, Public Domain, CC BY, or CC BY-SA
+ *      (any version). Reject NC, ND, fair use, and everything else. Image
+ *      URLs must be https://upload.wikimedia.org raster files (jpeg/png/webp).
+ *      Commons often returns the sized image on thumb.wikimedia.org; that host
+ *      is rewritten to upload.wikimedia.org and dropped if it still isn't a
+ *      raster there. The original upload URL is used when the thumb isn't.
+ *   3. Cache a found photo only. A miss is not stored, so a later visit can
+ *      try again (an in-memory cooldown avoids a burst). Older cached misses
+ *      are ignored. Timeouts and other errors are not cached.
  *   4. A failure, timeout, or miss returns photo: null. Recipe generation
  *      always succeeds.
  */
@@ -19,13 +23,18 @@ import { SupabaseRest, type SupabaseRestConfig } from './supabase-rest.js';
 export const WIKIMEDIA_USER_AGENT =
   'SimmerApp/0.1 (JMU AI Club student project; https://github.com/trentderosa/Ai-Club-Simmer)';
 export const WIKIMEDIA_UPLOAD_HOST = 'upload.wikimedia.org';
+export const WIKIMEDIA_THUMB_HOST = 'thumb.wikimedia.org';
 export const WIKIMEDIA_COMMONS_HOST = 'commons.wikimedia.org';
 export const DEFAULT_DISH_PHOTO_TIMEOUT_MS = 2500;
 export const DISH_PHOTO_TIMEOUT_MS = { default: 2500, min: 500, max: 10000 } as const;
-/** Re-try a cached "no photo" miss after this long. Found photos are kept. */
-export const DISH_PHOTO_NEGATIVE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-/** In-memory pause after a timeout or error so a cached-recipe hit doesn't call Commons again immediately. */
+/**
+ * In-memory pause after a timeout, error, or genuine miss so one recipe view
+ * doesn't call Commons again immediately. The miss is not written to the
+ * shared cache, so the next visit after this window searches again.
+ */
 export const DISH_PHOTO_ERROR_COOLDOWN_MS = 60_000;
+/** Stop trying broader queries once a title scores at least this well. */
+export const DISH_PHOTO_GOOD_MATCH_SCORE = 13;
 /** Artist names are drawn on a 330px hero; longer strings are clipped with an ellipsis. */
 export const MAX_PHOTO_AUTHOR_LENGTH = 80;
 export const DISH_PHOTO_THUMB_WIDTH = 1200;
@@ -143,6 +152,105 @@ function extensionOf(pathname: string): string {
   return dot >= 0 ? base.slice(dot + 1) : '';
 }
 
+const TITLE_REJECT = /\b(menu|logo|icon|map|flag|diagram|poster|banner|qr code|coat of arms)\b/i;
+const TITLE_FOOD = /\b(soup|bowl|noodle|noodles|plate|stew|salad|curry|roast|sandwich|pasta|rice|pizza)\b/i;
+const TITLE_SKIP_TOKENS = new Set(['and', 'with', 'the', 'for']);
+
+/**
+ * Queries to try, most specific last, at most three. "pho" becomes
+ * "pho", "pho soup", "vietnamese pho". "chicken parm" also tries
+ * "chicken parmesan". Other single-word names try "soup" and "dish".
+ */
+export function dishPhotoQueries(dishName: string): string[] {
+  const name = dishName.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (!name) return [];
+  const queries = [name];
+  if (name === 'pho') {
+    queries.push('pho soup', 'vietnamese pho');
+  } else if (/\bparm\b/.test(name) && !/\bparmesan\b/.test(name)) {
+    queries.push(name.replace(/\bparm\b/g, 'parmesan'));
+  } else if (!name.includes(' ') && !/\b(soup|stew|salad|bowl)\b/.test(name)) {
+    queries.push(`${name} soup`, `${name} dish`);
+  }
+  return [...new Set(queries)].slice(0, 3);
+}
+
+/**
+ * Higher is a better title for this dish. -1 means never use it (a menu,
+ * logo, map, and so on). 0 means the license may be fine but the file title
+ * doesn't name the dish, so it is only a fallback.
+ */
+export function dishTitleScore(title: string, dishName: string): number {
+  const file = title
+    .replace(/^File:/i, '')
+    .replace(/\.[a-z0-9]{1,5}$/i, '')
+    .replace(/_+/g, ' ')
+    .toLowerCase();
+  if (!file.trim() || TITLE_REJECT.test(file)) return -1;
+  const tokens = dishName
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((token) => token.length >= 2 && !TITLE_SKIP_TOKENS.has(token));
+  if (tokens.length === 0 || !tokens.every((token) => file.includes(token))) return 0;
+  let score = 10;
+  if (TITLE_FOOD.test(file)) score += 3;
+  if (/\b(mise|ingredients?|uncooked)\b/.test(file)) score -= 4;
+  const first = file.indexOf(tokens[0]);
+  if (first >= 0 && first < 16) score += 2;
+  return score;
+}
+
+/** Rewrite a Commons thumb CDN URL onto upload.wikimedia.org and drop trackers. */
+export function rewriteCommonsImageUrl(raw: string): string | null {
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:') return null;
+    if (url.username !== '' || url.password !== '') return null;
+    const host = url.hostname.toLowerCase();
+    if (host !== WIKIMEDIA_UPLOAD_HOST && host !== WIKIMEDIA_THUMB_HOST) return null;
+    if (host === WIKIMEDIA_THUMB_HOST) url.hostname = WIKIMEDIA_UPLOAD_HOST;
+    url.search = '';
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Prefer a sized thumb when it is a raster on upload.wikimedia.org (rewriting
+ * thumb.wikimedia.org). Otherwise use the original file when that is allowed.
+ * Mime is the original file's type, so it is only applied to the original URL.
+ */
+export function commonsDisplayUrl(thumburl: string | undefined, originalUrl: string | undefined, mime?: string): string | null {
+  if (thumburl) {
+    const thumb = rewriteCommonsImageUrl(thumburl);
+    if (thumb && isAllowedImageUrl(thumb)) return thumb;
+  }
+  if (originalUrl) {
+    const original = rewriteCommonsImageUrl(originalUrl);
+    if (original && isAllowedImageUrl(original, mime)) return original;
+  }
+  return null;
+}
+
+/** https license URL. Commons still emits http://creativecommons.org deeds; those are upgraded. */
+export function canonicalLicenseUrl(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const url = new URL(trimmed);
+    if (url.username !== '' || url.password !== '') return null;
+    const host = url.hostname.toLowerCase();
+    const creativeCommons = host === 'creativecommons.org' || host.endsWith('.creativecommons.org');
+    if (url.protocol === 'http:' && creativeCommons) url.protocol = 'https:';
+    if (url.protocol !== 'https:') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
 export function isAllowedImageUrl(raw: string, mime?: string): boolean {
   try {
     const url = new URL(raw);
@@ -181,7 +289,7 @@ export function commonsFileUrlFromTitle(title: string): string | null {
 
 export class DishPhotoFinder {
   private readonly inFlight = new Map<string, Promise<DishPhotoLookupResult>>();
-  private readonly errorCooldownUntil = new Map<string, number>();
+  private readonly retryAfter = new Map<string, number>();
 
   constructor(
     private readonly cache: DishPhotoCache,
@@ -214,11 +322,13 @@ export class DishPhotoFinder {
       this.logger.warn('dish_photo_cache_read_failed', { error: errorMessage(error) });
     }
 
-    if (cached && (cached.photo || this.now().getTime() - cached.fetchedAt.getTime() < DISH_PHOTO_NEGATIVE_CACHE_TTL_MS)) {
+    // A stored photo is final. A stored miss (image_url null, including rows
+    // written before misses stopped being cached) is ignored so we can retry.
+    if (cached?.photo) {
       return { photo: cached.photo, complete: true };
     }
 
-    const cooldownUntil = this.errorCooldownUntil.get(key);
+    const cooldownUntil = this.retryAfter.get(key);
     if (cooldownUntil !== undefined && this.now().getTime() < cooldownUntil) {
       return { photo: null, complete: false };
     }
@@ -228,11 +338,16 @@ export class DishPhotoFinder {
       photo = await this.search.search(key);
     } catch (error) {
       this.logger.warn('dish_photo_search_failed', { dish: key, error: errorMessage(error) });
-      this.errorCooldownUntil.set(key, this.now().getTime() + DISH_PHOTO_ERROR_COOLDOWN_MS);
+      this.retryAfter.set(key, this.now().getTime() + DISH_PHOTO_ERROR_COOLDOWN_MS);
       return { photo: null, complete: false };
     }
 
-    this.errorCooldownUntil.delete(key);
+    if (!photo) {
+      this.retryAfter.set(key, this.now().getTime() + DISH_PHOTO_ERROR_COOLDOWN_MS);
+      return { photo: null, complete: true };
+    }
+
+    this.retryAfter.delete(key);
     try {
       await this.cache.put({ normalizedDishName: key, photo, fetchedAt: this.now() });
     } catch (error) {
@@ -310,8 +425,8 @@ export function photoFromCommonsPage(
   const license = extString(info.extmetadata?.License);
   if (!isAllowedCommonsLicense(shortName, license)) return null;
 
-  const candidateUrl = info.thumburl || info.url;
-  if (!candidateUrl || !isAllowedImageUrl(candidateUrl, info.mime)) return null;
+  const candidateUrl = commonsDisplayUrl(info.thumburl, info.url, info.mime);
+  if (!candidateUrl) return null;
 
   const folded = foldedLicenseText(shortName, license);
   const isPublicDomain =
@@ -319,20 +434,15 @@ export function photoFromCommonsPage(
     /\bpublic domain\b/.test(folded) ||
     /\bpdm\b/.test(folded) ||
     /(^|\s)pd(\s|$)/.test(folded);
-  const licenseUrl =
+  const licenseUrl = canonicalLicenseUrl(
     extString(info.extmetadata?.LicenseUrl) ||
-    (isPublicDomain
-      ? /\bcc0\b/.test(folded)
-        ? 'https://creativecommons.org/publicdomain/zero/1.0/'
-        : 'https://creativecommons.org/publicdomain/mark/1.0/'
-      : '');
+      (isPublicDomain
+        ? /\bcc0\b/.test(folded)
+          ? 'https://creativecommons.org/publicdomain/zero/1.0/'
+          : 'https://creativecommons.org/publicdomain/mark/1.0/'
+        : '')
+  );
   if (!licenseUrl) return null;
-  try {
-    const parsed = new URL(licenseUrl);
-    if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null;
-  } catch {
-    return null;
-  }
 
   const sourceUrl =
     (info.descriptionurl && isAllowedCommonsFileUrl(info.descriptionurl) ? info.descriptionurl : null) ??
@@ -354,6 +464,12 @@ export function photoFromCommonsPage(
   };
 }
 
+type CommonsPage = {
+  title?: string;
+  index?: number;
+  imageinfo?: z.infer<typeof ImageInfoSchema>[];
+};
+
 export class WikimediaCommonsClient implements DishPhotoSearchClient {
   private readonly timeoutMs: number;
   private readonly baseUrl: string;
@@ -373,8 +489,8 @@ export class WikimediaCommonsClient implements DishPhotoSearchClient {
     url.searchParams.set('format', 'json');
     url.searchParams.set('generator', 'search');
     url.searchParams.set('gsrnamespace', '6');
-    url.searchParams.set('gsrsearch', `${dishName} food filetype:bitmap`);
-    url.searchParams.set('gsrlimit', '8');
+    url.searchParams.set('gsrsearch', `${dishName} filetype:bitmap`);
+    url.searchParams.set('gsrlimit', '10');
     url.searchParams.set('prop', 'imageinfo');
     url.searchParams.set('iiprop', 'url|extmetadata|mime');
     url.searchParams.set('iiurlwidth', String(DISH_PHOTO_THUMB_WIDTH));
@@ -382,33 +498,55 @@ export class WikimediaCommonsClient implements DishPhotoSearchClient {
   }
 
   async search(dishName: string): Promise<DishPhoto | null> {
+    const queries = dishPhotoQueries(dishName);
+    if (queries.length === 0) return null;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     timer.unref?.();
     try {
-      const response = await this.fetchFn(this.buildUrl(dishName), {
-        method: 'GET',
-        headers: {
-          'User-Agent': this.userAgent,
-          'Api-User-Agent': this.userAgent,
-          Accept: 'application/json',
-        },
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`Wikimedia Commons search failed: ${response.status}`);
+      const picked: { best: { photo: DishPhoto; score: number; queryIndex: number } | null } = { best: null };
+      for (const [queryIndex, query] of queries.entries()) {
+        let pages: CommonsPage[];
+        try {
+          pages = await this.fetchPages(query, controller.signal);
+        } catch (error) {
+          if (picked.best) return picked.best.photo;
+          throw error;
+        }
+        for (const page of pages) {
+          const score = dishTitleScore(page.title ?? '', dishName);
+          if (score < 0) continue;
+          const photo = photoFromCommonsPage(page.title, page.imageinfo?.[0]);
+          if (!photo) continue;
+          const best = picked.best;
+          const better = !best || score > best.score;
+          const moreSpecificTie =
+            best !== null && score === best.score && score > 0 && queryIndex > best.queryIndex;
+          if (better || moreSpecificTie) picked.best = { photo, score, queryIndex };
+        }
+        if (picked.best && picked.best.score >= DISH_PHOTO_GOOD_MATCH_SCORE) break;
       }
-      const parsed = CommonsSearchResponseSchema.parse(await response.json());
-      const pages = parsed.query?.pages;
-      if (!pages) return null;
-      for (const page of pagesInSearchOrder(pages)) {
-        const photo = photoFromCommonsPage(page.title, page.imageinfo?.[0]);
-        if (photo) return photo;
-      }
-      return null;
+      return picked.best?.photo ?? null;
     } finally {
       clearTimeout(timer);
     }
+  }
+
+  private async fetchPages(query: string, signal: AbortSignal): Promise<CommonsPage[]> {
+    const response = await this.fetchFn(this.buildUrl(query), {
+      method: 'GET',
+      headers: {
+        'User-Agent': this.userAgent,
+        'Api-User-Agent': this.userAgent,
+        Accept: 'application/json',
+      },
+      signal,
+    });
+    if (!response.ok) {
+      throw new Error(`Wikimedia Commons search failed: ${response.status}`);
+    }
+    const parsed = CommonsSearchResponseSchema.parse(await response.json());
+    return pagesInSearchOrder(parsed.query?.pages ?? {});
   }
 }
 

@@ -154,6 +154,7 @@ export function createLiveBackend(opts: {
     revealMasteryStep: (sessionId, stepIndex, token) => ai.revealMasteryStep(sessionId, stepIndex, token),
 
     cookAnything: (dish, token) => ai.cookAnything(dish, token),
+    dishPhotos: (names, token) => ai.dishPhotos(names, token),
 
     async getGeneratedRecipe(id) {
       const columns =

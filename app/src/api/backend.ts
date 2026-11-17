@@ -17,6 +17,7 @@ import type {
   RecipeBookEntry,
   RecipeResponse,
   CookAnythingResponse,
+  DishPhoto,
   MasteryRevealResponse,
   MasteryStartResponse,
 } from './schemas';
@@ -71,4 +72,6 @@ export interface Backend {
   /** Cook anything: type a dish, get a generated recipe (cached per normalized name). */
   cookAnything(dish: string, accessToken: string): Promise<CookAnythingResponse>;
   getGeneratedRecipe(id: string): Promise<CookAnythingResponse>;
+  /** Commons photos keyed by normalized dish name. Missing or failed names are null. */
+  dishPhotos(names: string[], accessToken: string): Promise<Record<string, DishPhoto | null>>;
 }
