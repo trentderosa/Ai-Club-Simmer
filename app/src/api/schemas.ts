@@ -188,6 +188,12 @@ export const DishPhotoSchema = z.object({
 });
 export type DishPhoto = z.infer<typeof DishPhotoSchema>;
 
+/** A malformed photo_json must not fail the saved-recipe reload. */
+export function parseStoredDishPhoto(raw: unknown): DishPhoto | null {
+  const parsed = DishPhotoSchema.safeParse(raw);
+  return parsed.success ? parsed.data : null;
+}
+
 export const CookAnythingResponseSchema = z.object({
   generated_recipe_id: z.string(),
   dish_query: z.string(),

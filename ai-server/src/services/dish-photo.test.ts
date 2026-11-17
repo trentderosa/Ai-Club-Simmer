@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  DISH_PHOTO_ERROR_COOLDOWN_MS,
   DISH_PHOTO_NEGATIVE_CACHE_TTL_MS,
+  MAX_PHOTO_AUTHOR_LENGTH,
   DishPhotoFinder,
   InMemoryDishPhotoCache,
   WikimediaCommonsClient,
+  clipAttribution,
   commonsFileUrlFromTitle,
   isAllowedCommonsFileUrl,
   isAllowedCommonsLicense,
   isAllowedImageUrl,
+  pagesInSearchOrder,
   photoFromCommonsPage,
   stripAttributionHtml,
   type DishPhoto,
@@ -96,10 +100,15 @@ describe('commons file URLs and attribution HTML', () => {
     );
   });
 
-  it('strips Artist HTML', () => {
+  it('strips Artist HTML and clips long names', () => {
     expect(stripAttributionHtml('<a href="//commons.wikimedia.org/wiki/User:Jane">Jane Cook</a>')).toBe(
       'Jane Cook'
     );
+    expect(clipAttribution('Jane Cook')).toBe('Jane Cook');
+    expect(clipAttribution('a'.repeat(MAX_PHOTO_AUTHOR_LENGTH))).toHaveLength(MAX_PHOTO_AUTHOR_LENGTH);
+    const long = clipAttribution('a'.repeat(MAX_PHOTO_AUTHOR_LENGTH + 20));
+    expect(long).toHaveLength(MAX_PHOTO_AUTHOR_LENGTH);
+    expect(long.endsWith('…')).toBe(true);
   });
 });
 
@@ -173,16 +182,22 @@ describe('DishPhotoFinder', () => {
     expect(search.search).toHaveBeenCalledTimes(2);
   });
 
-  it('does not cache a thrown search and reports an incomplete result', async () => {
+  it('does not cache a thrown search, and cools down retries for a minute', async () => {
     const cache = new InMemoryDishPhotoCache();
     const search: DishPhotoSearchClient = {
       search: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
     };
-    const finder = new DishPhotoFinder(cache, search, { warn: vi.fn() });
+    let now = new Date('2026-02-01T00:00:00.000Z');
+    const finder = new DishPhotoFinder(cache, search, { warn: vi.fn() }, () => now);
     await expect(finder.findForDish('pad thai')).resolves.toEqual({ photo: null, complete: false });
     expect(cache.entries.size).toBe(0);
     await expect(finder.findForDish('pad thai')).resolves.toEqual({ photo: null, complete: false });
+    expect(search.search).toHaveBeenCalledTimes(1);
+
+    now = new Date(now.getTime() + DISH_PHOTO_ERROR_COOLDOWN_MS + 1);
+    await expect(finder.findForDish('pad thai')).resolves.toEqual({ photo: null, complete: false });
     expect(search.search).toHaveBeenCalledTimes(2);
+    expect(cache.entries.size).toBe(0);
   });
 });
 
@@ -255,5 +270,70 @@ describe('WikimediaCommonsClient timeout', () => {
     expect(called).toContain('gsrnamespace=6');
     expect(called).toContain('iiprop=url');
     expect(fetchFn.mock.calls[0][1].headers['User-Agent']).toMatch(/SimmerApp\/0\.1/);
+  });
+
+  it('picks the best search hit, even when that page has a higher pageid', async () => {
+    const better: DishPhoto = {
+      url: 'https://upload.wikimedia.org/wikipedia/commons/b/b1/Better.jpg',
+      credit: {
+        author: 'Best Match',
+        license: 'CC BY-SA 4.0',
+        licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0/',
+        sourceUrl: 'https://commons.wikimedia.org/wiki/File:Better.jpg',
+      },
+    };
+    const worse: DishPhoto = {
+      url: 'https://upload.wikimedia.org/wikipedia/commons/a/a1/Worse.jpg',
+      credit: {
+        author: 'Older Upload',
+        license: 'CC BY 4.0',
+        licenseUrl: 'https://creativecommons.org/licenses/by/4.0/',
+        sourceUrl: 'https://commons.wikimedia.org/wiki/File:Worse.jpg',
+      },
+    };
+    const pages = {
+      '12': {
+        title: 'File:Worse.jpg',
+        index: 8,
+        imageinfo: [
+          {
+            url: worse.url,
+            descriptionurl: worse.credit.sourceUrl,
+            mime: 'image/jpeg',
+            extmetadata: {
+              Artist: { value: worse.credit.author },
+              LicenseShortName: { value: worse.credit.license },
+              LicenseUrl: { value: worse.credit.licenseUrl },
+            },
+          },
+        ],
+      },
+      '99': {
+        title: 'File:Better.jpg',
+        index: 1,
+        imageinfo: [
+          {
+            url: better.url,
+            descriptionurl: better.credit.sourceUrl,
+            mime: 'image/jpeg',
+            extmetadata: {
+              Artist: { value: better.credit.author },
+              LicenseShortName: { value: better.credit.license },
+              LicenseUrl: { value: better.credit.licenseUrl },
+            },
+          },
+        ],
+      },
+    };
+    // Numeric object-key order would visit page 12 first.
+    expect(Object.keys(pages)).toEqual(['12', '99']);
+    expect(pagesInSearchOrder(pages).map((page) => page.index)).toEqual([1, 8]);
+
+    const fetchFn = vi.fn().mockResolvedValue({
+      ok: true,
+      json: (): Promise<unknown> => Promise.resolve({ query: { pages } }),
+    });
+    const client = new WikimediaCommonsClient({ fetchFn: fetchFn as unknown as typeof fetch });
+    await expect(client.search('chicken parm')).resolves.toEqual(better);
   });
 });

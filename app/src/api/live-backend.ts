@@ -12,6 +12,7 @@ import {
   ProfileInputSchema,
   ProfileSchema,
   CookAnythingResponseSchema,
+  parseStoredDishPhoto,
   RecipeBookSchema,
   RecipeSchema,
   VideosSchema,
@@ -178,7 +179,7 @@ export function createLiveBackend(opts: {
         recipe: recipe.data,
         cached: true,
         videos,
-        photo: 'photo_json' in data ? data.photo_json : null,
+        photo: 'photo_json' in data ? parseStoredDishPhoto(data.photo_json) : null,
         xp_value: data.xp_value,
         counts: {
           steps: data.step_count,

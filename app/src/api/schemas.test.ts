@@ -1,4 +1,4 @@
-import { BadgesSchema, CheckInInputSchema, MasteryRevealResponseSchema, MasteryStartResponseSchema, RecipeBookSchema, RecipeStepSchema } from './schemas';
+import { BadgesSchema, CheckInInputSchema, MasteryRevealResponseSchema, MasteryStartResponseSchema, parseStoredDishPhoto, RecipeBookSchema, RecipeStepSchema } from './schemas';
 
 describe('recipe book and badge schemas', () => {
   it('parses a get_my_recipe_book row, including a null user_recipe_id', () => {
@@ -118,5 +118,22 @@ describe('mastery responses', () => {
       revealed_step_indices: [2],
     });
     expect(r.step.instruction).toBe('Pat dry');
+  });
+});
+
+describe('parseStoredDishPhoto', () => {
+  it('returns a valid photo and falls back to null on a bad stored value', () => {
+    const photo = {
+      url: 'https://upload.wikimedia.org/wikipedia/commons/a/a8/Example.jpg',
+      credit: {
+        author: 'Jane Cook',
+        license: 'CC BY-SA 4.0',
+        licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0/',
+        sourceUrl: 'https://commons.wikimedia.org/wiki/File:Example.jpg',
+      },
+    };
+    expect(parseStoredDishPhoto(photo)).toEqual(photo);
+    expect(parseStoredDishPhoto(null)).toBeNull();
+    expect(parseStoredDishPhoto({ url: 'not-a-photo' })).toBeNull();
   });
 });

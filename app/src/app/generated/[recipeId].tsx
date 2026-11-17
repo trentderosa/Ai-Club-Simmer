@@ -138,10 +138,10 @@ function Hero({
           onPress={openSource}
           style={styles.creditHit}
         >
-          <T style={styles.credit}>{credit}</T>
+          <T style={styles.credit} numberOfLines={1}>{credit}</T>
         </Pressable>
       ) : (
-        <T style={[styles.credit, styles.creditHit]}>{credit}</T>
+        <T style={[styles.credit, styles.creditHit]} numberOfLines={1}>{credit}</T>
       )}
     </View>
   );

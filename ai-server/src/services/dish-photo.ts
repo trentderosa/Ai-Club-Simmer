@@ -24,6 +24,10 @@ export const DEFAULT_DISH_PHOTO_TIMEOUT_MS = 2500;
 export const DISH_PHOTO_TIMEOUT_MS = { default: 2500, min: 500, max: 10000 } as const;
 /** Re-try a cached "no photo" miss after this long. Found photos are kept. */
 export const DISH_PHOTO_NEGATIVE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** In-memory pause after a timeout or error so a cached-recipe hit doesn't call Commons again immediately. */
+export const DISH_PHOTO_ERROR_COOLDOWN_MS = 60_000;
+/** Artist names are drawn on a 330px hero; longer strings are clipped with an ellipsis. */
+export const MAX_PHOTO_AUTHOR_LENGTH = 80;
 export const DISH_PHOTO_THUMB_WIDTH = 1200;
 const ALLOWED_RASTER_EXT = new Set(['jpg', 'jpeg', 'png', 'webp']);
 const ALLOWED_RASTER_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
@@ -92,6 +96,12 @@ export function stripAttributionHtml(input: string): string {
     .replace(/&gt;/gi, '>')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export function clipAttribution(author: string, max = MAX_PHOTO_AUTHOR_LENGTH): string {
+  const trimmed = author.trim();
+  if (trimmed.length <= max) return trimmed;
+  return `${trimmed.slice(0, Math.max(0, max - 1)).trimEnd()}…`;
 }
 
 function foldedLicenseText(shortName: string, license?: string): string {
@@ -171,6 +181,7 @@ export function commonsFileUrlFromTitle(title: string): string | null {
 
 export class DishPhotoFinder {
   private readonly inFlight = new Map<string, Promise<DishPhotoLookupResult>>();
+  private readonly errorCooldownUntil = new Map<string, number>();
 
   constructor(
     private readonly cache: DishPhotoCache,
@@ -207,14 +218,21 @@ export class DishPhotoFinder {
       return { photo: cached.photo, complete: true };
     }
 
+    const cooldownUntil = this.errorCooldownUntil.get(key);
+    if (cooldownUntil !== undefined && this.now().getTime() < cooldownUntil) {
+      return { photo: null, complete: false };
+    }
+
     let photo: DishPhoto | null;
     try {
       photo = await this.search.search(key);
     } catch (error) {
       this.logger.warn('dish_photo_search_failed', { dish: key, error: errorMessage(error) });
+      this.errorCooldownUntil.set(key, this.now().getTime() + DISH_PHOTO_ERROR_COOLDOWN_MS);
       return { photo: null, complete: false };
     }
 
+    this.errorCooldownUntil.delete(key);
     try {
       await this.cache.put({ normalizedDishName: key, photo, fetchedAt: this.now() });
     } catch (error) {
@@ -260,11 +278,23 @@ const CommonsSearchResponseSchema = z.object({
     .object({
       pages: z.record(z.string(), z.object({
         title: z.string().optional(),
+        index: z.number().optional(),
         imageinfo: z.array(ImageInfoSchema).optional(),
       })).optional(),
     })
     .optional(),
 });
+
+/**
+ * generator=search stores pages keyed by pageid. Integer-like keys are
+ * enumerated in numeric order, which is upload age, not relevance. Sort by
+ * the search `index` (1 is the best hit) before picking a photo.
+ */
+export function pagesInSearchOrder<T extends { index?: number }>(pages: Record<string, T>): T[] {
+  return Object.values(pages).sort(
+    (a, b) => (a.index ?? Number.POSITIVE_INFINITY) - (b.index ?? Number.POSITIVE_INFINITY)
+  );
+}
 
 function extString(value: { value?: string | number } | undefined): string {
   if (value?.value === undefined || value.value === null) return '';
@@ -309,7 +339,7 @@ export function photoFromCommonsPage(
     (title ? commonsFileUrlFromTitle(title) : null);
   if (!sourceUrl) return null;
 
-  const author = stripAttributionHtml(extString(info.extmetadata?.Artist));
+  const author = clipAttribution(stripAttributionHtml(extString(info.extmetadata?.Artist)));
   const resolvedAuthor = author || (isPublicDomain ? 'Wikimedia Commons' : '');
   if (!resolvedAuthor) return null;
 
@@ -371,7 +401,7 @@ export class WikimediaCommonsClient implements DishPhotoSearchClient {
       const parsed = CommonsSearchResponseSchema.parse(await response.json());
       const pages = parsed.query?.pages;
       if (!pages) return null;
-      for (const page of Object.values(pages)) {
+      for (const page of pagesInSearchOrder(pages)) {
         const photo = photoFromCommonsPage(page.title, page.imageinfo?.[0]);
         if (photo) return photo;
       }
