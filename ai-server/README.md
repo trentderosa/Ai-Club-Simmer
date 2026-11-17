@@ -46,6 +46,18 @@ With `NODE_ENV=production`, the server exits at startup and names any missing va
 
 `ENABLE_PREVIEW_ROUTE=true` mounts the unauthenticated `POST /api/recipes/generate-preview` route in development only. Production ignores that flag, leaves the route off, and logs a startup warning if the flag is set.
 
+## Health
+
+`GET /health` is unauthenticated and does not call Ollama, Supabase, or YouTube. It returns `{"status":"ok","timestamp":"..."}`.
+
+`GET /health/deep` is also unauthenticated. It reports `ok` or `fail` for three checks, in parallel, each limited to 2 seconds:
+
+- **Ollama:** `GET /api/tags` on the configured host, and the configured model name is in that list (`llama3.2` matches `llama3.2:latest`).
+- **Supabase:** one row from `path_slots` (`select=id&limit=1`) using the service-role key.
+- **YouTube:** the API key is set. The Data API is not called, so this does not spend quota.
+
+`status` is `ok` only when all three are `ok`. A failure includes a reason of `not_configured`, `unreachable`, `timeout`, or `model_missing`. The HTTP status is 200 when `status` is `ok` and 503 when it is `fail`; the body shape is unchanged. The last report (ok or fail) is cached for 5 seconds (`DEEP_HEALTH_CACHE_TTL_MS`). Concurrent requests reuse one in-flight check, so repeated hits make at most one Ollama `/api/tags` call and one Supabase `path_slots` read per window. The body never includes keys, request URLs, response bodies, or stack traces. A missing YouTube key is `not_configured`, which makes the overall status `fail` even when Ollama and Supabase are up.
+
 ## Recipes: path order and videos
 
 `POST /api/recipes/generate/:slotId` reads the slot and the user's onboarding profile (plus

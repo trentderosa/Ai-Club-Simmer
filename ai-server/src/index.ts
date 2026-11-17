@@ -34,6 +34,7 @@ import {
 import { SupabaseGeneratedCheckInRepository } from './repositories/supabase-generated-check-in-repository.js';
 import { SupabaseGeneratedXpAwarder } from './services/generated-xp-awarder.js';
 import { createCookAnythingRouter } from './routes/cook-anything.js';
+import { mountHealthRoutes } from './health.js';
 import type { GeneratedRecipeRepository } from './repositories/generated-recipe-repository.js';
 
 const config = loadConfig();
@@ -251,8 +252,12 @@ if (services.jwtVerifier && services.masteryRepository) {
   console.warn('Mastery route: DISABLED (needs Supabase and a JWT verifier)');
 }
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+mountHealthRoutes(app, {
+  ollamaBaseUrl: config.ollama.baseUrl,
+  ollamaModel: config.ollama.model,
+  supabaseUrl: config.supabase.url,
+  supabaseServiceRoleKey: config.supabase.serviceRoleKey,
+  youtubeApiKey: config.youtube.apiKey,
 });
 
 app.listen(config.port, config.host, () => {
