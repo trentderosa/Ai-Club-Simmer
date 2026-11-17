@@ -50,6 +50,7 @@ Set these in the server's environment (never in the repo, chat, or logs):
 | `XP_AWARD_TIMEOUT_MS` | Optional. Timeout for each `award_slot_xp` call (default `5000` ms, range `100`–`60000`). An invalid value stops startup |
 | `YOUTUBE_API_KEY` | Optional. Enables technique videos (F4). Server-side only |
 | `YOUTUBE_TIMEOUT_MS` | Optional. Timeout for each YouTube search (default `5000` ms, range `100`–`60000`) |
+| `DISH_PHOTO_LOOKUP_TIMEOUT_MS` | Optional. Timeout for one Wikimedia Commons dish-photo lookup (default `2500` ms, range `500`–`10000`). A timeout or failure returns `photo: null`. No API key. |
 | `VIDEO_LOOKUP_BUDGET_MS` | Optional. Time budget for all of one recipe's searches together (default `8000` ms, range `100`–`60000`). An invalid value stops startup |
 
 With `NODE_ENV=production`, the server exits at startup and names any missing variable.
@@ -122,7 +123,7 @@ collapsed whitespace, punctuation stripped). A saved row in `user_generated_reci
 that user and normalized name is returned as `cached: true` and does not count against the
 per-user generation rate limit (`COOK_ANYTHING_RATE_LIMIT_*`, default 5 uncached
 generations per hour). Otherwise the server generates through the existing Ollama recipe
-path, looks up videos the same way as a path slot, clamps the XP *counts* (not the
+path, looks up videos the same way as a path slot, looks up a Wikimedia Commons dish photo (`src/services/dish-photo.ts`; CC0 / public domain / CC BY / CC BY-SA only; cached in `dish_photos` and stored as `photo_json` when found), clamps the XP *counts* (not the
 saved recipe body) to `FREEFORM_COUNT_BOUNDS` (1–10 / 1–12 / 1–45), and stores the
 frozen `xp_value`. A later save of the same dish cannot raise those counts. A fully
 clamped recipe has `xp_value` 177, below roast chicken (181). The daily cap

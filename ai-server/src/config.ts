@@ -45,6 +45,10 @@ export interface Config {
       maxGenerations: number;
     };
   };
+  dishPhoto: {
+    /** Timeout for one Wikimedia Commons lookup, in ms. */
+    timeoutMs: number;
+  };
 }
 
 type Env = Record<string, string | undefined>;
@@ -74,6 +78,7 @@ export function parseBoundedIntEnv(
 export const XP_AWARD_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
 export const YOUTUBE_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
 export const VIDEO_LOOKUP_BUDGET_MS = { default: 8000, min: 100, max: 60000 } as const;
+export const DISH_PHOTO_LOOKUP_TIMEOUT_MS = { default: 2500, min: 500, max: 10000 } as const;
 
 /**
  * Default CORS allowlist when ALLOWED_ORIGINS is unset or empty.
@@ -233,6 +238,19 @@ export function loadConfig(): Config {
     youtube: loadYouTubeConfig(),
     allowedOrigins: parseAllowedOrigins(),
     cookAnything: loadCookAnythingConfig(),
+    dishPhoto: loadDishPhotoConfig(),
+  };
+}
+
+export function loadDishPhotoConfig(env: Env = process.env): Config['dishPhoto'] {
+  return {
+    timeoutMs: parseBoundedIntEnv(
+      env,
+      'DISH_PHOTO_LOOKUP_TIMEOUT_MS',
+      DISH_PHOTO_LOOKUP_TIMEOUT_MS.default,
+      DISH_PHOTO_LOOKUP_TIMEOUT_MS.min,
+      DISH_PHOTO_LOOKUP_TIMEOUT_MS.max
+    ),
   };
 }
 

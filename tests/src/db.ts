@@ -226,6 +226,10 @@ export class TestDatabase {
       REVOKE EXECUTE ON FUNCTION public.award_generated_recipe_xp(UUID) FROM PUBLIC, anon, authenticated;
       GRANT EXECUTE ON FUNCTION public.award_generated_recipe_xp(UUID) TO service_role;
 
+      -- 20261117140000_dish_photos.sql: re-assert after broad GRANTs
+      REVOKE ALL ON dish_photos FROM PUBLIC, anon, authenticated;
+      GRANT ALL ON dish_photos TO service_role;
+
       -- 20261116000000_mastery_sessions.sql: re-assert after broad GRANTs
       REVOKE ALL ON mastery_sessions FROM PUBLIC, anon, authenticated;
       GRANT SELECT, INSERT, UPDATE ON mastery_sessions TO service_role;
@@ -255,6 +259,7 @@ export class TestDatabase {
     await this.pool.query('DELETE FROM check_ins');
     await this.pool.query('DELETE FROM mastery_sessions');
     await this.pool.query('DELETE FROM technique_videos');
+    await this.pool.query('DELETE FROM dish_photos');
     await this.pool.query('DELETE FROM user_recipes');
     await this.pool.query('DELETE FROM user_slot_completions');
     await this.pool.query('DELETE FROM profiles');

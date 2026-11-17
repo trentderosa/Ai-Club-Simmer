@@ -7,6 +7,12 @@ import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 import { InMemoryGeneratedRecipeRepository } from '../repositories/in-memory-generated-recipe-repository.js';
+import {
+  DishPhotoFinder,
+  InMemoryDishPhotoCache,
+  type DishPhoto,
+  type DishPhotoSearchClient,
+} from '../services/dish-photo.js';
 import { computeFreeformXp } from '../cook-anything/clamp.js';
 import { FREEFORM_COUNT_BOUNDS } from '../cook-anything/constants.js';
 
@@ -80,19 +86,30 @@ function createApp(
   ollama: OllamaClient,
   supabase: SupabaseService,
   repo = new InMemoryGeneratedRecipeRepository(),
-  options?: { generationRateLimit?: { windowMs: number; maxGenerations: number } }
+  options?: { generationRateLimit?: { windowMs: number; maxGenerations: number } },
+  photoFinder?: DishPhotoFinder | null
 ): { app: express.Express; repo: InMemoryGeneratedRecipeRepository } {
   const app = express();
   app.use(express.json());
   app.use(
     '/api/recipes',
     createCookAnythingRouter(
-      { ollamaClient: ollama, supabase, generatedRecipes: repo },
+      { ollamaClient: ollama, supabase, generatedRecipes: repo, photoFinder },
       { rateLimit: { windowMs: 60_000, maxRequests: 100 }, ...options }
     )
   );
   return { app, repo };
 }
+
+const samplePhoto: DishPhoto = {
+  url: 'https://upload.wikimedia.org/wikipedia/commons/a/a8/Example.jpg',
+  credit: {
+    author: 'Jane Cook',
+    license: 'CC BY-SA 4.0',
+    licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0/',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Example.jpg',
+  },
+};
 
 describe('POST /api/recipes/cook-anything', () => {
   beforeEach(() => {
@@ -244,5 +261,39 @@ describe('POST /api/recipes/cook-anything', () => {
       .set('Authorization', 'Bearer token')
       .send({ dish: 'Pad Thai' });
     expect(res.status).toBe(404);
+  });
+
+  it('includes a dish photo on fresh generation and the cached path', async () => {
+    const search: DishPhotoSearchClient = { search: vi.fn().mockResolvedValue(samplePhoto) };
+    const finder = new DishPhotoFinder(new InMemoryDishPhotoCache(), search);
+    const { app } = createApp(mockOllama(validRecipe), mockSupabase(), new InMemoryGeneratedRecipeRepository(), undefined, finder);
+    const first = await request(app)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'Pad Thai' });
+    expect(first.status).toBe(200);
+    expect(first.body.photo).toEqual(samplePhoto);
+    const second = await request(app)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'pad thai' });
+    expect(second.body.cached).toBe(true);
+    expect(second.body.photo).toEqual(samplePhoto);
+    expect(search.search).toHaveBeenCalledTimes(1);
+  });
+
+  it('still returns the recipe when the photo lookup throws', async () => {
+    const search: DishPhotoSearchClient = {
+      search: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+    };
+    const finder = new DishPhotoFinder(new InMemoryDishPhotoCache(), search, { warn: vi.fn() });
+    const { app } = createApp(mockOllama(validRecipe), mockSupabase(), new InMemoryGeneratedRecipeRepository(), undefined, finder);
+    const res = await request(app)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'Pad Thai' });
+    expect(res.status).toBe(200);
+    expect(res.body.recipe.title).toBe('Pad Thai');
+    expect(res.body.photo).toBeNull();
   });
 });

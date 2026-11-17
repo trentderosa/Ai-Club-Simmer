@@ -120,7 +120,7 @@ Content-Type: application/json
 { "dish": "pad thai" }
 ```
 
-The first call generates a recipe with Ollama (10–60 s) and looks up videos the same way as a path slot. Later calls for the same user and normalized dish name return the saved recipe instantly (`cached: true`). The dish is trimmed, capped at 80 characters, and rejected when empty, junk, or injection-like. Normalization is lowercase, trimmed, collapsed whitespace, punctuation stripped.
+The first call generates a recipe with Ollama (10–60 s) and looks up videos the same way as a path slot. It also looks up one still photo of the dish on Wikimedia Commons (no API key, ~2.5 s timeout). Only CC0, public domain, CC BY, or CC BY-SA images on `https://upload.wikimedia.org/` are accepted. A miss, timeout, or failure returns `photo: null` and never fails generation. Later calls for the same user and normalized dish name return the saved recipe instantly (`cached: true`), including a stored photo when one was found. The dish is trimmed, capped at 80 characters, and rejected when empty, junk, or injection-like. Normalization is lowercase, trimmed, collapsed whitespace, punctuation stripped.
 
 ```jsonc
 {
@@ -130,6 +130,15 @@ The first call generates a recipe with Ollama (10–60 s) and looks up videos th
   "recipe": { /* same shape as F3 */ },
   "cached": false,
   "videos": { /* same shape as F3 */ },
+  "photo": {
+    "url": "https://upload.wikimedia.org/wikipedia/commons/…/Pad_Thai.jpg",
+    "credit": {
+      "author": "Jane Cook",
+      "license": "CC BY-SA 4.0",
+      "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0/",
+      "sourceUrl": "https://commons.wikimedia.org/wiki/File:Pad_Thai.jpg"
+    }
+  },
   "xp_value": 84,
   "counts": { "steps": 5, "ingredients": 6, "minutes": 20 }
 }
@@ -142,10 +151,12 @@ Reload a saved recipe (own row only, RLS) with:
 ```ts
 const { data } = await supabase
   .from('user_generated_recipes')
-  .select('id, dish_query, normalized_dish_name, recipe_json, video_ids, xp_value, step_count, ingredient_count, cook_minutes')
+  .select('id, dish_query, normalized_dish_name, recipe_json, video_ids, photo_json, xp_value, step_count, ingredient_count, time_estimate_minutes')
   .eq('id', generatedRecipeId)
   .single();
 ```
+
+`photo` is `null` when no acceptable Commons image was found or the lookup timed out. Show the generic cutting-board photo in that case, and if a remote image fails to load. The credit line is `Photo: <author> · <license>`; tap it to open `credit.sourceUrl` (a Commons file page) when present. Path slots 1–10 keep their existing photos. `photo_json` on the saved row is the same shape, or null until a photo is stored (the `dish_photos` cache itself is server-only).
 
 - **Errors:**
   - `401`: bad or expired token.

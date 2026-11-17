@@ -27,7 +27,7 @@ export function photoForSlot(slotOrder: number): SlotPhoto | null {
   return PHOTOS[slotOrder] ?? null;
 }
 
-/** Generic kitchen photo for free-form dishes (no slot photo). */
+/** Generic kitchen photo used when a Cook anything recipe has no dish photo. */
 export const cookAnythingPhoto: SlotPhoto = {
   source: require('../../assets/photos/board.jpg'),
   credit: 'Photo: Webvilla, CC0',

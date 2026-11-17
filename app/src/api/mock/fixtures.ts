@@ -6,7 +6,7 @@
  * placeholders in the same shape the ai-server returns; the video ids are
  * made up and never fetched.
  */
-import type { Badge, Recipe, Videos } from '../schemas';
+import type { Badge, DishPhoto, Recipe, Videos } from '../schemas';
 
 export interface SlotFixture {
   slot_id: number;
@@ -228,3 +228,25 @@ export function cannedCookAnythingRecipe(dishTitle: string): Recipe {
 export const CANNED_COOK_ANYTHING_VIDEOS: Videos = {
   'Cook pasta al dente': { videoId: 'mockVideoCA1', title: 'Cooking pasta al dente', channelTitle: 'Placeholder' },
 };
+
+/**
+ * Canned Commons-shaped photo for mock Cook anything recipes. The URL is a
+ * real upload.wikimedia.org path so the hero credit UI can be exercised;
+ * unit tests never fetch it. The dish "invisible stew" returns no photo so
+ * the board.jpg fallback can be checked.
+ */
+export const CANNED_COOK_ANYTHING_PHOTO: DishPhoto = {
+  url: 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/6d/Good_Food_Display_-_NCI_Visuals_Online.jpg/1280px-Good_Food_Display_-_NCI_Visuals_Online.jpg',
+  credit: {
+    author: 'National Cancer Institute',
+    license: 'Public domain',
+    licenseUrl: 'https://creativecommons.org/publicdomain/mark/1.0/',
+    sourceUrl: 'https://commons.wikimedia.org/wiki/File:Good_Food_Display_-_NCI_Visuals_Online.jpg',
+  },
+};
+
+export const MOCK_DISH_WITHOUT_PHOTO = 'invisible stew';
+
+export function cannedCookAnythingPhoto(normalizedDishName: string): DishPhoto | null {
+  return normalizedDishName === MOCK_DISH_WITHOUT_PHOTO ? null : CANNED_COOK_ANYTHING_PHOTO;
+}
