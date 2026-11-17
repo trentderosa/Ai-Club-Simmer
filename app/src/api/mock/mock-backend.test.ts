@@ -114,6 +114,8 @@ describe('mock backend', () => {
     expect(first.recipe.title).toBe('Pad Thai!!');
     expect(first.counts).toEqual({ steps: 5, ingredients: 6, minutes: 20 });
     expect(first.xp_value).toBe(84);
+    expect(first.photo?.credit.license).toBe('Public domain');
+    expect(first.photo?.url).toMatch(/^https:\/\/upload\.wikimedia\.org\//);
     const again = await b.cookAnything('pad thai', 't');
     expect(again.cached).toBe(true);
     expect(again.generated_recipe_id).toBe(first.generated_recipe_id);
@@ -138,6 +140,12 @@ describe('mock backend', () => {
   it('rejects an empty cook-anything query', async () => {
     const b = createMockBackend({ latency: 0, startSignedIn: true });
     await expect(b.cookAnything('   ', 't')).rejects.toMatchObject({ kind: 'validation' });
+  });
+
+  it('returns no photo for the canned fallback dish so the hero can use board.jpg', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    const res = await b.cookAnything('invisible stew', 't');
+    expect(res.photo).toBeNull();
   });
 
   it('lists the recipe book and badges for the demo user', async () => {

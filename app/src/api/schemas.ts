@@ -174,6 +174,20 @@ export const CookAnythingCountsSchema = z.object({
   minutes: z.number().int().min(1),
 });
 
+export const DishPhotoCreditSchema = z.object({
+  author: z.string().min(1),
+  license: z.string().min(1),
+  licenseUrl: z.string().min(1),
+  sourceUrl: z.string().min(1),
+});
+export type DishPhotoCredit = z.infer<typeof DishPhotoCreditSchema>;
+
+export const DishPhotoSchema = z.object({
+  url: z.string().min(1),
+  credit: DishPhotoCreditSchema,
+});
+export type DishPhoto = z.infer<typeof DishPhotoSchema>;
+
 export const CookAnythingResponseSchema = z.object({
   generated_recipe_id: z.string(),
   dish_query: z.string(),
@@ -181,6 +195,8 @@ export const CookAnythingResponseSchema = z.object({
   recipe: RecipeSchema,
   cached: z.boolean(),
   videos: VideosSchema,
+  /** Missing on older saved rows (before the photo migration). */
+  photo: DishPhotoSchema.nullish().transform((v) => v ?? null),
   xp_value: z.number().int().min(1),
   counts: CookAnythingCountsSchema,
 });

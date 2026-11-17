@@ -155,11 +155,17 @@ export function createLiveBackend(opts: {
     cookAnything: (dish, token) => ai.cookAnything(dish, token),
 
     async getGeneratedRecipe(id) {
-      const { data, error } = await supabase
-        .from('user_generated_recipes')
-        .select('id, dish_query, normalized_dish_name, recipe_json, video_ids, step_count, ingredient_count, time_estimate_minutes, xp_value')
-        .eq('id', id)
-        .maybeSingle();
+      const columns =
+        'id, dish_query, normalized_dish_name, recipe_json, video_ids, photo_json, step_count, ingredient_count, time_estimate_minutes, xp_value';
+      const legacyColumns =
+        'id, dish_query, normalized_dish_name, recipe_json, video_ids, step_count, ingredient_count, time_estimate_minutes, xp_value';
+      let result = await supabase.from('user_generated_recipes').select(columns).eq('id', id).maybeSingle();
+      // photo_json is added by 20261117140000_dish_photos.sql. Until that
+      // migration is applied, retry without it and show the board.jpg fallback.
+      if (result.error && /photo_json/i.test(result.error.message ?? '')) {
+        result = await supabase.from('user_generated_recipes').select(legacyColumns).eq('id', id).maybeSingle();
+      }
+      const { data, error } = result;
       if (error) throw fromSupabaseError(error);
       if (!data) throw new ApiError('not_found', 'No saved recipe for that dish yet.');
       const recipe = RecipeSchema.safeParse(data.recipe_json);
@@ -172,6 +178,7 @@ export function createLiveBackend(opts: {
         recipe: recipe.data,
         cached: true,
         videos,
+        photo: 'photo_json' in data ? data.photo_json : null,
         xp_value: data.xp_value,
         counts: {
           steps: data.step_count,

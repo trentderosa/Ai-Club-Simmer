@@ -107,6 +107,7 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `YOUTUBE_API_KEY` | YouTube Data API v3 key for technique videos (F4). Server only. Unset: recipes have no videos. |
 | `YOUTUBE_TIMEOUT_MS` | Timeout for each YouTube search in ms (default `5000`, range `100`–`60000`). |
 | `VIDEO_LOOKUP_BUDGET_MS` | Time budget in ms for all of one recipe's YouTube searches together (default `8000`, range `100`–`60000`). Past it, the recipe is returned with the videos found so far and the rest are retried on the next visit. |
+| `DISH_PHOTO_LOOKUP_TIMEOUT_MS` | Timeout in ms for one Wikimedia Commons dish-photo lookup on Cook anything (default `2500`, range `500`–`10000`). A timeout or failure returns `photo: null` and never fails generation. No API key. |
 | `EXPO_PUBLIC_SUPABASE_URL` | App: Supabase project URL. In `app/.env.local`; bundled into the app, so public values only. |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | App: Supabase anon (public) key. Never the service-role key. |
 | `EXPO_PUBLIC_AI_SERVER_URL` | App: AI server base URL. Prefer an HTTPS tunnel (ngrok or Cloudflare) for phones; a LAN `http://` URL with `HOST=0.0.0.0` is for local dev. |

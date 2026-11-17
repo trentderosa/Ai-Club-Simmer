@@ -4,6 +4,8 @@ import {
   DEFAULT_SUPABASE_REST_TIMEOUT_MS,
   SupabaseRestError,
 } from '../services/supabase-rest.js';
+import type { DishPhoto } from '../services/dish-photo.js';
+import { isAllowedCommonsFileUrl, isAllowedImageUrl } from '../services/dish-photo.js';
 import type { RecipeVideos } from '../services/video-finder.js';
 import type {
   GeneratedRecipeRepository,
@@ -20,6 +22,27 @@ const RecipeVideosSchema = z.record(
   })
 );
 
+const DishPhotoSchema = z.object({
+  url: z.string(),
+  credit: z.object({
+    author: z.string(),
+    license: z.string(),
+    licenseUrl: z.string(),
+    sourceUrl: z.string(),
+  }),
+});
+
+function parseStoredPhoto(raw: unknown): DishPhoto | null {
+  if (raw == null) return null;
+  const parsed = DishPhotoSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const photo = parsed.data;
+  if (!isAllowedImageUrl(photo.url) || !isAllowedCommonsFileUrl(photo.credit.sourceUrl)) {
+    return null;
+  }
+  return photo;
+}
+
 interface Row {
   id: string;
   user_id: string;
@@ -27,6 +50,7 @@ interface Row {
   normalized_dish_name: string;
   recipe_json: unknown;
   video_ids?: unknown;
+  photo_json?: unknown;
   step_count: number;
   ingredient_count: number;
   time_estimate_minutes: number;
@@ -74,6 +98,7 @@ export class SupabaseGeneratedRecipeRepository implements GeneratedRecipeReposit
       normalizedDishName: row.normalized_dish_name,
       recipe: recipe.data,
       videos: videos && videos.success ? videos.data : row.video_ids == null ? null : {},
+      photo: parseStoredPhoto(row.photo_json),
       stepCount: row.step_count,
       ingredientCount: row.ingredient_count,
       timeEstimateMinutes: row.time_estimate_minutes,
@@ -182,6 +207,21 @@ export class SupabaseGeneratedRecipeRepository implements GeneratedRecipeReposit
         headers: { Prefer: 'return=minimal' },
       },
       'update user_generated_recipes.video_ids'
+    );
+  }
+
+  async savePhoto(userId: string, id: string, photo: DishPhoto): Promise<void> {
+    const url = new URL(`${this.baseUrl}/user_generated_recipes`);
+    url.searchParams.set('id', `eq.${id}`);
+    url.searchParams.set('user_id', `eq.${userId}`);
+    await this.request<unknown>(
+      url.toString(),
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ photo_json: photo }),
+        headers: { Prefer: 'return=minimal' },
+      },
+      'update user_generated_recipes.photo_json'
     );
   }
 }

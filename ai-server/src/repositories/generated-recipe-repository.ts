@@ -1,4 +1,5 @@
 import type { Recipe } from '../schemas/recipe.js';
+import type { DishPhoto } from '../services/dish-photo.js';
 import type { RecipeVideos } from '../services/video-finder.js';
 
 export interface SavedGeneratedRecipe {
@@ -8,6 +9,8 @@ export interface SavedGeneratedRecipe {
   normalizedDishName: string;
   recipe: Recipe;
   videos: RecipeVideos | null;
+  /** null when no photo has been stored yet. */
+  photo: DishPhoto | null;
   stepCount: number;
   ingredientCount: number;
   timeEstimateMinutes: number;
@@ -39,4 +42,5 @@ export interface GeneratedRecipeRepository {
    */
   save(input: SaveGeneratedRecipeInput): Promise<SavedGeneratedRecipe>;
   saveVideos(userId: string, id: string, videos: RecipeVideos): Promise<void>;
+  savePhoto(userId: string, id: string, photo: DishPhoto): Promise<void>;
 }

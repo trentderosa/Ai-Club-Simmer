@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
+import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -166,5 +166,20 @@ describe('loadCookAnythingConfig', () => {
       /COOK_ANYTHING_MAX_DISH_LENGTH/
     );
     expect(() => loadCookAnythingConfig({ COOK_ANYTHING_MAX_DISH_LENGTH: '9' })).not.toThrow(/9/);
+  });
+});
+
+describe('loadDishPhotoConfig', () => {
+  it('uses the default timeout when unset', () => {
+    expect(loadDishPhotoConfig({})).toEqual({ timeoutMs: 2500 });
+  });
+
+  it('reads a bounded timeout and rejects bad values at startup', () => {
+    expect(loadDishPhotoConfig({ DISH_PHOTO_LOOKUP_TIMEOUT_MS: '3000' }).timeoutMs).toBe(3000);
+    for (const bad of ['0', '499', '10001', 'abc', '1.5']) {
+      expect(() => loadDishPhotoConfig({ DISH_PHOTO_LOOKUP_TIMEOUT_MS: bad })).toThrow(
+        'DISH_PHOTO_LOOKUP_TIMEOUT_MS must be a whole number from 500 to 10000'
+      );
+    }
   });
 });

@@ -31,6 +31,7 @@ import {
   CANNED_COOK_ANYTHING_COUNTS,
   CANNED_COOK_ANYTHING_VIDEOS,
   CANNED_COOK_ANYTHING_XP,
+  cannedCookAnythingPhoto,
   cannedCookAnythingRecipe,
   DEMO_USER,
   MASTERY_USER,
@@ -391,6 +392,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
         recipe: cannedCookAnythingRecipe(pretty),
         cached: false,
         videos: CANNED_COOK_ANYTHING_VIDEOS,
+        photo: cannedCookAnythingPhoto(normalized),
         xp_value: CANNED_COOK_ANYTHING_XP,
         counts: { ...CANNED_COOK_ANYTHING_COUNTS },
       };

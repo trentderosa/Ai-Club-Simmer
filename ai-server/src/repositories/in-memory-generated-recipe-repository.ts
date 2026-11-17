@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import type { DishPhoto } from '../services/dish-photo.js';
 import type { RecipeVideos } from '../services/video-finder.js';
 import type {
   GeneratedRecipeRepository,
@@ -50,6 +51,7 @@ export class InMemoryGeneratedRecipeRepository implements GeneratedRecipeReposit
         normalizedDishName: input.normalizedDishName,
         recipe: input.recipe,
         videos: null,
+        photo: null,
         stepCount: input.stepCount,
         ingredientCount: input.ingredientCount,
         timeEstimateMinutes: input.timeEstimateMinutes,
@@ -69,6 +71,14 @@ export class InMemoryGeneratedRecipeRepository implements GeneratedRecipeReposit
     const saved = this.byId.get(id);
     if (saved && saved.userId === userId) {
       saved.videos = videos;
+    }
+    return Promise.resolve();
+  }
+
+  savePhoto(userId: string, id: string, photo: DishPhoto): Promise<void> {
+    const saved = this.byId.get(id);
+    if (saved && saved.userId === userId) {
+      saved.photo = photo;
     }
     return Promise.resolve();
   }

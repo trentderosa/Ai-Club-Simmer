@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
+import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
 import type { RecipeVideos, VideoFinder, VideoLookupResult } from '../services/video-finder.js';
 import type { GeneratedRecipeRepository } from '../repositories/generated-recipe-repository.js';
 import { DishValidationError, validateDishQuery } from '../cook-anything/dish-name.js';
@@ -16,6 +17,7 @@ export interface CookAnythingRouterDeps {
   supabase: SupabaseService;
   generatedRecipes: GeneratedRecipeRepository;
   videoFinder?: VideoFinder | null;
+  photoFinder?: DishPhotoFinder | null;
 }
 
 export interface CookAnythingRouterOptions {
@@ -74,6 +76,34 @@ export function createCookAnythingRouter(
     return videos;
   }
 
+  async function attachPhoto(
+    recipeId: string,
+    userId: string,
+    normalizedDishName: string,
+    existing: DishPhoto | null
+  ): Promise<DishPhoto | null> {
+    if (existing) return existing;
+    if (!deps.photoFinder) return null;
+    let lookup;
+    try {
+      lookup = await deps.photoFinder.findForDish(normalizedDishName);
+    } catch (error) {
+      console.warn('cook_anything_photo_failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+    if (!lookup.complete || !lookup.photo) return lookup.photo ?? null;
+    try {
+      await deps.generatedRecipes.savePhoto(userId, recipeId, lookup.photo);
+    } catch (error) {
+      console.warn('cook_anything_photo_save_failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return lookup.photo;
+  }
+
   type CookAnythingHttpResponse = {
     generated_recipe_id: string;
     dish_query: string;
@@ -81,6 +111,7 @@ export function createCookAnythingRouter(
     recipe: unknown;
     cached: boolean;
     videos: RecipeVideos;
+    photo: DishPhoto | null;
     xp_value: number;
     counts: { steps: number; ingredients: number; minutes: number };
   };
@@ -98,6 +129,7 @@ export function createCookAnythingRouter(
       xpValue: number;
     },
     videos: RecipeVideos,
+    photo: DishPhoto | null,
     cached: boolean
   ): CookAnythingHttpResponse {
     return {
@@ -107,6 +139,7 @@ export function createCookAnythingRouter(
       recipe: saved.recipe,
       cached,
       videos,
+      photo,
       xp_value: saved.xpValue,
       counts: {
         steps: saved.stepCount,
@@ -179,9 +212,13 @@ export function createCookAnythingRouter(
       );
       if (existing) {
         const storedVideos = existing.videos;
-        const videos =
-          storedVideos ?? (await attachVideos(existing.id, userId, existing.recipe));
-        res.json(toResponse(existing, sanitizeRecipeVideos(videos), true));
+        const [videos, photo] = await Promise.all([
+          storedVideos
+            ? Promise.resolve(storedVideos)
+            : attachVideos(existing.id, userId, existing.recipe),
+          attachPhoto(existing.id, userId, existing.normalizedDishName, existing.photo),
+        ]);
+        res.json(toResponse(existing, sanitizeRecipeVideos(videos), photo, true));
         return;
       }
 
@@ -233,8 +270,11 @@ export function createCookAnythingRouter(
           timeEstimateMinutes: clamped.timeEstimateMinutes,
           xpValue,
         });
-        const videos = await attachVideos(saved.id, userId, saved.recipe);
-        return toResponse(saved, videos, false);
+        const [videos, photo] = await Promise.all([
+          attachVideos(saved.id, userId, saved.recipe),
+          attachPhoto(saved.id, userId, saved.normalizedDishName, saved.photo),
+        ]);
+        return toResponse(saved, videos, photo, false);
       })();
 
       inFlight.set(flightKey, work);
