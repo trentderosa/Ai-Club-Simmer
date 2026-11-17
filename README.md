@@ -95,7 +95,7 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `SUPABASE_JWT_SECRET` | JWT secret for HS256 verification (provide this or the JWKS URI) |
 | `SUPABASE_JWKS_URI` | JWKS URL for RS256 verification (provide this or the JWT secret) |
 | `ALLOW_STUB_AUTH` | Dev only: accept any Bearer token. Forbidden when `NODE_ENV=production`. |
-| `ENABLE_PREVIEW_ROUTE` | Dev only: enable the unauthenticated `/generate-preview` route. |
+| `ENABLE_PREVIEW_ROUTE` | Dev only: enable the unauthenticated `/generate-preview` route. Ignored when `NODE_ENV=production`: the route stays off and startup logs a warning if this is set. |
 | `TRUST_PROXY` | Set to `true` when the server sits behind a reverse proxy. |
 | `NODE_ENV` | `production` enables production checks (real auth and Supabase keys required). |
 | `XP_AWARD_TIMEOUT_MS` | Timeout for each `award_slot_xp` call in ms (default `5000`, range `100`–`60000`). A timeout counts as a failed award. |
