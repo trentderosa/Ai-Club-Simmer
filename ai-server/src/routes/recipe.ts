@@ -19,6 +19,20 @@ import {
 
 const SLOT_ID_REGEX = /^\d+$/;
 
+/**
+ * Short, fixed text for 400 validation responses. Zod issues are never sent to
+ * the client (they can echo field names and values); the issue paths and codes
+ * are logged instead.
+ */
+const VALIDATION_DETAILS = 'One or more fields are missing or invalid.';
+
+function logValidationFailure(route: string, error: z.ZodError): void {
+  console.warn('recipe_validation_failed', {
+    route,
+    issues: error.issues.map((issue) => ({ path: issue.path.join('.'), code: issue.code })),
+  });
+}
+
 const GenerateRecipeParamsSchema = z.object({
   slotId: z.number().int().positive(),
 });
@@ -253,18 +267,20 @@ export function createRecipeRouter(
       });
 
       if (!paramsResult.success) {
+        logValidationFailure('generate', paramsResult.error);
         res.status(400).json({
           error: 'Invalid slot ID',
-          details: paramsResult.error.issues,
+          details: VALIDATION_DETAILS,
         });
         return;
       }
 
       const bodyResult = GenerateRecipeBodySchema.safeParse(req.body);
       if (!bodyResult.success) {
+        logValidationFailure('generate', bodyResult.error);
         res.status(400).json({
           error: 'Invalid request body',
-          details: bodyResult.error.issues,
+          details: VALIDATION_DETAILS,
         });
         return;
       }
@@ -372,9 +388,10 @@ export function createRecipeRouter(
       try {
         const parseResult = PreviewRequestSchema.safeParse(req.body);
         if (!parseResult.success) {
+          logValidationFailure('generate-preview', parseResult.error);
           res.status(400).json({
             error: 'Invalid request body',
-            details: parseResult.error.issues,
+            details: VALIDATION_DETAILS,
           });
           return;
         }

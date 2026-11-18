@@ -452,6 +452,52 @@ describe('POST /api/recipes/generate-preview', () => {
     expect(response.status).toBe(400);
     expect(response.body.error).toContain('Invalid request body');
   });
+
+  describe('validation errors do not echo zod issues', () => {
+    const SHORT = 'One or more fields are missing or invalid.';
+
+    it('preview: short details, issue paths and codes logged without input values', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const app = createApp(
+        { ollamaClient: createMockOllamaClient(), supabase: createMockSupabase() },
+        { enablePreviewRoute: true }
+      );
+      const response = await request(app)
+        .post('/api/recipes/generate-preview')
+        .send({ slot: 'secret-input-value' });
+      expect(response.status).toBe(400);
+      expect(response.body).toEqual({ error: 'Invalid request body', details: SHORT });
+      const call = warn.mock.calls.find(([name]) => name === 'recipe_validation_failed');
+      expect(call).toBeDefined();
+      const logged = JSON.stringify(call);
+      expect(logged).toContain('"route":"generate-preview"');
+      expect(logged).toMatch(/"path":"[^"]*","code":"[a-z_]+"/);
+      expect(logged).not.toContain('secret-input-value');
+      warn.mockRestore();
+    });
+
+    it('generate: bad slot id and bad body return the short details', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      const app = createApp({
+        ollamaClient: createMockOllamaClient(),
+        supabase: createMockSupabase({ tokenValid: true }),
+      });
+      const badSlot = await request(app)
+        .post('/api/recipes/generate/0')
+        .set('Authorization', 'Bearer valid-token');
+      expect(badSlot.status).toBe(400);
+      expect(badSlot.body).toEqual({ error: 'Invalid slot ID', details: SHORT });
+
+      const badBody = await request(app)
+        .post('/api/recipes/generate/1')
+        .set('Authorization', 'Bearer valid-token')
+        .send({ dietaryNeeds: 'secret-input-value' });
+      expect(badBody.status).toBe(400);
+      expect(badBody.body).toEqual({ error: 'Invalid request body', details: SHORT });
+      expect(JSON.stringify(warn.mock.calls)).not.toContain('secret-input-value');
+      warn.mockRestore();
+    });
+  });
 });
 
 describe('Rate limiting', () => {

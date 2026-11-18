@@ -6,6 +6,13 @@
  * caught and logged, and the timer is unref'd so it never keeps the process
  * alive. The database still applies every XP rule; UNIQUE(check_in_id) makes a
  * double award impossible.
+ *
+ * When a run's batch was full and made progress (something was awarded or
+ * already awarded) there is probably more waiting, so one
+ * follow-up run is scheduled FOLLOW_UP_DELAY_MS later instead of waiting the
+ * whole interval. At most MAX_CONSECUTIVE_FOLLOW_UPS follow-ups happen in a
+ * row (the counter resets on any run that is not followed up, and on every
+ * regular interval tick), so repeated failures cannot hot-loop.
  */
 import { loadReconcileConfig, loadXpReconcileIntervalMs, type ReconcileConfig } from '../config.js';
 import { SupabaseGeneratedXpAwarder } from '../services/generated-xp-awarder.js';
@@ -25,6 +32,11 @@ export interface ReconcileSchedulerDeps {
   createGeneratedAwarder?: (config: ReconcileConfig) => XpAwarder;
   logger?: ReconcileLogger;
 }
+
+/** Delay before the follow-up run after a full batch. */
+export const FOLLOW_UP_DELAY_MS = 5000;
+/** Most follow-up runs in a row before waiting for the regular interval. */
+export const MAX_CONSECUTIVE_FOLLOW_UPS = 3;
 
 export type ReconcileScheduler =
   | { enabled: true; intervalMs: number; stop: () => void }
@@ -71,24 +83,44 @@ export function startReconcileScheduler(
     deps.createGeneratedAwarder?.(config) ?? new SupabaseGeneratedXpAwarder(creds);
 
   let running = false;
-  const tick = async (): Promise<void> => {
+  let stopped = false;
+  let followUpTimer: NodeJS.Timeout | null = null;
+  let consecutiveFollowUps = 0;
+
+  const scheduleFollowUp = (): void => {
+    if (stopped || followUpTimer || consecutiveFollowUps >= MAX_CONSECUTIVE_FOLLOW_UPS) return;
+    consecutiveFollowUps++;
+    followUpTimer = setTimeout(() => {
+      followUpTimer = null;
+      void tick(true);
+    }, FOLLOW_UP_DELAY_MS);
+    followUpTimer.unref();
+  };
+
+  const tick = async (isFollowUp = false): Promise<void> => {
+    if (!isFollowUp) consecutiveFollowUps = 0;
     if (running) {
       logger.info('xp_reconcile_skipped_overlap', {});
       return;
     }
     running = true;
     try {
-      await reconcileXpAwards(
+      const summary = await reconcileXpAwards(
         source,
         awarder,
         {
           lookbackHours: config.lookbackHours,
           minAgeSeconds: config.minAgeSeconds,
           batchLimit: config.batchLimit,
+          maxAttempts: config.maxAttempts,
+          retryBaseMinutes: config.retryBaseMinutes,
         },
         logger,
         generatedAwarder
       );
+      // Only when the full batch made progress; if everything failed, more
+      // runs in seconds would just burn attempts.
+      if (summary.batch_full && summary.awarded + summary.skipped > 0) scheduleFollowUp();
     } catch (error) {
       try {
         logger.error('xp_reconcile_scan_failed', {
@@ -107,5 +139,13 @@ export function startReconcileScheduler(
   }, intervalMs);
   timer.unref();
 
-  return { enabled: true, intervalMs, stop: () => clearInterval(timer) };
+  return {
+    enabled: true,
+    intervalMs,
+    stop: (): void => {
+      stopped = true;
+      clearInterval(timer);
+      if (followUpTimer) clearTimeout(followUpTimer);
+    },
+  };
 }

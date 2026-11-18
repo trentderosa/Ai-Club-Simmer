@@ -21,7 +21,8 @@ function setup(options: {
   allowed?: ReadonlySet<string> | Error;
   find?: DishPhotoFinder['findForDish'];
   maxRequests?: number;
-} = {}): { app: express.Express; findForDish: ReturnType<typeof vi.fn> } {
+  ipMaxRequests?: number;
+} = {}): { app: express.Express; findForDish: ReturnType<typeof vi.fn>; verifyToken: ReturnType<typeof vi.fn> } {
   const findForDish = vi.fn(
     options.find ??
       ((name: string): Promise<{ photo: DishPhoto | null; complete: boolean }> =>
@@ -50,10 +51,17 @@ function setup(options: {
         photoFinder: { findForDish } as unknown as DishPhotoFinder,
         listKnownDishNames,
       },
-      { rateLimit: { windowMs: 60_000, maxRequests: options.maxRequests ?? 100 } }
+      {
+        rateLimit: { windowMs: 60_000, maxRequests: options.maxRequests ?? 100 },
+        ipRateLimit: { windowMs: 60_000, maxRequests: options.ipMaxRequests ?? 1000 },
+      }
     )
   );
-  return { app, findForDish: findForDish as ReturnType<typeof vi.fn> };
+  return {
+    app,
+    findForDish: findForDish as ReturnType<typeof vi.fn>,
+    verifyToken: supabase.verifyToken as unknown as ReturnType<typeof vi.fn>,
+  };
 }
 
 const auth = { Authorization: 'Bearer t' };
@@ -96,5 +104,18 @@ describe('POST /api/dish-photos', () => {
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
     expect(third.status).toBe(429);
+  });
+
+  it('rate limits by IP before auth, so a flood never reaches token verification', async () => {
+    const { app, verifyToken, findForDish } = setup({ ipMaxRequests: 2 });
+    const first = await request(app).post('/api/dish-photos').set(auth).send({ dishes: ['pho'] });
+    const second = await request(app).post('/api/dish-photos').send({ dishes: ['pho'] });
+    const third = await request(app).post('/api/dish-photos').set(auth).send({ dishes: ['pho'] });
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(401);
+    expect(third.status).toBe(429);
+    expect(third.body).toEqual({ error: 'Too many requests, please try again later' });
+    expect(verifyToken).toHaveBeenCalledTimes(1);
+    expect(findForDish).toHaveBeenCalledTimes(1);
   });
 });

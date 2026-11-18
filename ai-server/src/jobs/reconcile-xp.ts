@@ -8,7 +8,9 @@
  *
  * Reads SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (service role; server-side
  * only), plus optional XP_AWARD_TIMEOUT_MS, XP_RECONCILE_LOOKBACK_HOURS,
- * XP_RECONCILE_MIN_AGE_SECONDS and XP_RECONCILE_BATCH_LIMIT. The npm scripts
+ * XP_RECONCILE_MIN_AGE_SECONDS, XP_RECONCILE_BATCH_LIMIT and
+ * XP_RECONCILE_MAX_ATTEMPTS and
+ * XP_RECONCILE_RETRY_BASE_MINUTES. The npm scripts
  * load ai-server/.env when that file exists; already-set variables win.
  *
  * Exit codes: 0 = no failures, 1 = at least one award failed or the scan
@@ -95,6 +97,8 @@ export async function runReconcileCli(
         lookbackHours: config.lookbackHours,
         minAgeSeconds: config.minAgeSeconds,
         batchLimit: config.batchLimit,
+        maxAttempts: config.maxAttempts,
+        retryBaseMinutes: config.retryBaseMinutes,
         dryRun: argv.includes('--dry-run'),
         now: deps.now,
       },

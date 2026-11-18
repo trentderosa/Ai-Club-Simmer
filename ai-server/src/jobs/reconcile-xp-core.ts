@@ -5,7 +5,7 @@
  * award_slot_xp, or generated_recipe_xp_events via award_generated_recipe_xp.
  * When the live award after a check-in fails (timeout, network, 5xx), the
  * check-in is kept without one. This job finds those check-ins in a bounded
- * window and re-runs the matching award for each, oldest first.
+ * window and re-runs the matching award for each.
  *
  * Safe to run repeatedly or concurrently: both award functions lock the
  * check-in row and the user (advisory lock), and UNIQUE(check_in_id) on each
@@ -15,8 +15,14 @@
  * weekly cap and the free-form daily cap stay in the database functions;
  * nothing here computes XP.
  *
- * The source returns candidates already ordered oldest first. This loop does
- * not re-sort them.
+ * The source decides which check-ins make the batch: never attempted first,
+ * then least recently attempted, then oldest, skipping check-ins that already
+ * failed `maxAttempts` times, so a pile of failing check-ins cannot starve
+ * newer ones. The chosen batch is then processed oldest first, so within a
+ * batch first-vs-repeat follows check-in order. A failed check-in is retried
+ * only after an exponential backoff gap, so a short outage can't burn its
+ * attempts in minutes. Failed awards are recorded
+ * through the source (attempt count, time, short reason code).
  *
  * Kept free of runtime dependencies so the database tests (tests/) can drive it
  * against real Postgres.
@@ -48,15 +54,36 @@ export interface ReconcileWindow {
   to: Date;
   /** Maximum number of check-ins to scan in one run. */
   limit: number;
+  /** Check-ins with this many failed attempts or more are left out. */
+  maxAttempts: number;
+  /** Retry backoff base in minutes: n failures wait base * 2^(n-1), capped at 24 h. */
+  retryBaseMinutes: number;
 }
 
+/** Defaults for XP_RECONCILE_MAX_ATTEMPTS / XP_RECONCILE_RETRY_BASE_MINUTES (config is the source of truth). */
+export const DEFAULT_RECONCILE_MAX_ATTEMPTS = 15;
+export const DEFAULT_RECONCILE_RETRY_BASE_MINUTES = 10;
+/** Most given-up check-in ids logged per run. */
+export const GIVEN_UP_LOG_LIMIT = 20;
+
 /**
- * Finds check-ins in the window that have no XP row, oldest first.
+ * Finds check-ins in the window that have no XP row.
  * Path rows have no xp_events row; Cook anything rows have no
  * generated_recipe_xp_events row. The batch limit applies to the merged list.
+ * Order: never attempted first, then oldest last attempt, then oldest check-in;
+ * check-ins at or over window.maxAttempts are excluded.
+ *
+ * The two optional methods persist attempts. Sources that cannot (tests,
+ * simple fakes) leave them out and the job just skips tracking.
  */
 export interface ReconcileCandidateSource {
   findCheckInsMissingXp(window: ReconcileWindow): Promise<ReconcileCandidate[]>;
+  /** Called after a failed award. `reason` is a short code, never an error message. */
+  recordFailedAttempt?(candidate: ReconcileCandidate, reason: string): Promise<void>;
+  /** How many in-window missing check-ins are over window.maxAttempts. */
+  countGivenUp?(window: ReconcileWindow): Promise<number>;
+  /** Ids (and nothing else) of up to `limit` given-up check-ins, oldest first. */
+  listGivenUp?(window: ReconcileWindow, limit: number): Promise<string[]>;
 }
 
 export interface ReconcileLogger {
@@ -68,6 +95,10 @@ export interface ReconcileOptions {
   lookbackHours: number;
   minAgeSeconds: number;
   batchLimit: number;
+  /** Failed attempts before a check-in is given up on. Defaults to 10. */
+  maxAttempts?: number;
+  /** Retry backoff base in minutes. Defaults to 10. */
+  retryBaseMinutes?: number;
   dryRun?: boolean;
   now?: Date;
 }
@@ -78,6 +109,8 @@ export interface ReconcileSummary {
   /** Already had an award by the time we tried (another run or a late live award). */
   skipped: number;
   failed: number;
+  /** In-window check-ins skipped because they already failed maxAttempts times. */
+  given_up: number;
   dry_run: boolean;
   /** True when the batch was full, so another run may find more. */
   batch_full: boolean;
@@ -91,6 +124,8 @@ export function reconcileWindow(options: ReconcileOptions): ReconcileWindow {
     from: new Date(now.getTime() - options.lookbackHours * 3_600_000),
     to: new Date(now.getTime() - options.minAgeSeconds * 1000),
     limit: options.batchLimit,
+    maxAttempts: options.maxAttempts ?? DEFAULT_RECONCILE_MAX_ATTEMPTS,
+    retryBaseMinutes: options.retryBaseMinutes ?? DEFAULT_RECONCILE_RETRY_BASE_MINUTES,
   };
 }
 
@@ -102,15 +137,30 @@ export async function reconcileXpAwards(
   generatedAwarder: XpAwarder | null = null
 ): Promise<ReconcileSummary> {
   const window = reconcileWindow(options);
-  const candidates = await source.findCheckInsMissingXp(window);
+  const found = await source.findCheckInsMissingXp(window);
+  // Selection is by retry priority; processing is oldest first.
+  // Stable, so equal timestamps keep the source's order.
+  const candidates = [...found].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at));
   const dryRun = options.dryRun ?? false;
 
   let awarded = 0;
   let skipped = 0;
   let failed = 0;
 
-  // One at a time, in the source's oldest-first order, so first-vs-repeat
-  // follows check-in order and we never hold more than one user's advisory lock.
+  const recordAttempt = async (candidate: ReconcileCandidate, reason: string): Promise<void> => {
+    if (!source.recordFailedAttempt) return;
+    try {
+      await source.recordFailedAttempt(candidate, reason);
+    } catch (error) {
+      logger.error('xp_reconcile_attempt_record_failed', {
+        check_in_id: candidate.check_in_id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
+  // One at a time, oldest first, so first-vs-repeat follows check-in order
+  // within the batch and we never hold more than one user's advisory lock.
   for (const candidate of candidates) {
     const kind = reconcileCandidateKind(candidate);
     if (dryRun) {
@@ -132,6 +182,7 @@ export async function reconcileXpAwards(
         reason: 'unknown',
         error: 'Cook-anything reconcile awarder is not configured',
       });
+      await recordAttempt(candidate, 'not_configured');
       continue;
     }
     try {
@@ -159,6 +210,32 @@ export async function reconcileXpAwards(
         reason,
         error: error instanceof Error ? error.message : String(error),
       });
+      await recordAttempt(candidate, reason);
+    }
+  }
+
+  let givenUp = 0;
+  if (source.countGivenUp) {
+    try {
+      givenUp = await source.countGivenUp(window);
+    } catch (error) {
+      logger.error('xp_reconcile_given_up_count_failed', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    if (givenUp > 0) {
+      let ids: string[] = [];
+      if (source.listGivenUp) {
+        try {
+          ids = (await source.listGivenUp(window, GIVEN_UP_LOG_LIMIT)).slice(0, GIVEN_UP_LOG_LIMIT);
+        } catch (error) {
+          logger.error('xp_reconcile_given_up_list_failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      // Ids only, so someone can act on them (see ai-server/README.md).
+      logger.info('xp_reconcile_given_up', { given_up: givenUp, check_in_ids: ids });
     }
   }
 
@@ -167,6 +244,7 @@ export async function reconcileXpAwards(
     awarded,
     skipped,
     failed,
+    given_up: givenUp,
     dry_run: dryRun,
     batch_full: candidates.length >= window.limit,
     window_from: window.from.toISOString(),

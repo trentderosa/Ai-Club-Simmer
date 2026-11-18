@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { startReconcileScheduler, type ReconcileScheduler } from './reconcile-scheduler.js';
-import { loadXpReconcileIntervalMs } from '../config.js';
+import {
+  startReconcileScheduler,
+  FOLLOW_UP_DELAY_MS,
+  MAX_CONSECUTIVE_FOLLOW_UPS,
+  type ReconcileScheduler,
+} from './reconcile-scheduler.js';
+import { loadXpReconcileIntervalMs, loadReconcileConfig } from '../config.js';
 import type { ReconcileCandidateSource, ReconcileLogger } from './reconcile-xp-core.js';
 import type { XpAwarder } from '../services/xp-awarder.js';
 
@@ -157,6 +162,113 @@ describe('startReconcileScheduler', () => {
     if (result.enabled) result.stop();
     await vi.advanceTimersByTimeAsync(INTERVAL * 3);
     expect(source.findCheckInsMissingXp).not.toHaveBeenCalled();
+  });
+});
+
+describe('follow-up runs after a full batch', () => {
+  const row = { check_in_id: 'c1', slot_id: 1, created_at: '2026-11-12T20:00:00Z' };
+  // Default batch limit is 100, so 100 rows is a full batch.
+  const fullBatch = Array.from({ length: 100 }, (_, i) => ({ ...row, check_in_id: `c${i}` }));
+
+  it('runs once more after FOLLOW_UP_DELAY_MS, well before the next interval', async () => {
+    const source = emptySource();
+    source.findCheckInsMissingXp.mockResolvedValueOnce(fullBatch);
+    start(source, logger());
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    expect(source.findCheckInsMissingXp).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(FOLLOW_UP_DELAY_MS - 1);
+    expect(source.findCheckInsMissingXp).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(source.findCheckInsMissingXp).toHaveBeenCalledTimes(2);
+    // The follow-up found nothing: no more follow-ups until the interval.
+    await vi.advanceTimersByTimeAsync(INTERVAL - FOLLOW_UP_DELAY_MS - 1);
+    expect(source.findCheckInsMissingXp).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not follow up when the full batch made no progress (all failed)', async () => {
+    const source = emptySource();
+    source.findCheckInsMissingXp.mockResolvedValue(fullBatch);
+    const failing = { award: vi.fn().mockRejectedValue(new Error('down')) } as unknown as XpAwarder;
+    started = startReconcileScheduler(
+      { ...ENV, XP_RECONCILE_INTERVAL_MS: String(INTERVAL) },
+      {
+        stubAuth: false,
+        createSource: () => source,
+        createAwarder: () => failing,
+        createGeneratedAwarder: () => failing,
+        logger: logger(),
+      }
+    );
+    await vi.advanceTimersByTimeAsync(INTERVAL + FOLLOW_UP_DELAY_MS * 3);
+    expect(source.findCheckInsMissingXp).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not follow up when the batch was not full', async () => {
+    const source = emptySource();
+    source.findCheckInsMissingXp.mockResolvedValueOnce(fullBatch.slice(0, 99));
+    start(source, logger());
+    await vi.advanceTimersByTimeAsync(INTERVAL + FOLLOW_UP_DELAY_MS * 2);
+    expect(source.findCheckInsMissingXp).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps consecutive follow-ups, then waits for the interval', async () => {
+    const source = emptySource();
+    source.findCheckInsMissingXp.mockResolvedValue(fullBatch);
+    start(source, logger());
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    await vi.advanceTimersByTimeAsync(FOLLOW_UP_DELAY_MS * (MAX_CONSECUTIVE_FOLLOW_UPS + 5));
+    expect(source.findCheckInsMissingXp).toHaveBeenCalledTimes(1 + MAX_CONSECUTIVE_FOLLOW_UPS);
+    // The next interval tick starts a fresh chain.
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    expect(source.findCheckInsMissingXp.mock.calls.length).toBeGreaterThan(1 + MAX_CONSECUTIVE_FOLLOW_UPS);
+  });
+
+  it('never overlaps a running scan, and stop() cancels a pending follow-up', async () => {
+    const source = emptySource();
+    source.findCheckInsMissingXp.mockResolvedValueOnce(fullBatch);
+    const result = start(source, logger());
+    await vi.advanceTimersByTimeAsync(INTERVAL);
+    if (result.enabled) result.stop();
+    await vi.advanceTimersByTimeAsync(FOLLOW_UP_DELAY_MS * 2);
+    expect(source.findCheckInsMissingXp).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not follow up after a scan error', async () => {
+    const source = emptySource();
+    source.findCheckInsMissingXp.mockRejectedValue(new Error('boom'));
+    start(source, logger());
+    await vi.advanceTimersByTimeAsync(INTERVAL + FOLLOW_UP_DELAY_MS * 2);
+    expect(source.findCheckInsMissingXp).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('XP_RECONCILE_MAX_ATTEMPTS', () => {
+  const base = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k' };
+  it('defaults to 10 and accepts 1 to 100', () => {
+    expect(loadReconcileConfig(base).maxAttempts).toBe(15);
+    expect(loadReconcileConfig({ ...base, XP_RECONCILE_MAX_ATTEMPTS: '1' }).maxAttempts).toBe(1);
+    expect(loadReconcileConfig({ ...base, XP_RECONCILE_MAX_ATTEMPTS: '100' }).maxAttempts).toBe(100);
+  });
+  it('rejects 0, 101 and junk', () => {
+    for (const v of ['0', '101', 'abc', '-3']) {
+      expect(() => loadReconcileConfig({ ...base, XP_RECONCILE_MAX_ATTEMPTS: v })).toThrow(/XP_RECONCILE_MAX_ATTEMPTS/);
+    }
+  });
+});
+
+describe('XP_RECONCILE_RETRY_BASE_MINUTES', () => {
+  const base = { SUPABASE_URL: 'https://x.supabase.co', SUPABASE_SERVICE_ROLE_KEY: 'k' };
+  it('defaults to 10 and accepts 1 to 1440', () => {
+    expect(loadReconcileConfig(base).retryBaseMinutes).toBe(10);
+    expect(loadReconcileConfig({ ...base, XP_RECONCILE_RETRY_BASE_MINUTES: '1' }).retryBaseMinutes).toBe(1);
+    expect(loadReconcileConfig({ ...base, XP_RECONCILE_RETRY_BASE_MINUTES: '1440' }).retryBaseMinutes).toBe(1440);
+  });
+  it('rejects 0, 1441 and junk', () => {
+    for (const v of ['0', '1441', 'abc']) {
+      expect(() => loadReconcileConfig({ ...base, XP_RECONCILE_RETRY_BASE_MINUTES: v })).toThrow(
+        /XP_RECONCILE_RETRY_BASE_MINUTES/
+      );
+    }
   });
 });
 

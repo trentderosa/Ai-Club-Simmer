@@ -29,11 +29,30 @@ export interface DishPhotoRouterDeps {
  */
 export function createDishPhotoRouter(
   deps: DishPhotoRouterDeps,
-  options: { rateLimit?: { windowMs: number; maxRequests: number } } = {}
+  options: {
+    /** Per-user limit (after auth). */
+    rateLimit?: { windowMs: number; maxRequests: number };
+    /** Per-IP limit (before auth). */
+    ipRateLimit?: { windowMs: number; maxRequests: number };
+  } = {}
 ): Router {
   const router = Router();
   const authenticate = createAuthMiddleware({
     verify: (token: string) => deps.supabase.verifyToken(token),
+  });
+
+  // Per-IP, BEFORE auth, so unauthenticated floods and token-verification
+  // calls are bounded too. NOTE: behind a reverse proxy, set TRUST_PROXY=true
+  // (index.ts then calls app.set('trust proxy', 1)) so req.ip is the real
+  // client IP; otherwise all users share the proxy's IP and one bucket.
+  // The default is looser than the per-user cap because campus NAT can put
+  // many students behind one IP.
+  const ipLimiter = rateLimit({
+    windowMs: options.ipRateLimit?.windowMs ?? 60_000,
+    max: options.ipRateLimit?.maxRequests ?? 60,
+    message: { error: 'Too many requests, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false,
   });
 
   // Per-user, after auth, so one account can't multiply the cap by rotating IPs.
@@ -51,7 +70,7 @@ export function createDishPhotoRouter(
   });
 
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  router.post('/', authenticate, userLimiter, async (req: Request, res: Response) => {
+  router.post('/', ipLimiter, authenticate, userLimiter, async (req: Request, res: Response) => {
     try {
       if (!req.userId) {
         res.status(401).json({ error: 'Authentication required' });

@@ -49,12 +49,21 @@ export class Cast {
     return user;
   }
 
+  /**
+   * Deletes every created user. A 404 means the user is already gone and
+   * counts as success; any other failure is collected and thrown after all
+   * deletes were tried, naming the count and the HTTP statuses (no keys).
+   */
   async cleanup(): Promise<void> {
+    const failures: number[] = [];
     for (const u of this.created.splice(0)) {
       const res = await adminDeleteUser(u.id);
-      if (res.status >= 300) {
-        console.warn(`cleanup: could not delete test user (HTTP ${res.status})`);
-      }
+      if (res.status >= 300 && res.status !== 404) failures.push(res.status);
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `e2e cleanup: could not delete ${failures.length} test user(s) (HTTP ${[...new Set(failures)].join(', ')})`
+      );
     }
   }
 }

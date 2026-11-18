@@ -253,11 +253,12 @@ describe('F8 mastery: the final slot never sends hidden step text', () => {
   });
 
   // Fixture sized for MASTERY_MIN_HIDDEN_STEPS (3): 6 steps, 2 safety and 4
-  // non-safety, so slot 10 generation accepts it.
+  // non-safety, of which 3 are not trivial ("Serve" is trivial: hidden but not
+  // counted), so slot 10 generation accepts it.
   const masteryRecipe: Recipe = {
     ...recipe,
     steps: [
-      { instruction: 'Whisk the eggs', isSafetyStep: false, techniqueName: 'Whisk eggs' },
+      { instruction: 'Whisk the eggs until smooth', isSafetyStep: false, techniqueName: 'Whisk eggs' },
       { instruction: 'Cook on low heat', isSafetyStep: true, techniqueName: 'Low heat cooking' },
       { instruction: 'Season the eggs with salt', isSafetyStep: false },
       { instruction: 'Bake in the oven for ten minutes', isSafetyStep: true },
@@ -275,7 +276,7 @@ describe('F8 mastery: the final slot never sends hidden step text', () => {
     expect(steps[1].instruction).toBe('Cook on low heat');
     expect(JSON.stringify(res.body)).not.toContain('Whisk the eggs');
     expect(JSON.stringify(res.body)).not.toContain('"Serve"');
-    expect(recipes.getAll()[0].recipe.steps[0].instruction).toBe('Whisk the eggs');
+    expect(recipes.getAll()[0].recipe.steps[0].instruction).toBe('Whisk the eggs until smooth');
   });
 
   it('masks a saved recipe too', async () => {

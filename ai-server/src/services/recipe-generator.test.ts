@@ -744,6 +744,58 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
     expect(logged).not.toContain('chicken');
   });
 
+  it('does not count trivial steps toward the minimum (they stay hidden, just uncounted)', async () => {
+    // 3 real hideable steps would pass; here only 2 are real, the rest are trivial.
+    const mostlyTrivial = recipeWith([
+      step('Gather the ingredients on the counter.'),
+      step('Season the chicken with salt and pepper.'),
+      step('Serve.'),
+      step('Enjoy!'),
+      step('Preheat the oven.'),
+    ]);
+    const client = createMockOllamaClient([mostlyTrivial, mostlyTrivial, mostlyTrivial]);
+    const result = await run(client, finalSlot);
+    expect(result.success).toBe(false);
+    expect(client.generate).toHaveBeenCalledTimes(3);
+    const logged = JSON.stringify(vi.mocked(console.warn).mock.calls);
+    expect(logged).toContain('"hiddenSteps":2');
+  });
+
+  it('passes when exactly the minimum of non-trivial steps is present, trivial steps aside', async () => {
+    const three = recipeWith([
+      step('Gather the ingredients on the counter.'),
+      step('Season the chicken with salt and pepper.'),
+      step('Mix the herbs with butter in a bowl.'),
+      step('Serve.'),
+      step('Preheat the oven.'),
+    ]);
+    const client = createMockOllamaClient([three]);
+    const result = await run(client, finalSlot);
+    expect(result.success).toBe(true);
+    expect(client.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('numbers the mastery rule 7 without dietary needs and 8 with them', () => {
+    const noDiet = { ...mockUserProfile, dietaryNeeds: [] };
+    const withoutPrompt = buildPrompt(finalSlot, noDiet);
+    expect(withoutPrompt).toContain('\n7. This is the final mastery recipe');
+    expect(withoutPrompt).not.toContain('\n8.');
+    expect(withoutPrompt).not.toContain('RESPECT dietary needs');
+
+    const withPrompt = buildPrompt(finalSlot, { ...mockUserProfile, dietaryNeeds: ['vegetarian'] });
+    expect(withPrompt).toContain('\n7. RESPECT dietary needs');
+    expect(withPrompt).toContain('\n8. This is the final mastery recipe');
+  });
+
+  it('tells the model peeling, grating, draining, pan work and roasting are safety steps, never hidden', () => {
+    const prompt = buildPrompt(finalSlot, mockUserProfile);
+    for (const word of ['peeling', 'grating', 'draining', 'pan work', 'roasting']) {
+      expect(prompt).toContain(word);
+    }
+    expect(prompt).toContain('MUST be flagged as a safety step');
+    expect(prompt).toContain('never hidden');
+  });
+
   it('adds the hidden-step hint to the prompt only for the final slot', () => {
     expect(buildPrompt(finalSlot, mockUserProfile)).toContain('final mastery recipe');
     expect(buildPrompt(mockSlot, mockUserProfile)).not.toContain('final mastery recipe');

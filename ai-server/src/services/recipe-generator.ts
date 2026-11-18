@@ -2,7 +2,7 @@ import { ZodError } from 'zod';
 import { Recipe, RecipeSchema, getRecipeJsonSchema } from '../schemas/recipe.js';
 import { UserProfile } from '../schemas/user.js';
 import type { OllamaClient } from './ollama-client.js';
-import { hiddenStepIndices, MASTERY_MIN_HIDDEN_STEPS, MASTERY_MIN_STEPS } from '../mastery/mask.js';
+import { countedHiddenStepCount, MASTERY_MIN_HIDDEN_STEPS, MASTERY_MIN_STEPS } from '../mastery/mask.js';
 import { logGenerationFailure } from './generation-failure.js';
 
 export interface RecipeGenerationResult {
@@ -222,7 +222,7 @@ Based on this feedback, include a short "coachNote" at the top of the recipe tha
   // Final slot (mastery challenge): non-safety steps are hidden, so the recipe
   // needs enough of them. Safety flagging stays strict (rule 4 still applies).
   const masteryConstraint = slot.isFinal
-    ? `\n${dietaryConstraint ? 8 : 7}. This is the final mastery recipe. Write at least ${MASTERY_MIN_STEPS} steps, and make at least ${MASTERY_MIN_HIDDEN_STEPS} of them steps that do NOT involve heat, knives, raw meat, or hot oil, such as gathering and measuring ingredients, seasoning, mixing, resting, and plating. Steps that do involve heat, knives, raw meat, or hot oil must still be flagged as safety steps.`
+    ? `\n${dietaryConstraint ? 8 : 7}. This is the final mastery recipe. Write at least ${MASTERY_MIN_STEPS} steps, and make at least ${MASTERY_MIN_HIDDEN_STEPS} of them real steps that do NOT involve heat, knives, raw meat, hot oil, peeling, grating, draining, pan work, or roasting, such as gathering and measuring ingredients, seasoning, mixing, and resting. Each of those steps must be a full instruction of at least 5 words; one-line steps like "Serve." or "Enjoy!" do not count. Any step that involves heat, knives, raw meat, hot oil, peeling, grating, draining, pan work, or roasting MUST be flagged as a safety step (isSafetyStep: true) and is never hidden.`
     : '';
 
   return `You are a helpful cooking instructor creating a recipe for the Simmer cooking app.
@@ -358,7 +358,7 @@ export async function generateRecipe(
       // Step 4 (final slot only): the mastery challenge hides non-safety steps,
       // so count them after safety flagging. Too few counts as a failed attempt.
       if (slot.isFinal) {
-        const hideable = hiddenStepIndices(recipeWithSafetyFlags).length;
+        const hideable = countedHiddenStepCount(recipeWithSafetyFlags);
         if (hideable < MASTERY_MIN_HIDDEN_STEPS) {
           console.warn('Recipe attempt rejected', {
             reason: 'mastery_too_few_hidden_steps',

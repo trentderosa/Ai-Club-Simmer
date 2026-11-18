@@ -33,8 +33,18 @@ describe('XP reconcile job (failed or missing awards)', () => {
 
   const silent: ReconcileLogger = { info: () => undefined, error: () => undefined };
 
+  // Same three calls the ai-server source makes: one RPC each, as service_role.
   const source = (): ReconcileCandidateSource => ({
-    findCheckInsMissingXp: (window) => db.findCheckInsMissingXp(window.from, window.to, window.limit),
+    findCheckInsMissingXp: (window) =>
+      db.findCheckInsMissingXp(window.from, window.to, window.limit, window.maxAttempts, window.retryBaseMinutes),
+    recordFailedAttempt: (candidate, reason) =>
+      db.recordXpAwardAttempt(
+        candidate.check_in_id,
+        candidate.kind === 'generated' ? 'generated' : 'path',
+        reason
+      ),
+    countGivenUp: (window) => db.countXpReconcileGivenUp(window.from, window.to, window.maxAttempts),
+    listGivenUp: (window, limit) => db.listXpReconcileGivenUp(window.from, window.to, window.maxAttempts, limit),
   });
 
   const awardFromRpc = async (
@@ -77,6 +87,7 @@ describe('XP reconcile job (failed or missing awards)', () => {
     lookbackHours: 168,
     minAgeSeconds: 0,
     batchLimit: 100,
+    retryBaseMinutes: 0, // backoff off; the backoff tests set it
     now: new Date(Date.now() + 60_000),
     ...overrides,
   });
@@ -303,5 +314,264 @@ describe('XP reconcile job (failed or missing awards)', () => {
     expect(tooNew.scanned).toBe(0);
     expect(await db.countGeneratedXpEvents(fresh)).toBe(0);
     expect(await db.countGeneratedXpEvents(outside)).toBe(0);
+  });
+
+  describe('attempt tracking (xp_award_attempts)', () => {
+    const failing: XpAwarder = {
+      award: async () => {
+        throw new XpAwardError('http', 'award_slot_xp failed: 500', 500);
+      },
+    };
+    const reconcileFailing = (overrides: Partial<ReconcileOptions> = {}): Promise<ReconcileSummary> =>
+      reconcileXpAwards(source(), failing, options(overrides), silent, failing);
+
+    it('records an attempt per failed award (path and cook-anything) and increments it', async () => {
+      const recipe = await db.createGeneratedRecipe(user.id, {
+        stepCount: 5,
+        ingredientCount: 6,
+        timeEstimateMinutes: 20,
+      });
+      const slotCheckIn = await db.createCheckIn(user.id, recipe1, slot1);
+      const genCheckIn = await db.createGeneratedCheckIn(user.id, recipe.id);
+
+      expect(await reconcileFailing()).toMatchObject({ scanned: 2, failed: 2, given_up: 0 });
+      expect(await db.getXpAwardAttempt(slotCheckIn)).toMatchObject({
+        kind: 'path',
+        attempts: 1,
+        last_reason: 'http',
+      });
+      expect(await db.getXpAwardAttempt(genCheckIn)).toMatchObject({ kind: 'generated', attempts: 1 });
+
+      await reconcileFailing();
+      expect((await db.getXpAwardAttempt(slotCheckIn))?.attempts).toBe(2);
+      expect((await db.getXpAwardAttempt(genCheckIn))?.attempts).toBe(2);
+    });
+
+    it('does not record attempts for successes, already-awarded rows or dry runs', async () => {
+      const ok = await db.createCheckIn(user.id, recipe1, slot1);
+      await reconcileXpAwards(source(), awarder(), options({ dryRun: true }), silent, generatedAwarder());
+      expect(await db.getXpAwardAttempt(ok)).toBeNull();
+      await reconcile();
+      expect(await db.getXpEventCount(ok)).toBe(1);
+      expect(await db.getXpAwardAttempt(ok)).toBeNull();
+    });
+
+    it('stops retrying after maxAttempts and reports how many it gave up on', async () => {
+      const stuck = await db.createCheckIn(user.id, recipe1, slot1);
+      await reconcileFailing({ maxAttempts: 2 });
+      await reconcileFailing({ maxAttempts: 2 });
+      expect((await db.getXpAwardAttempt(stuck))?.attempts).toBe(2);
+
+      const third = await reconcileFailing({ maxAttempts: 2 });
+      expect(third).toMatchObject({ scanned: 0, failed: 0, given_up: 1 });
+      expect((await db.getXpAwardAttempt(stuck))?.attempts).toBe(2);
+
+      // A real awarder does not pick it up either; raising the limit does.
+      const real = await reconcile({ maxAttempts: 2 });
+      expect(real).toMatchObject({ scanned: 0, given_up: 1 });
+      expect(await db.getXpEventCount(stuck)).toBe(0);
+      const raised = await reconcile({ maxAttempts: 3 });
+      expect(raised).toMatchObject({ scanned: 1, awarded: 1, given_up: 0 });
+      expect(await db.getXpEventCount(stuck)).toBe(1);
+    });
+
+    it('orders never-attempted first, then least recently attempted, then oldest', async () => {
+      const recent = await db.createCheckIn(user.id, recipe1, slot1);
+      const stale = await db.createCheckIn(user.id, recipe2, slot2);
+      const never = await db.createCheckIn(user.id, recipe2, slot2);
+      await db.backdateCheckIn(recent, 3);
+      await db.backdateCheckIn(stale, 2);
+      await db.setXpAwardAttempt(recent, 'path', 1, 10);
+      await db.setXpAwardAttempt(stale, 'path', 1, 60);
+
+      const rows = await db.findCheckInsMissingXp(new Date(Date.now() - 86_400_000 * 30), new Date(Date.now() + 60_000), 10, 10, 0);
+      expect(rows.map((r) => r.check_in_id)).toEqual([never, stale, recent]);
+    });
+
+    it('a new check-in is not starved behind a full batch of failing ones', async () => {
+      const BATCH = 100;
+      // 100 old check-ins that already failed once, all older than the new one.
+      await db.getPool().query(
+        `INSERT INTO check_ins (user_id, user_recipe_id, slot_id, difficulty_rating, created_at)
+         SELECT $1, $2, $3, 'ok', NOW() - make_interval(hours => 2) - make_interval(secs => g)
+           FROM generate_series(1, $4) g`,
+        [user.id, recipe1, slot1, BATCH]
+      );
+      await db.getPool().query(
+        `INSERT INTO xp_award_attempts (check_in_id, kind, attempts, last_attempt_at, last_reason)
+         SELECT id, 'path', 1, NOW() - make_interval(mins => 5), 'http'
+           FROM check_ins WHERE user_id = $1`,
+        [user.id]
+      );
+      const newest = await db.createCheckIn(user.id, recipe2, slot2);
+
+      const rows = await db.findCheckInsMissingXp(
+        new Date(Date.now() - 86_400_000),
+        new Date(Date.now() + 60_000),
+        BATCH,
+        10,
+        0
+      );
+      expect(rows).toHaveLength(BATCH);
+      expect(rows[0].check_in_id).toBe(newest);
+
+      const summary = await reconcile({ batchLimit: BATCH });
+      expect(summary).toMatchObject({ scanned: BATCH, batch_full: true });
+      expect(await db.getXpEventCount(newest)).toBe(1);
+    });
+
+    it('backs off: a recently failed row is skipped until base * 2^(attempts-1) minutes pass', async () => {
+      const id = await db.createCheckIn(user.id, recipe1, slot1);
+      const from = new Date(Date.now() - 86_400_000);
+      const to = new Date(Date.now() + 60_000);
+      const ids = async (): Promise<string[]> =>
+        (await db.findCheckInsMissingXp(from, to, 10, 100, 10)).map((r) => r.check_in_id);
+
+      await db.setXpAwardAttempt(id, 'path', 1, 5); // 5 min ago, gap is 10
+      expect(await ids()).toEqual([]);
+      await db.setXpAwardAttempt(id, 'path', 1, 11);
+      expect(await ids()).toEqual([id]);
+      await db.setXpAwardAttempt(id, 'path', 3, 30); // gap 40
+      expect(await ids()).toEqual([]);
+      await db.setXpAwardAttempt(id, 'path', 3, 41);
+      expect(await ids()).toEqual([id]);
+      // capped at 24 h: attempts 20 would be huge uncapped
+      await db.setXpAwardAttempt(id, 'path', 20, 60 * 23);
+      expect(await ids()).toEqual([]);
+      await db.setXpAwardAttempt(id, 'path', 20, 60 * 25);
+      expect(await ids()).toEqual([id]);
+    });
+
+    it('backoff keeps never-attempted first and does not hide them behind waiting rows', async () => {
+      const waiting = await db.createCheckIn(user.id, recipe1, slot1);
+      const due = await db.createCheckIn(user.id, recipe2, slot2);
+      const never = await db.createCheckIn(user.id, recipe2, slot2);
+      await db.backdateCheckIn(waiting, 3);
+      await db.backdateCheckIn(due, 2);
+      await db.setXpAwardAttempt(waiting, 'path', 1, 2);
+      await db.setXpAwardAttempt(due, 'path', 1, 30);
+      const rows = await db.findCheckInsMissingXp(
+        new Date(Date.now() - 86_400_000 * 30),
+        new Date(Date.now() + 60_000),
+        10,
+        10,
+        10
+      );
+      expect(rows.map((r) => r.check_in_id)).toEqual([never, due]);
+    });
+
+    it('lists given-up ids (ids only, limited) matching the count', async () => {
+      const a = await db.createCheckIn(user.id, recipe1, slot1);
+      const b = await db.createCheckIn(user.id, recipe2, slot2);
+      await db.backdateCheckIn(a, 2);
+      await db.setXpAwardAttempt(a, 'path', 3, 1);
+      await db.setXpAwardAttempt(b, 'path', 3, 1);
+      const from = new Date(Date.now() - 86_400_000 * 30);
+      const to = new Date(Date.now() + 60_000);
+      expect(await db.countXpReconcileGivenUp(from, to, 3)).toBe(2);
+      expect(await db.listXpReconcileGivenUp(from, to, 3, 20)).toEqual([a, b]);
+      expect(await db.listXpReconcileGivenUp(from, to, 3, 1)).toEqual([a]);
+      expect(await db.countXpReconcileGivenUp(from, to, 4)).toBe(0);
+    });
+
+    it('sanitizes the reason to a short code', async () => {
+      const id = await db.createCheckIn(user.id, recipe1, slot1);
+      await db.recordXpAwardAttempt(id, 'path', 'Bad reason: secret=abc123 '.repeat(5));
+      const row = await db.getXpAwardAttempt(id);
+      expect(row?.last_reason).toMatch(/^[a-z_]{1,40}$/);
+      await db.recordXpAwardAttempt(id, 'path', '123');
+      expect((await db.getXpAwardAttempt(id))?.last_reason).toBe('unknown');
+    });
+
+    it('deletes the attempt row when its check-in is deleted (both kinds)', async () => {
+      const recipe = await db.createGeneratedRecipe(user.id, {
+        stepCount: 5,
+        ingredientCount: 6,
+        timeEstimateMinutes: 20,
+      });
+      const slotCheckIn = await db.createCheckIn(user.id, recipe1, slot1);
+      const genCheckIn = await db.createGeneratedCheckIn(user.id, recipe.id);
+      await db.recordXpAwardAttempt(slotCheckIn, 'path', 'http');
+      await db.recordXpAwardAttempt(genCheckIn, 'generated', 'http');
+      await db.getPool().query('DELETE FROM check_ins WHERE id = $1', [slotCheckIn]);
+      await db.getPool().query('DELETE FROM generated_recipe_check_ins WHERE id = $1', [genCheckIn]);
+      expect(await db.getXpAwardAttempt(slotCheckIn)).toBeNull();
+      expect(await db.getXpAwardAttempt(genCheckIn)).toBeNull();
+    });
+
+    it('rejects an unknown kind', async () => {
+      const id = await db.createCheckIn(user.id, recipe1, slot1);
+      await expect(db.recordXpAwardAttempt(id, 'other' as 'path', 'http')).rejects.toThrow(/check constraint/i);
+    });
+  });
+
+  describe('xp_award_attempts access control', () => {
+    const fns = [
+      'get_xp_reconcile_candidates(timestamptz, timestamptz, integer, integer, integer)',
+      'list_xp_reconcile_given_up(timestamptz, timestamptz, integer, integer)',
+      'count_xp_reconcile_given_up(timestamptz, timestamptz, integer)',
+      'record_xp_award_attempt(uuid, text, text)',
+    ];
+
+    it('has RLS on and no client policies', async () => {
+      const rls = await db
+        .getPool()
+        .query("SELECT relrowsecurity FROM pg_class WHERE oid = 'public.xp_award_attempts'::regclass");
+      expect(rls.rows[0].relrowsecurity).toBe(true);
+      const policies = await db
+        .getPool()
+        .query("SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'xp_award_attempts'");
+      expect(policies.rowCount).toBe(0);
+    });
+
+    it('denies anon and authenticated any table access, allows service_role', async () => {
+      const id = await db.createCheckIn(user.id, recipe1, slot1);
+      await db.recordXpAwardAttempt(id, 'path', 'http');
+      for (const role of ['anon', 'authenticated']) {
+        for (const priv of ['SELECT', 'INSERT', 'UPDATE', 'DELETE']) {
+          const r = await db
+            .getPool()
+            .query('SELECT has_table_privilege($1, $2, $3) AS ok', [role, 'public.xp_award_attempts', priv]);
+          expect(r.rows[0].ok, `${role} ${priv}`).toBe(false);
+        }
+      }
+      const svc = await db
+        .getPool()
+        .query("SELECT has_table_privilege('service_role', 'public.xp_award_attempts', 'SELECT') AS ok");
+      expect(svc.rows[0].ok).toBe(true);
+    });
+
+    it('denies EXECUTE on the reconcile functions to anon and authenticated, allows service_role', async () => {
+      for (const fn of fns) {
+        expect(await db.hasFunctionPrivilege('anon', fn), `anon ${fn}`).toBe(false);
+        expect(await db.hasFunctionPrivilege('authenticated', fn), `authenticated ${fn}`).toBe(false);
+        expect(await db.hasFunctionPrivilege('service_role', fn), `service_role ${fn}`).toBe(true);
+      }
+      expect(await db.hasFunctionPrivilege('anon', 'xp_award_attempts_forget_check_in()')).toBe(false);
+      expect(await db.hasFunctionPrivilege('authenticated', 'xp_award_attempts_forget_check_in()')).toBe(false);
+    });
+
+    it('a client role calling the functions or reading the table gets permission denied', async () => {
+      const id = await db.createCheckIn(user.id, recipe1, slot1);
+      for (const role of ['anon', 'authenticated']) {
+        for (const sql of [
+          'SELECT * FROM xp_award_attempts',
+          "SELECT * FROM get_xp_reconcile_candidates(NOW() - interval '1 day', NOW(), 10, 5, 10)",
+          "SELECT * FROM list_xp_reconcile_given_up(NOW() - interval '1 day', NOW(), 5, 10)",
+          "SELECT count_xp_reconcile_given_up(NOW() - interval '1 day', NOW(), 5)",
+          `SELECT record_xp_award_attempt('${id}', 'path', 'http')`,
+        ]) {
+          const client = await db.getPool().connect();
+          try {
+            await client.query('BEGIN');
+            await client.query(`SET LOCAL ROLE ${role}`);
+            await expect(client.query(sql), `${role}: ${sql}`).rejects.toThrow(/permission denied/i);
+          } finally {
+            await client.query('ROLLBACK');
+            client.release();
+          }
+        }
+      }
+    });
   });
 });
