@@ -362,7 +362,7 @@ export async function generateRecipe(
   // All attempts exhausted - return typed error with context
   const errorMessage =
     lastError instanceof ZodError
-      ? `Schema validation failed: ${lastError.errors.map((e) => e.message).join(', ')}`
+      ? `Schema validation failed: ${lastError.issues.map((e) => e.message).join(', ')}`
       : `Generation failed: ${lastError?.message || 'Unknown error'}`;
 
   if (!(lastError instanceof ZodError)) {

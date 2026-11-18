@@ -24,3 +24,7 @@ coverage/
 
 # Vitest cache
 .vite/
+
+# Local AI-server demo files (never commit)
+ai-server/demo.sh
+ai-server/demo-request.json

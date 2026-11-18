@@ -110,7 +110,7 @@ export function createCoachNoteGenerator(ollamaClient: OllamaClient): CoachNoteG
           const isLastAttempt = attempt === MAX_RETRIES;
           
           if (error instanceof z.ZodError) {
-            console.warn(`Coach note validation failed (attempt ${attempt + 1}):`, error.errors);
+            console.warn(`Coach note validation failed (attempt ${attempt + 1}):`, error.issues);
           } else if (error instanceof SyntaxError) {
             console.warn(`Coach note JSON parse failed (attempt ${attempt + 1}):`, error.message);
           } else if (error instanceof Error && error.name === 'AbortError') {

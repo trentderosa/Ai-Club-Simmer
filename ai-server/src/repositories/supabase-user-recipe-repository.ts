@@ -6,6 +6,7 @@ import type { RecipeVideos } from '../services/video-finder.js';
 import { DEFAULT_SUPABASE_REST_TIMEOUT_MS } from '../services/supabase-rest.js';
 
 const RecipeVideosSchema = z.record(
+  z.string(),
   z.object({
     videoId: z.string(),
     title: z.string().optional(),

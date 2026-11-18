@@ -66,7 +66,7 @@ export function createMasteryRouter(deps: MasteryRouterDeps, options: MasteryRou
       res.status(400).json({
         error: 'Validation failed',
         code: 'VALIDATION_ERROR',
-        details: error.errors.map((e) => ({ path: e.path.join('.'), message: e.message })),
+        details: error.issues.map((e) => ({ path: e.path.join('.'), message: e.message })),
       });
       return;
     }

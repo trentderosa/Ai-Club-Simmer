@@ -123,7 +123,7 @@ export function createCheckInRouter(
         res.status(400).json({
           error: 'Validation failed',
           code: 'VALIDATION_ERROR',
-          details: error.errors.map((e) => ({
+          details: error.issues.map((e) => ({
             path: e.path.join('.'),
             message: e.message,
           })),
