@@ -66,6 +66,36 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/simmer_test npm test
 
 `DATABASE_URL` is for the database tests only (not in `ai-server/.env`) and defaults to that value if unset. Lint and typecheck: `npm run lint` and `npm run typecheck`.
 
+## Real-account tests (local)
+
+`tests/e2e/` is an end-to-end suite that signs up real (throwaway) users against a real local Supabase and the real AI server with real Ollama generation. It checks the app flow (sign-up, onboarding, plan, recipe generation, check-ins, XP, badges, mastery, Cook anything, XP retry) and that RLS and the privileged functions hold. It is not part of `npm test` and does not run in CI. Users are `e2e-<run id>-<random>@simmer.invalid` and are deleted at the end. It only runs against `127.0.0.1` or `localhost`.
+
+Local Supabase runs Postgres 17 (like production); the CI database tests use Postgres 15. Needs Docker, Node 20+, and Ollama with the model from `ai-server/.env` pulled.
+
+```bash
+# 1. Local Supabase (applies supabase/migrations). Email confirmations are off locally.
+#    Create local ES256 JWT signing keys once, like the hosted project's tokens.
+#    supabase/config.toml points at supabase/signing_keys.json (gitignored, never commit it).
+#    The file must exist first, then the CLI fills it in:
+echo '[]' > supabase/signing_keys.json && npx supabase@3.2.0 gen signing-key --algorithm ES256
+npx supabase@3.2.0 start
+
+# 2. AI server against it. Get the values with `npx supabase@3.2.0 status -o json`
+#    (API_URL, SERVICE_ROLE_KEY). Never print or commit them.
+cd ai-server && npm ci && npm run build
+NODE_ENV=production PORT=3001 HOST=127.0.0.1 \
+  SUPABASE_URL=<API_URL> \
+  SUPABASE_SERVICE_ROLE_KEY=<SERVICE_ROLE_KEY> \
+  SUPABASE_JWKS_URI=<API_URL>/auth/v1/.well-known/jwks.json \
+  XP_RECONCILE_INTERVAL_MS=60000 XP_RECONCILE_MIN_AGE_SECONDS=30 \
+  node dist/index.js
+
+# 3. Run the suite (in another terminal, from the repo root)
+cd tests && npm ci && npm run test:e2e
+```
+
+The test run reads the Supabase keys itself from `supabase status` (they are never written to disk). To use another AI server URL set `E2E_AI_URL` (default `http://127.0.0.1:3001`). A full run took about 3 to 4 minutes on an Apple-silicon laptop with `llama3.2` (real generations took 3 to 5 s each; slower machines or larger models take longer), and the XP retry test waits for scheduler ticks. The XP retry scenario (`08`) needs the in-server XP schedule from PR #30. A few setup steps seed a minimal recipe with the service role to save time; each test file says where.
+
 ## Database security
 
 Client roles (`PUBLIC`, `anon`, `authenticated`) have `EXECUTE` revoked on `public.rls_auto_enable()`. The function body is unchanged, and the revoke is guarded so it is a no-op on databases that don't have the function. Privileged functions such as `award_slot_xp`, `award_generated_recipe_xp`, `is_slot_unlocked`, `get_badges_earned_by_check_in`, `start_mastery_session` and `reveal_mastery_step` are called only from the AI server with the service role, never from the client.
