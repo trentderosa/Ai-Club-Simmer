@@ -145,7 +145,7 @@ describe('SupabasePathRepository', () => {
 
       expect(await repo.getUserProfile(USER_ID)).toBeNull();
       expect(logger.warn).toHaveBeenCalledWith('user_profile_invalid', {
-        issues: [{ path: 'experienceLevel', code: 'invalid_enum_value' }],
+        issues: [{ path: 'experienceLevel', code: 'invalid_value' }],
       });
       expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('chef-secret-value');
       expect(JSON.stringify(logger.warn.mock.calls)).not.toContain(USER_ID);

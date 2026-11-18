@@ -56,7 +56,7 @@ export async function generateCookAnythingRecipe(
 
   const errorMessage =
     lastError instanceof ZodError
-      ? `Schema validation failed: ${lastError.errors.map((e) => e.message).join(', ')}`
+      ? `Schema validation failed: ${lastError.issues.map((e) => e.message).join(', ')}`
       : `Generation failed: ${lastError?.message || 'Unknown error'}`;
 
   if (!(lastError instanceof ZodError)) {

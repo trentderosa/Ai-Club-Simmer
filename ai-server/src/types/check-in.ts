@@ -50,30 +50,30 @@ export const CheckInInputSchema = z
       (val.user_recipe_id !== undefined) !== (val.slot_id !== undefined);
     if (hasPath && hasGenerated) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Provide either a path slot or a cook-anything recipe, not both',
       });
     } else if (partialPath) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'user_recipe_id and slot_id are both required for a path check-in',
       });
     } else if (!hasPath && !hasGenerated) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         message: 'Provide user_recipe_id and slot_id, or generated_recipe_id',
       });
     }
     if (hasGenerated && val.mastery !== undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['mastery'],
         message: 'mastery is only allowed for the path mastery challenge',
       });
     }
     if (hasGenerated && val.mastery_session_id !== undefined) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: 'custom',
         path: ['mastery_session_id'],
         message: 'mastery_session_id is only allowed for the path mastery challenge',
       });

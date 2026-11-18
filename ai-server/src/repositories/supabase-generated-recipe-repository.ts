@@ -14,6 +14,7 @@ import type {
 } from './generated-recipe-repository.js';
 
 const RecipeVideosSchema = z.record(
+  z.string(),
   z.object({
     videoId: z.string(),
     title: z.string().optional(),

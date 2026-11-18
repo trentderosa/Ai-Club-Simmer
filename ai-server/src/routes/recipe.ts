@@ -255,7 +255,7 @@ export function createRecipeRouter(
       if (!paramsResult.success) {
         res.status(400).json({
           error: 'Invalid slot ID',
-          details: paramsResult.error.errors,
+          details: paramsResult.error.issues,
         });
         return;
       }
@@ -264,7 +264,7 @@ export function createRecipeRouter(
       if (!bodyResult.success) {
         res.status(400).json({
           error: 'Invalid request body',
-          details: bodyResult.error.errors,
+          details: bodyResult.error.issues,
         });
         return;
       }
@@ -374,7 +374,7 @@ export function createRecipeRouter(
         if (!parseResult.success) {
           res.status(400).json({
             error: 'Invalid request body',
-            details: parseResult.error.errors,
+            details: parseResult.error.issues,
           });
           return;
         }
