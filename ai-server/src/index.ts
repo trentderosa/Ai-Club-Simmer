@@ -50,6 +50,7 @@ import { SupabaseGeneratedCheckInRepository } from './repositories/supabase-gene
 import { SupabaseGeneratedXpAwarder } from './services/generated-xp-awarder.js';
 import { createCookAnythingRouter } from './routes/cook-anything.js';
 import { mountHealthRoutes } from './health.js';
+import { startReconcileScheduler } from './jobs/reconcile-scheduler.js';
 import type { GeneratedRecipeRepository } from './repositories/generated-recipe-repository.js';
 
 loadEnvFile();
@@ -340,6 +341,9 @@ mountHealthRoutes(app, {
   youtubeApiKey: config.youtube.apiKey,
 });
 
+// Retry failed XP awards on a timer (same job as npm run reconcile:xp).
+const reconcileScheduler = startReconcileScheduler(process.env, { stubAuth: isStubAuthAllowed() });
+
 app.listen(config.port, config.host, () => {
   console.info(`Simmer AI Server running on http://${config.host}:${config.port}`);
   console.info(`Ollama endpoint: ${config.ollama.baseUrl}`);
@@ -349,5 +353,10 @@ app.listen(config.port, config.host, () => {
   console.info(`Dish videos: ${services.dishVideoFinder ? 'ENABLED' : 'disabled'}`);
   console.info('Dish photos: ENABLED');
   console.info(`Stub auth: ${isStubAuthAllowed() ? 'ENABLED (dev only)' : 'disabled'}`);
+  console.info(
+    reconcileScheduler.enabled
+      ? `XP reconcile: every ${reconcileScheduler.intervalMs / 60000} min`
+      : `XP reconcile: disabled (${reconcileScheduler.reason})`
+  );
   console.info(`CORS origins: ${config.allowedOrigins.join(', ')}`);
 });

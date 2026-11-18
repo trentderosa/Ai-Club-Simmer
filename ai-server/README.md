@@ -180,10 +180,14 @@ that file exists; already-set environment variables still win. Optional settings
 
 | Variable | Default | Range | Purpose |
 | --- | --- | --- | --- |
+| `XP_RECONCILE_INTERVAL_MS` | `600000` | `0` (off), `60000`–`86400000` | In-server schedule only: time between runs |
 | `XP_RECONCILE_LOOKBACK_HOURS` | `168` | `1`–`720` | Only check-ins created in this many past hours |
 | `XP_RECONCILE_MIN_AGE_SECONDS` | `120` | `0`–`86400` | Skip newer check-ins whose live award may still be running |
 | `XP_RECONCILE_BATCH_LIMIT` | `100` | `1`–`1000` | Most check-ins per run (`batch_full: true` in the summary means run again) |
 | `XP_AWARD_TIMEOUT_MS` | `5000` | `100`–`60000` | Timeout for the scan and for each award call |
+
+The lookback, minimum age, batch limit and timeout settings also apply to the in-server
+schedule. An out-of-range value stops the server from starting when the schedule is on.
 
 How it works:
 
@@ -204,7 +208,12 @@ How it works:
    `xp_reconcile_summary` line with `scanned`, `awarded`, `skipped` and `failed`.
 
 Exit code `0` means no failures, `1` means an award or the scan failed, and `2` means bad config or arguments.
-Nothing schedules this job yet; run it by hand, or later from cron or a scheduler.
+The server also runs this job on a timer (`src/jobs/reconcile-scheduler.ts`). It is on when
+`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set, stub auth is off and
+`XP_RECONCILE_INTERVAL_MS` is not `0`. The first run is one interval after start, runs never
+overlap (a busy tick is skipped and logs `xp_reconcile_skipped_overlap`), and errors are logged
+without stopping later runs. It logs `xp_reconcile_summary` only when it scanned or failed
+something. The CLI stays available for dry runs and one-off retries.
 
 The weekly cap is computed for the week the award runs (UTC), so a repeat retried in a later
 week counts toward that week's cap (PRD open question 10).

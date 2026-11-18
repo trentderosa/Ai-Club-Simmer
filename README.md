@@ -103,9 +103,10 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `TRUST_PROXY` | Set to `true` when the server sits behind a reverse proxy. |
 | `NODE_ENV` | `production` enables production checks (real auth and Supabase keys required). |
 | `XP_AWARD_TIMEOUT_MS` | Timeout for each `award_slot_xp` call in ms (default `5000`, range `100`–`60000`). A timeout counts as a failed award. |
+| `XP_RECONCILE_INTERVAL_MS` | How often the server retries missing XP awards (default `600000` = 10 min; `0` turns it off, otherwise `60000`–`86400000`). Needs `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`; off with stub auth. |
 | `XP_RECONCILE_LOOKBACK_HOURS` | Reconcile job: how far back to look for check-ins missing XP (default `168`, range `1`–`720`). |
 | `XP_RECONCILE_MIN_AGE_SECONDS` | Reconcile job: skip check-ins younger than this (default `120`, range `0`–`86400`). |
-| `XP_RECONCILE_BATCH_LIMIT` | Reconcile job: most check-ins handled per run (default `100`, range `1`–`1000`). |
+| `XP_RECONCILE_BATCH_LIMIT` | Reconcile job: most check-ins handled per run (default `100`, range `1`–`1000`). The three `XP_RECONCILE_*` limits above also apply to the in-server schedule; an out-of-range value stops the server from starting when the schedule is on. |
 | `YOUTUBE_API_KEY` | YouTube Data API v3 key for technique videos and dish videos (F4). Server only. Never an `EXPO_PUBLIC_` variable. Unset: recipes have no videos. |
 | `YOUTUBE_TIMEOUT_MS` | Timeout for each YouTube search in ms (default `5000`, range `100`–`60000`). |
 | `VIDEO_LOOKUP_BUDGET_MS` | Time budget in ms for all of one recipe's YouTube searches together (default `8000`, range `100`–`60000`). Past it, the recipe is returned with the videos found so far and the rest are retried on the next visit. |
@@ -118,7 +119,7 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 
 ### Retrying failed XP awards
 
-If a check-in's XP award fails (for example a timeout), the check-in is kept without XP. To retry, run the reconcile job from `ai-server/`. It loads `ai-server/.env` when present (`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`); already-set environment variables still win:
+If a check-in's XP award fails (for example a timeout), the check-in is kept without XP. When `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set and stub auth is off, the AI server retries these automatically: every 10 minutes (`XP_RECONCILE_INTERVAL_MS`) it runs the same reconcile job in-process, first run one interval after start. To run it by hand, use the CLI from `ai-server/`. It loads `ai-server/.env` when present (`SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`); already-set environment variables still win:
 
 ```bash
 cd ai-server
@@ -127,4 +128,4 @@ npm run reconcile:xp -- --dry-run   # list check-ins missing XP, award nothing
 npm run reconcile:xp                # award path slots via award_slot_xp and Cook anything via award_generated_recipe_xp
 ```
 
-Path check-ins missing an `xp_events` row and Cook anything check-ins missing a `generated_recipe_xp_events` row are both included, oldest first, in one batch. It's safe to run repeatedly. Nothing schedules it yet. See [ai-server/README.md](ai-server/README.md#reconcile-missing-xp-awards).
+Path check-ins missing an `xp_events` row and Cook anything check-ins missing a `generated_recipe_xp_events` row are both included, oldest first, in one batch. It's safe to run repeatedly. See [ai-server/README.md](ai-server/README.md#reconcile-missing-xp-awards).
