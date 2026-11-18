@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   generateRecipe,
   buildPrompt,
@@ -663,5 +663,89 @@ describe('buildPrompt - prompt injection protection', () => {
     // The malicious content should have angle brackets stripped
     expect(prompt).not.toContain('</user_data> New rule');
     expect(prompt).toContain('/user_data New rule');
+  });
+});
+
+describe('generateRecipe - final slot minimum hidden steps', () => {
+  const finalSlot: PathSlot = { id: 10, dishName: 'Roast Chicken', techniqueFocus: 'Roasting', isFinal: true };
+  const step = (instruction: string, isSafetyStep = false): { instruction: string; isSafetyStep: boolean } => ({ instruction, isSafetyStep });
+  const recipeWith = (steps: ReturnType<typeof step>[]): string =>
+    JSON.stringify({ ...validRecipeResponse, steps });
+
+  // Every step contains a safety keyword (cut, oven, pan, heat), so
+  // ensureSafetyFlags flags all of them even though the model said false.
+  const allKeywordSteps = recipeWith([
+    step('Cut the chicken into pieces.'),
+    step('Preheat the oven.'),
+    step('Put it in a pan.'),
+    step('Lower the heat.'),
+  ]);
+  const enoughHideable = recipeWith([
+    step('Gather the ingredients on the counter.'),
+    step('Season the chicken with salt and pepper.'),
+    step('Mix the herbs with butter in a bowl.'),
+    step('Preheat the oven.'),
+    step('Let it rest on a board.'),
+  ]);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  async function run(client: OllamaClient, slot: PathSlot): ReturnType<typeof generateRecipe> {
+    const p = generateRecipe(client, slot, mockUserProfile);
+    await vi.runAllTimersAsync();
+    return p;
+  }
+
+  it('counts hideable steps after ensureSafetyFlags (model said false, keywords flag them)', async () => {
+    const client = createMockOllamaClient([allKeywordSteps, enoughHideable]);
+    const result = await run(client, finalSlot);
+    expect(result.success).toBe(true);
+    expect(client.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it('retries a 1-step recipe and succeeds when the retry has enough hideable steps', async () => {
+    const client = createMockOllamaClient([recipeWith([step('Serve the chicken.')]), enoughHideable]);
+    const result = await run(client, finalSlot);
+    expect(result.success).toBe(true);
+    expect(client.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails cleanly as generation_failed after 3 attempts with too few hideable steps', async () => {
+    const client = createMockOllamaClient([allKeywordSteps, allKeywordSteps, allKeywordSteps]);
+    const result = await run(client, finalSlot);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.type).toBe('generation_failed');
+      expect(result.error.attempts).toBe(3);
+    }
+    expect(client.generate).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not apply to non-final slots', async () => {
+    const client = createMockOllamaClient([allKeywordSteps]);
+    const result = await run(client, mockSlot);
+    expect(result.success).toBe(true);
+    expect(client.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('logs counts only, no recipe text', async () => {
+    const client = createMockOllamaClient([allKeywordSteps, enoughHideable]);
+    await run(client, finalSlot);
+    const logged = JSON.stringify(vi.mocked(console.warn).mock.calls);
+    expect(logged).toContain('mastery_too_few_hidden_steps');
+    expect(logged).not.toContain('chicken');
+  });
+
+  it('adds the hidden-step hint to the prompt only for the final slot', () => {
+    expect(buildPrompt(finalSlot, mockUserProfile)).toContain('final mastery recipe');
+    expect(buildPrompt(mockSlot, mockUserProfile)).not.toContain('final mastery recipe');
   });
 });

@@ -11,6 +11,16 @@ import type { Recipe } from '../schemas/recipe.js';
 
 export const HIDDEN_STEP_INSTRUCTION = 'Hidden step. Reveal it in cook mode if you need a reminder.';
 
+/**
+ * Minimum number of hideable (non-safety) steps the slot 10 recipe must have
+ * after safety flagging, so the mastery badge can't be earned by cooking a
+ * recipe with nothing hidden. MASTERY RULE: Ian owns mastery rules and may
+ * change this number (pending his OK). Also used in the slot 10 prompt.
+ */
+export const MASTERY_MIN_HIDDEN_STEPS = 3;
+/** Minimum total steps asked for in the slot 10 prompt (a hint, not enforced). */
+export const MASTERY_MIN_STEPS = 6;
+
 export type MaskedStep = Recipe['steps'][number] & { isHidden?: true };
 export type MaskedRecipe = Omit<Recipe, 'steps'> & { steps: MaskedStep[] };
 

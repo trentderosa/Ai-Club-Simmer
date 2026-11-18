@@ -49,14 +49,14 @@ function pathRepo(overrides: Partial<PathRepository> = {}): PathRepository {
   };
 }
 
-function setup(options: { pathRepository?: PathRepository; search?: VideoSearchClient | null } = {}): {
+function setup(options: { pathRepository?: PathRepository; search?: VideoSearchClient | null; generated?: Recipe } = {}): {
   app: express.Express;
   ollama: OllamaClient;
   recipes: InMemoryUserRecipeRepository;
   pathRepository: PathRepository;
   search: VideoSearchClient | null;
 } {
-  const ollama: OllamaClient = { generate: vi.fn().mockResolvedValue(JSON.stringify(recipe)) };
+  const ollama: OllamaClient = { generate: vi.fn().mockResolvedValue(JSON.stringify(options.generated ?? recipe)) };
   const recipes = new InMemoryUserRecipeRepository();
   const pathRepository = options.pathRepository ?? pathRepo();
   const search =
@@ -252,12 +252,26 @@ describe('F8 mastery: the final slot never sends hidden step text', () => {
     getPathSlot: vi.fn().mockResolvedValue({ id: 10, dishName: 'Roast Chicken', techniqueFocus: 'Roasting', isFinal: true }),
   });
 
+  // Fixture sized for MASTERY_MIN_HIDDEN_STEPS (3): 6 steps, 2 safety and 4
+  // non-safety, so slot 10 generation accepts it.
+  const masteryRecipe: Recipe = {
+    ...recipe,
+    steps: [
+      { instruction: 'Whisk the eggs', isSafetyStep: false, techniqueName: 'Whisk eggs' },
+      { instruction: 'Cook on low heat', isSafetyStep: true, techniqueName: 'Low heat cooking' },
+      { instruction: 'Season the eggs with salt', isSafetyStep: false },
+      { instruction: 'Bake in the oven for ten minutes', isSafetyStep: true },
+      { instruction: 'Let them rest on a plate', isSafetyStep: false },
+      { instruction: 'Serve', isSafetyStep: false },
+    ],
+  };
+
   it('masks non-safety steps on a fresh generation, but saves the full recipe', async () => {
-    const { app, recipes } = setup({ pathRepository: finalSlot });
+    const { app, recipes } = setup({ pathRepository: finalSlot, generated: masteryRecipe });
     const res = await request(app).post('/api/recipes/generate/10').set('Authorization', `Bearer ${token()}`);
     expect(res.status).toBe(200);
     const steps = res.body.recipe.steps as Array<{ instruction: string; isHidden?: boolean; isSafetyStep: boolean }>;
-    expect(steps.map((s) => s.isHidden ?? false)).toEqual([true, false, true]);
+    expect(steps.map((s) => s.isHidden ?? false)).toEqual([true, false, true, false, true, true]);
     expect(steps[1].instruction).toBe('Cook on low heat');
     expect(JSON.stringify(res.body)).not.toContain('Whisk the eggs');
     expect(JSON.stringify(res.body)).not.toContain('"Serve"');
