@@ -68,17 +68,16 @@ DATABASE_URL=postgresql://postgres:postgres@localhost:5432/simmer_test npm test
 
 ## Real-account tests (local)
 
-`tests/e2e/` is an end-to-end suite that signs up real (throwaway) users against a real local Supabase and the real AI server with real Ollama generation. It checks the app flow (sign-up, onboarding, plan, recipe generation, check-ins, XP, badges, mastery, Cook anything, XP retry) and that RLS and the privileged functions hold. It is not part of `npm test` and does not run in CI. Users are `e2e-<random>@simmer.invalid` and are deleted at the end. It only runs against `127.0.0.1` or `localhost`.
+`tests/e2e/` is an end-to-end suite that signs up real (throwaway) users against a real local Supabase and the real AI server with real Ollama generation. It checks the app flow (sign-up, onboarding, plan, recipe generation, check-ins, XP, badges, mastery, Cook anything, XP retry) and that RLS and the privileged functions hold. It is not part of `npm test` and does not run in CI. Users are `e2e-<run id>-<random>@simmer.invalid` and are deleted at the end. It only runs against `127.0.0.1` or `localhost`.
 
-Needs Docker, Node 20+, and Ollama with the model from `ai-server/.env` pulled.
+Local Supabase runs Postgres 17 (like production); the CI database tests use Postgres 15. Needs Docker, Node 20+, and Ollama with the model from `ai-server/.env` pulled.
 
 ```bash
 # 1. Local Supabase (applies supabase/migrations). Email confirmations are off locally.
 #    Create local ES256 JWT signing keys once, like the hosted project's tokens.
 #    supabase/config.toml points at supabase/signing_keys.json (gitignored, never commit it).
-#    The CLI prints one JWK; the file holds a JSON array of them, so wrap it:
-npx supabase@3.2.0 gen signing-key --algorithm ES256 > supabase/signing_key.tmp \
-  && node -e "const fs=require('fs');const k=JSON.parse(fs.readFileSync('supabase/signing_key.tmp','utf8'));fs.writeFileSync('supabase/signing_keys.json',JSON.stringify(Array.isArray(k)?k:[k]));fs.unlinkSync('supabase/signing_key.tmp')"
+#    The file must exist first, then the CLI fills it in:
+echo '[]' > supabase/signing_keys.json && npx supabase@3.2.0 gen signing-key --algorithm ES256
 npx supabase@3.2.0 start
 
 # 2. AI server against it. Get the values with `npx supabase@3.2.0 status -o json`

@@ -1,3 +1,6 @@
+# LOCAL DEVELOPMENT ONLY (used by tests/e2e).
+# Do NOT run `supabase config push` and do NOT link this directory to simmer.prod:
+# production auth settings are managed in the dashboard, not from this file.
 #:schema https://supabase.com/schemas/config/v1.json
 # For detailed configuration reference documentation, visit:
 # https://supabase.com/docs/guides/local-development/cli/config
@@ -209,7 +212,8 @@ anonymous_users = 30
 # Number of sessions that can be refreshed in a 5 minute interval per IP address.
 token_refresh = 150
 # Number of sign up and sign-in requests that can be made in a 5 minute interval per IP address (excludes anonymous users).
-sign_in_sign_ups = 30
+# Local-only: raised so back-to-back e2e runs do not hit 429 on sign-up.
+sign_in_sign_ups = 300
 # Number of OTP / Magic link verifications that can be made in a 5 minute interval per IP address.
 token_verifications = 30
 # Number of Web3 logins that can be made in a 5 minute interval per IP address.

@@ -20,7 +20,7 @@ export const ONBOARDING = {
 } as const;
 
 export function randomEmail(): string {
-  return `e2e-${randomBytes(6).toString('hex')}@simmer.invalid`;
+  return `e2e-${process.env.E2E_RUN_ID ?? 'x'}-${randomBytes(6).toString('hex')}@simmer.invalid`;
 }
 
 /** Creates fresh users through the public sign-up endpoint and removes them afterwards. */

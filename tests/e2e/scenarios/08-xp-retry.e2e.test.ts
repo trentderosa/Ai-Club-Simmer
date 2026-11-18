@@ -100,6 +100,7 @@ describe('XP retry scheduler', () => {
     );
     expect(dupes.rows).toEqual([]);
     const s = await getSummary(user);
-    expect(s.total_xp).toBe(slot1.xp_value + Math.floor(slot1.xp_value / 2));
+    const cfg = await xpConfig();
+    expect(s.total_xp).toBe(slot1.xp_value + Math.floor((slot1.xp_value * cfg.repeatPct) / 100));
   });
 });

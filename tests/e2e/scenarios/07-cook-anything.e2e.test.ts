@@ -153,6 +153,15 @@ describe('F11 check-in XP', () => {
     // limited so that (daily used before + award) <= cap. After the cap is hit
     // every further free-form check-in is 0.
     const state = await readXpState(user);
+    // Slot awards are not daily-capped (only free-form awards are), and the slot
+    // check-in above came after the first free-form award, so today's total can
+    // exceed the cap. The exact invariant: free-form XP alone never exceeds the
+    // cap, and today's total is slot XP + free-form XP.
+    const gen = (await rest(user.accessToken, 'generated_recipe_xp_events?select=xp_awarded')).body as Json[];
+    const slotEv = (await rest(user.accessToken, 'xp_events?select=xp_awarded')).body as Json[];
+    const sum = (rows: Json[]) => rows.reduce((t, r) => t + r.xp_awarded, 0);
+    expect(sum(gen)).toBeLessThanOrEqual(cfg.dailyCap);
+    expect(state.dailyUsed).toBe(sum(gen) + sum(slotEv));
     expect(state.dailyUsed).toBeGreaterThanOrEqual(cfg.dailyCap);
     const res = await freeform();
     expect(res.body.xp).toEqual({ status: 'awarded', xp_awarded: 0, is_first_completion: false, capped: true });

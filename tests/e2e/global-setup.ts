@@ -5,6 +5,7 @@
  * the run ends.
  */
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -47,6 +48,9 @@ function loadFromSupabaseStatus(): void {
 }
 
 export default async function setup(): Promise<() => Promise<void>> {
+  // Per-run id so overlapping runs only clean up their own users.
+  const runId = randomBytes(4).toString('hex');
+  process.env.E2E_RUN_ID = runId;
   if (!process.env.E2E_API_URL || !process.env.E2E_ANON_KEY || !process.env.E2E_SERVICE_KEY || !process.env.E2E_DB_URL) {
     loadFromSupabaseStatus();
   }
@@ -57,6 +61,10 @@ export default async function setup(): Promise<() => Promise<void>> {
   const aiUrl = process.env.E2E_AI_URL;
   assertLocal('API_URL', apiUrl);
   assertLocal('DB_URL', dbUrl.replace(/^postgres(ql)?:/, 'http:'));
+  const dbParams = new URL(dbUrl.replace(/^postgres(ql)?:/, 'http:')).searchParams;
+  if (dbParams.has('host') || dbParams.has('hostaddr')) {
+    throw new Error('Refusing to run: DB_URL must not use host or hostaddr query parameters');
+  }
   assertLocal('E2E_AI_URL', aiUrl);
   if (!process.env.E2E_ANON_KEY || !process.env.E2E_SERVICE_KEY) {
     throw new Error('Missing Supabase keys');
@@ -68,18 +76,26 @@ export default async function setup(): Promise<() => Promise<void>> {
   }
 
   return async () => {
-    // Safety net: remove any e2e users a failed file left behind.
+    // Safety net: remove this run's e2e users a failed file left behind.
     const headers = {
       apikey: process.env.E2E_SERVICE_KEY ?? '',
       Authorization: `Bearer ${process.env.E2E_SERVICE_KEY ?? ''}`,
     };
-    const res = await fetch(`${apiUrl}/auth/v1/admin/users?per_page=1000`, { headers });
-    if (!res.ok) return;
-    const body = (await res.json()) as { users?: Array<{ id: string; email?: string }> };
-    for (const u of body.users ?? []) {
-      if (u.email && /^e2e-[a-z0-9]+@simmer\.invalid$/.test(u.email)) {
-        await fetch(`${apiUrl}/auth/v1/admin/users/${u.id}`, { method: 'DELETE', headers });
+    const mine = new RegExp(`^e2e-${runId}-[a-z0-9]+@simmer\\.invalid$`);
+    // Collect first, delete after, so deleting does not shift the pages.
+    const ids: string[] = [];
+    for (let page = 1; page <= 100; page += 1) {
+      const res = await fetch(`${apiUrl}/auth/v1/admin/users?page=${page}&per_page=200`, { headers });
+      if (!res.ok) break;
+      const body = (await res.json()) as { users?: Array<{ id: string; email?: string }> };
+      const users = body.users ?? [];
+      for (const u of users) {
+        if (u.email && mine.test(u.email)) ids.push(u.id);
       }
+      if (users.length < 200) break;
+    }
+    for (const id of ids) {
+      await fetch(`${apiUrl}/auth/v1/admin/users/${id}`, { method: 'DELETE', headers });
     }
   };
 }

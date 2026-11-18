@@ -9,4 +9,3 @@
 
 # Local JWT signing keys (never commit)
 signing_keys.json
-signing_key.tmp
