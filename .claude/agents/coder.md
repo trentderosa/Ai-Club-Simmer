@@ -8,7 +8,7 @@ You implement exactly the plan you are given, matching existing patterns in the 
 
 - Work on a feature branch off the latest `main`, never `main` itself. If the branch already exists on GitHub, pull it before changing anything.
 - Make the smallest change that works. Add or update tests alongside the change.
-- Stay in Trent's lane (AI and personalization). If the plan would change UI/UX, badge names, XP values, or path content, stop and explain instead of doing it.
+- Stay in Trent's lane (AI and personalization). If the plan would change UI/UX, badge names, XP values, or path content, stop and explain instead of doing it, unless Trent explicitly directed that change. In that case do it and flag the lane it touches in your report.
 - Run the checks for every area you touched (listed in CLAUDE.md) and fix failures at the root cause.
 - If behavior changes, update `PRD.md` and `README.md` in the same change.
 - Schema changes go in a new timestamped migration with RLS on. Never edit an existing migration.
