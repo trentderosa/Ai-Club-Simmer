@@ -180,6 +180,7 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 - [ ] Reveals are tracked by the server. The app never receives a hidden step's text until the user reveals it, and the reveal count on the check-in comes from the server, not the app.
 
 *Server side:* hidden steps are served only on reveal (migration `20261116000000_mastery_sessions.sql`, follow-up to Q4).
+- Slot 10 generation requires at least 3 hideable (non-safety) steps after safety flagging (`MASTERY_MIN_HIDDEN_STEPS` in `ai-server/src/mastery/mask.ts`), so the badge can't be earned with nothing hidden. A recipe with fewer is retried within the normal 3 attempts, then fails with the usual generation error. The slot 10 prompt also asks for at least 6 steps. This is a mastery rule pending Ian's OK. Already-saved slot 10 recipes are reused as-is (F3).
 - The recipe call for slot 10 returns hidden steps masked: placeholder text, no "why it matters", `isHidden: true`. Technique names stay, so their videos still show. If the path-slot lookup comes back empty, the call returns 404 even when a saved recipe exists, so hidden step text is never returned unmasked.
 - Cook mode calls `POST /api/mastery/sessions`, which starts the user's mastery session or resumes the open one. A session stays open until a check-in uses it, so closing the app or reopening cook mode can't reset the reveal count.
 - `POST /api/mastery/sessions/:id/reveal` records the reveal in `mastery_sessions` before it returns the step's real content.
