@@ -103,9 +103,9 @@ describe('F6/F7/F9/F10 first check-in on slot 1', () => {
 
 describe('F7 repeats: 50%, weekly repeat cap, then 0', () => {
   it('repeat #1 is 50% of the slot XP', async () => {
-    const state = await readXpState(user);
-    const expected = modelAward({ base: slot1Xp, isFirst: false, cfg, state, applyDailyCap: false });
     const res = await pathCheckIn(user, slot1Id, { rating: 'ok' });
+    const state = await readXpState(user, res.body.check_in_id);
+    const expected = modelAward({ base: slot1Xp, isFirst: false, cfg, state, applyDailyCap: false });
     expect(res.status).toBe(201);
     expect(res.body.xp).toEqual({ status: 'awarded', xp_awarded: expected.xp, is_first_completion: false, capped: expected.capped });
     expect(expected.xp).toBe(Math.floor((slot1Xp * cfg.repeatPct) / 100));
@@ -114,9 +114,9 @@ describe('F7 repeats: 50%, weekly repeat cap, then 0', () => {
   });
 
   it('repeat #2 rated hard: suggest_repeat true, XP follows the weekly cap', async () => {
-    const state = await readXpState(user);
-    const expected = modelAward({ base: slot1Xp, isFirst: false, cfg, state, applyDailyCap: false });
     const res = await pathCheckIn(user, slot1Id, { rating: 'hard', was_hard: 'Dicing' });
+    const state = await readXpState(user, res.body.check_in_id);
+    const expected = modelAward({ base: slot1Xp, isFirst: false, cfg, state, applyDailyCap: false });
     expect(res.status).toBe(201);
     expect(res.body.suggest_repeat).toBe(true);
     expect(res.body.xp).toEqual({ status: 'awarded', xp_awarded: expected.xp, is_first_completion: false, capped: expected.capped });
@@ -124,9 +124,9 @@ describe('F7 repeats: 50%, weekly repeat cap, then 0', () => {
 
   it('keeps repeating until the cap: weekly repeat XP never exceeds the cap, then awards 0 with capped true', async () => {
     for (let i = 0; i < 4; i += 1) {
-      const state = await readXpState(user);
-      const expected = modelAward({ base: slot1Xp, isFirst: false, cfg, state, applyDailyCap: false });
       const res = await pathCheckIn(user, slot1Id, { rating: 'easy' });
+      const state = await readXpState(user, res.body.check_in_id);
+      const expected = modelAward({ base: slot1Xp, isFirst: false, cfg, state, applyDailyCap: false });
       expect(res.status).toBe(201);
       expect(res.body.xp.status).toBe('awarded');
       expect(res.body.xp.xp_awarded).toBe(expected.xp);

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mergeReconcileCandidates, SupabaseReconcileSource } from './supabase-reconcile-source.js';
+import { SupabaseReconcileSource } from './supabase-reconcile-source.js';
 
 const mockFetch = vi.fn();
 const KEY = 'test-service-role-key';
@@ -7,6 +7,8 @@ const WINDOW = {
   from: new Date('2026-11-05T22:00:00.000Z'),
   to: new Date('2026-11-12T21:58:00.000Z'),
   limit: 50,
+  maxAttempts: 5,
+  retryBaseMinutes: 10,
 };
 
 describe('SupabaseReconcileSource', () => {
@@ -26,67 +28,71 @@ describe('SupabaseReconcileSource', () => {
     vi.unstubAllGlobals();
   });
 
-  function ok(rows: unknown[]): { ok: true; json: () => Promise<unknown[]> } {
-    return { ok: true, json: () => Promise.resolve(rows) };
+  function ok(body: unknown): { ok: true; status: number; text: () => Promise<string> } {
+    return {
+      ok: true,
+      status: body === undefined ? 204 : 200,
+      text: () => Promise.resolve(body === undefined ? '' : JSON.stringify(body)),
+    };
   }
 
-  it('queries both check-in tables for rows with no XP event, oldest first, bounded', async () => {
-    mockFetch.mockImplementation((rawUrl: string) => {
-      const url = new URL(rawUrl);
-      if (url.pathname.endsWith('/check_ins')) {
-        return ok([
-          { id: 'slot-new', slot_id: 2, created_at: '2026-11-11T12:00:00.000Z', xp_events: null },
-          { id: 'slot-old', slot_id: 1, created_at: '2026-11-10T12:00:00.000Z', xp_events: null },
-        ]);
-      }
-      return ok([
-        { id: 'gen-mid', created_at: '2026-11-10T18:00:00.000Z', generated_recipe_xp_events: null },
-      ]);
+  it('calls get_xp_reconcile_candidates with the window, limit and max attempts', async () => {
+    mockFetch.mockResolvedValue(
+      ok([
+        { check_in_id: 'slot-old', slot_id: 1, created_at: '2026-11-10T12:00:00.000Z', kind: 'slot' },
+        { check_in_id: 'gen-mid', slot_id: null, created_at: '2026-11-10T18:00:00.000Z', kind: 'generated' },
+      ])
+    );
+
+    const rows = await source.findCheckInsMissingXp(WINDOW);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    const [rawUrl, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(rawUrl).toBe('https://test-project.supabase.co/rest/v1/rpc/get_xp_reconcile_candidates');
+    expect(options.method).toBe('POST');
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect(options.headers).toMatchObject({ apikey: KEY, Authorization: `Bearer ${KEY}` });
+    expect(JSON.parse(options.body as string)).toEqual({
+      p_from: '2026-11-05T22:00:00.000Z',
+      p_to: '2026-11-12T21:58:00.000Z',
+      p_limit: 50,
+      p_max_attempts: 5,
+      p_retry_base_minutes: 10,
     });
-
-    const rows = await source.findCheckInsMissingXp({ ...WINDOW, limit: 2 });
-
-    const calls = mockFetch.mock.calls.map(([rawUrl, options]) => ({
-      url: new URL(rawUrl as string),
-      options: options as RequestInit,
-    }));
-    const slot = calls.find((call) => call.url.pathname.endsWith('/check_ins'));
-    const generated = calls.find((call) => call.url.pathname.endsWith('/generated_recipe_check_ins'));
-    expect(slot).toBeDefined();
-    expect(generated).toBeDefined();
-    expect(slot!.url.origin + slot!.url.pathname).toBe(
-      'https://test-project.supabase.co/rest/v1/check_ins'
-    );
-    expect(slot!.url.searchParams.get('select')).toBe('id,slot_id,created_at,xp_events(id)');
-    expect(slot!.url.searchParams.get('xp_events')).toBe('is.null');
-    expect(generated!.url.searchParams.get('select')).toBe(
-      'id,created_at,generated_recipe_xp_events(id)'
-    );
-    expect(generated!.url.searchParams.get('generated_recipe_xp_events')).toBe('is.null');
-    for (const call of [slot!, generated!]) {
-      expect(call.url.searchParams.getAll('created_at')).toEqual([
-        'gte.2026-11-05T22:00:00.000Z',
-        'lte.2026-11-12T21:58:00.000Z',
-      ]);
-      expect(call.url.searchParams.get('order')).toBe('created_at.asc,id.asc');
-      expect(call.url.searchParams.get('limit')).toBe('2');
-      expect(call.options.method).toBe('GET');
-      expect(call.options.signal).toBeInstanceOf(AbortSignal);
-      expect(call.options.headers).toMatchObject({ apikey: KEY, Authorization: `Bearer ${KEY}` });
-    }
     expect(rows).toEqual([
       { check_in_id: 'slot-old', slot_id: 1, created_at: '2026-11-10T12:00:00.000Z', kind: 'slot' },
       { check_in_id: 'gen-mid', slot_id: null, created_at: '2026-11-10T18:00:00.000Z', kind: 'generated' },
     ]);
   });
 
-  it('never selects check-in text or user ids', () => {
-    for (const select of [
-      new URL(source.buildUrl(WINDOW)).searchParams.get('select') ?? '',
-      new URL(source.buildGeneratedUrl(WINDOW)).searchParams.get('select') ?? '',
-    ]) {
-      expect(select).not.toMatch(/went_well|was_hard|user_id|dish|\*/);
-    }
+  it('counts given-up check-ins', async () => {
+    mockFetch.mockResolvedValue(ok(7));
+    await expect(source.countGivenUp(WINDOW)).resolves.toBe(7);
+    const [rawUrl, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(rawUrl).toBe('https://test-project.supabase.co/rest/v1/rpc/count_xp_reconcile_given_up');
+    expect(JSON.parse(options.body as string)).toEqual({
+      p_from: '2026-11-05T22:00:00.000Z',
+      p_to: '2026-11-12T21:58:00.000Z',
+      p_max_attempts: 5,
+    });
+  });
+
+  it('records a failed attempt with the kind and a reason code only', async () => {
+    mockFetch.mockResolvedValue(ok(undefined));
+    await source.recordFailedAttempt(
+      { check_in_id: 'c1', slot_id: 1, created_at: '2026-11-10T12:00:00.000Z', kind: 'slot' },
+      'timeout'
+    );
+    await source.recordFailedAttempt(
+      { check_in_id: 'c2', slot_id: null, created_at: '2026-11-10T12:00:00.000Z', kind: 'generated' },
+      'http'
+    );
+    const bodies = mockFetch.mock.calls.map(([, o]) => JSON.parse((o as RequestInit).body as string) as unknown);
+    expect(mockFetch.mock.calls[0][0]).toBe('https://test-project.supabase.co/rest/v1/rpc/record_xp_award_attempt');
+    expect(bodies).toEqual([
+      { p_check_in_id: 'c1', p_kind: 'path', p_reason: 'timeout' },
+      { p_check_in_id: 'c2', p_kind: 'generated', p_reason: 'http' },
+    ]);
   });
 
   it('throws on a non-OK response without leaking the key', async () => {
@@ -94,6 +100,11 @@ describe('SupabaseReconcileSource', () => {
     const err = await source.findCheckInsMissingXp(WINDOW).catch((e: Error) => e);
     expect((err as Error).message).toBe('Database error listing check-ins missing XP: 500 oops');
     expect((err as Error).message).not.toContain(KEY);
+  });
+
+  it('rejects an unexpected (non-array) candidate response', async () => {
+    mockFetch.mockResolvedValue(ok({ nope: true }));
+    await expect(source.findCheckInsMissingXp(WINDOW)).rejects.toThrow('unexpected response');
   });
 
   it('times out a hung scan', async () => {
@@ -112,18 +123,23 @@ describe('SupabaseReconcileSource', () => {
       'Listing check-ins missing XP timed out after 20ms'
     );
   });
-});
 
-describe('mergeReconcileCandidates', () => {
-  it('orders by created_at then id and applies the shared limit', () => {
-    const merged = mergeReconcileCandidates(
-      [
-        { check_in_id: 'b', slot_id: 2, created_at: '2026-11-11T00:00:00.000Z', kind: 'slot' },
-        { check_in_id: 'a', slot_id: null, created_at: '2026-11-10T00:00:00.000Z', kind: 'generated' },
-        { check_in_id: 'c', slot_id: null, created_at: '2026-11-11T00:00:00.000Z', kind: 'generated' },
-      ],
-      2
-    );
-    expect(merged.map((row) => row.check_in_id)).toEqual(['a', 'b']);
+  it('lists given-up ids with a limit', async () => {
+    mockFetch.mockResolvedValue(ok([{ check_in_id: 'a' }, { check_in_id: 'b' }]));
+    await expect(source.listGivenUp(WINDOW, 20)).resolves.toEqual(['a', 'b']);
+    const [rawUrl, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(rawUrl).toBe('https://test-project.supabase.co/rest/v1/rpc/list_xp_reconcile_given_up');
+    expect(JSON.parse(options.body as string)).toMatchObject({ p_max_attempts: 5, p_limit: 20 });
+  });
+
+  it('says the migration is not applied on a 404 / PGRST202, without leaking the key', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 404,
+      text: () => Promise.resolve('{"code":"PGRST202","message":"Could not find the function"}'),
+    });
+    const err = (await source.findCheckInsMissingXp(WINDOW).catch((e: Error) => e)) as Error;
+    expect(err.message).toBe('xp_award_attempts migration not applied (20261118120000)');
+    expect(err.message).not.toContain(KEY);
   });
 });

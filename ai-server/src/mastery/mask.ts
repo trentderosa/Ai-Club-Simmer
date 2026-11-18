@@ -18,6 +18,33 @@ export const HIDDEN_STEP_INSTRUCTION = 'Hidden step. Reveal it in cook mode if y
  * change this number (pending his OK). Also used in the slot 10 prompt.
  */
 export const MASTERY_MIN_HIDDEN_STEPS = 3;
+/**
+ * A trivial step is still hidden in a mastery cook, but does not count toward
+ * MASTERY_MIN_HIDDEN_STEPS, so a recipe can't pass with filler like "Serve." or
+ * "Enjoy!". A non-safety step is trivial when its instruction has fewer than
+ * MASTERY_TRIVIAL_MAX_WORDS + 1 words (4 or fewer), or when it starts with
+ * serve, plate, enjoy or garnish and is at most MASTERY_TRIVIAL_SERVE_MAX_WORDS
+ * words long. MASTERY RULE: pending Ian's OK, like the minimum above.
+ * Safety steps are never counted (they are never hidden).
+ */
+export const MASTERY_TRIVIAL_MAX_WORDS = 4;
+export const MASTERY_TRIVIAL_SERVE_MAX_WORDS = 8;
+const TRIVIAL_LEADING_WORDS = new Set(['serve', 'serving', 'plate', 'plating', 'enjoy', 'garnish', 'garnishing']);
+
+function stepWords(instruction: string): string[] {
+  return instruction
+    .toLowerCase()
+    .split(/\s+/)
+    .map((word) => word.replace(/[^\p{L}\p{N}]/gu, ''))
+    .filter((word) => word.length > 0);
+}
+
+export function isTrivialStep(step: Pick<Recipe['steps'][number], 'instruction'>): boolean {
+  const words = stepWords(step.instruction);
+  if (words.length <= MASTERY_TRIVIAL_MAX_WORDS) return true;
+  return TRIVIAL_LEADING_WORDS.has(words[0]) && words.length <= MASTERY_TRIVIAL_SERVE_MAX_WORDS;
+}
+
 /** Minimum total steps asked for in the slot 10 prompt (a hint, not enforced). */
 export const MASTERY_MIN_STEPS = 6;
 
@@ -26,6 +53,15 @@ export type MaskedRecipe = Omit<Recipe, 'steps'> & { steps: MaskedStep[] };
 
 export function hiddenStepIndices(recipe: Pick<Recipe, 'steps'>): number[] {
   return recipe.steps.flatMap((step, i) => (step.isSafetyStep ? [] : [i]));
+}
+
+/**
+ * Hidden steps that count toward MASTERY_MIN_HIDDEN_STEPS: non-safety and not
+ * trivial. Trivial steps are still hidden (see hiddenStepIndices), just not
+ * counted.
+ */
+export function countedHiddenStepCount(recipe: Pick<Recipe, 'steps'>): number {
+  return recipe.steps.filter((step) => !step.isSafetyStep && !isTrivialStep(step)).length;
 }
 
 /**

@@ -307,6 +307,10 @@ export function assertProductionConfig(supabase: Config['supabase']): void {
 export const XP_RECONCILE_LOOKBACK_HOURS = { default: 168, min: 1, max: 720 } as const;
 export const XP_RECONCILE_MIN_AGE_SECONDS = { default: 120, min: 0, max: 86400 } as const;
 export const XP_RECONCILE_BATCH_LIMIT = { default: 100, min: 1, max: 1000 } as const;
+/** Failed award attempts per check-in before reconcile gives up on it. */
+export const XP_RECONCILE_MAX_ATTEMPTS = { default: 15, min: 1, max: 100 } as const;
+/** Retry backoff base: a check-in with n failures waits base * 2^(n-1) minutes (capped at 24 h). */
+export const XP_RECONCILE_RETRY_BASE_MINUTES = { default: 10, min: 1, max: 1440 } as const;
 
 export const XP_RECONCILE_INTERVAL_MS = {
   default: 600000,
@@ -336,6 +340,8 @@ export interface ReconcileConfig {
   lookbackHours: number;
   minAgeSeconds: number;
   batchLimit: number;
+  maxAttempts: number;
+  retryBaseMinutes: number;
 }
 
 /**
@@ -362,5 +368,7 @@ export function loadReconcileConfig(env: Env = process.env): ReconcileConfig {
     lookbackHours: bounded('XP_RECONCILE_LOOKBACK_HOURS', XP_RECONCILE_LOOKBACK_HOURS),
     minAgeSeconds: bounded('XP_RECONCILE_MIN_AGE_SECONDS', XP_RECONCILE_MIN_AGE_SECONDS),
     batchLimit: bounded('XP_RECONCILE_BATCH_LIMIT', XP_RECONCILE_BATCH_LIMIT),
+    maxAttempts: bounded('XP_RECONCILE_MAX_ATTEMPTS', XP_RECONCILE_MAX_ATTEMPTS),
+    retryBaseMinutes: bounded('XP_RECONCILE_RETRY_BASE_MINUTES', XP_RECONCILE_RETRY_BASE_MINUTES),
   };
 }

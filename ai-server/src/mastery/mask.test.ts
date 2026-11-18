@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { HIDDEN_STEP_INSTRUCTION, hiddenStepIndices, maskRecipeForMastery } from './mask.js';
+import {
+  countedHiddenStepCount,
+  HIDDEN_STEP_INSTRUCTION,
+  hiddenStepIndices,
+  isTrivialStep,
+  maskRecipeForMastery,
+} from './mask.js';
 import type { Recipe } from '../schemas/recipe.js';
 
 const recipe: Recipe = {
@@ -31,5 +37,49 @@ describe('F8 mastery masking', () => {
   it('does not change the saved recipe', () => {
     maskRecipeForMastery(recipe);
     expect(recipe.steps[0].instruction).toBe('Pat the chicken dry');
+  });
+});
+
+describe('trivial steps (hidden but not counted)', () => {
+  it('treats short steps and bare serve/plate/enjoy/garnish steps as trivial', () => {
+    for (const instruction of [
+      'Serve.',
+      'Enjoy!',
+      'Plate and serve.',
+      'Let it rest.',
+      'Serve the chicken warm with the pan juices.',
+      'Garnish with fresh parsley and a lemon wedge.',
+    ]) {
+      expect(isTrivialStep({ instruction }), instruction).toBe(true);
+    }
+  });
+
+  it('does not treat real tasks as trivial', () => {
+    for (const instruction of [
+      'Gather and measure all the ingredients.',
+      'Season the chicken with salt and pepper.',
+      'Mix the herbs into the softened butter.',
+      'Serve the chicken with the roasted vegetables, the pan juices, and a green salad on the side.',
+    ]) {
+      expect(isTrivialStep({ instruction }), instruction).toBe(false);
+    }
+  });
+
+  it('counts only non-safety, non-trivial steps, but still hides the trivial ones', () => {
+    const r: Recipe = {
+      ...recipe,
+      steps: [
+        { instruction: 'Gather and measure all the ingredients.', isSafetyStep: false },
+        { instruction: 'Serve.', isSafetyStep: false },
+        { instruction: 'Roast at 425F until 165F inside', isSafetyStep: true },
+        { instruction: 'Season the chicken with salt and pepper.', isSafetyStep: false },
+        { instruction: 'Enjoy!', isSafetyStep: false },
+      ],
+    };
+    expect(countedHiddenStepCount(r)).toBe(2);
+    expect(hiddenStepIndices(r)).toEqual([0, 1, 3, 4]);
+    const masked = maskRecipeForMastery(r);
+    expect(masked.steps[1]).toMatchObject({ isHidden: true, instruction: HIDDEN_STEP_INSTRUCTION });
+    expect(masked.steps[4]).toMatchObject({ isHidden: true });
   });
 });

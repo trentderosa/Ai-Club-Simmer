@@ -86,7 +86,7 @@ export default async function setup(): Promise<() => Promise<void>> {
     const ids: string[] = [];
     for (let page = 1; page <= 100; page += 1) {
       const res = await fetch(`${apiUrl}/auth/v1/admin/users?page=${page}&per_page=200`, { headers });
-      if (!res.ok) break;
+      if (!res.ok) throw new Error(`e2e teardown: could not list test users (HTTP ${res.status})`);
       const body = (await res.json()) as { users?: Array<{ id: string; email?: string }> };
       const users = body.users ?? [];
       for (const u of users) {
@@ -94,8 +94,20 @@ export default async function setup(): Promise<() => Promise<void>> {
       }
       if (users.length < 200) break;
     }
+    // A 404 means the user is already gone; anything else fails the run.
+    const failures: string[] = [];
     for (const id of ids) {
-      await fetch(`${apiUrl}/auth/v1/admin/users/${id}`, { method: 'DELETE', headers });
+      try {
+        const res = await fetch(`${apiUrl}/auth/v1/admin/users/${id}`, { method: 'DELETE', headers });
+        if (!res.ok && res.status !== 404) failures.push(`HTTP ${res.status}`);
+      } catch {
+        failures.push('network error');
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        `e2e teardown: could not delete ${failures.length} of ${ids.length} leftover test user(s) (${[...new Set(failures)].join(', ')})`
+      );
     }
   };
 }

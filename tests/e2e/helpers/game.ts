@@ -121,33 +121,56 @@ export interface XpState {
   dailyUsed: number;
 }
 
-function utcDayStart(now = new Date()): Date {
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+// The database counts days and weeks from its own clock: award_slot_xp and
+// award_generated_recipe_xp use date_trunc(..., NOW() AT TIME ZONE 'UTC'), so
+// a UTC day and a UTC week starting Monday, measured at the award's own
+// transaction time (the same value xp row created_at gets). The windows below
+// are computed from a row's server timestamp, never from the test runner's
+// clock, so a run that crosses midnight UTC still matches the server.
+function utcDayStart(at: Date): Date {
+  return new Date(Date.UTC(at.getUTCFullYear(), at.getUTCMonth(), at.getUTCDate()));
 }
 
-function utcWeekStart(now = new Date()): Date {
-  const day = utcDayStart(now);
+function utcWeekStart(at: Date): Date {
+  const day = utcDayStart(at);
   const dow = (day.getUTCDay() + 6) % 7; // Monday = 0
   return new Date(day.getTime() - dow * 86_400_000);
 }
 
-/** Reads the user's own xp rows (RLS) and sums what the DB caps look at. */
-export async function readXpState(user: E2eUser): Promise<XpState> {
+/**
+ * Reads the user's own xp rows (RLS) and sums what the DB caps look at.
+ *
+ * With awardCheckInId: the state the award for that check-in saw, i.e. rows
+ * strictly before that award row, inside the day and week of its created_at
+ * (call it after the check-in). Without it: the state as of the newest row.
+ */
+export async function readXpState(user: E2eUser, awardCheckInId?: string): Promise<XpState> {
   const slotRows = expectOk(
-    await rest(user.accessToken, 'xp_events?select=xp_awarded,is_first_completion,created_at'),
+    await rest(user.accessToken, 'xp_events?select=check_in_id,xp_awarded,is_first_completion,created_at'),
     'xp_events'
   ) as Json[];
   const genRows = expectOk(
-    await rest(user.accessToken, 'generated_recipe_xp_events?select=xp_awarded,is_first_completion,created_at'),
+    await rest(user.accessToken, 'generated_recipe_xp_events?select=check_in_id,xp_awarded,is_first_completion,created_at'),
     'generated_recipe_xp_events'
   ) as Json[];
   const all = [...slotRows, ...genRows];
-  const week = utcWeekStart().getTime();
-  const day = utcDayStart().getTime();
   const at = (r: Json) => new Date(r.created_at).getTime();
+  let rows = all;
+  let anchor: number;
+  if (awardCheckInId) {
+    const award = all.find((r) => r.check_in_id === awardCheckInId);
+    if (!award) throw new Error('readXpState: no xp row for the given check-in');
+    anchor = at(award);
+    rows = all.filter((r) => r !== award && at(r) < anchor);
+  } else {
+    if (all.length === 0) return { weeklyRepeatUsed: 0, dailyUsed: 0 };
+    anchor = Math.max(...all.map(at));
+  }
+  const week = utcWeekStart(new Date(anchor)).getTime();
+  const day = utcDayStart(new Date(anchor)).getTime();
   return {
-    weeklyRepeatUsed: all.filter((r) => !r.is_first_completion && at(r) >= week).reduce((s, r) => s + r.xp_awarded, 0),
-    dailyUsed: all.filter((r) => at(r) >= day).reduce((s, r) => s + r.xp_awarded, 0),
+    weeklyRepeatUsed: rows.filter((r) => !r.is_first_completion && at(r) >= week).reduce((s, r) => s + r.xp_awarded, 0),
+    dailyUsed: rows.filter((r) => at(r) >= day).reduce((s, r) => s + r.xp_awarded, 0),
   };
 }
 

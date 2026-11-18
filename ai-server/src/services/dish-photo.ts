@@ -386,9 +386,7 @@ export interface WikimediaCommonsClientConfig {
   fetchFn?: typeof fetch;
 }
 
-const ExtValueSchema = z
-  .object({ value: z.union([z.string(), z.number()]).optional() })
-  .passthrough();
+const ExtValueSchema = z.looseObject({ value: z.union([z.string(), z.number()]).optional() });
 
 const ImageInfoSchema = z.object({
   url: z.string().optional(),
@@ -396,13 +394,12 @@ const ImageInfoSchema = z.object({
   descriptionurl: z.string().optional(),
   mime: z.string().optional(),
   extmetadata: z
-    .object({
+    .looseObject({
       Artist: ExtValueSchema.optional(),
       LicenseShortName: ExtValueSchema.optional(),
       License: ExtValueSchema.optional(),
       LicenseUrl: ExtValueSchema.optional(),
     })
-    .passthrough()
     .optional(),
 });
 

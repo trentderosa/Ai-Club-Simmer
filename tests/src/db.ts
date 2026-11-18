@@ -239,6 +239,10 @@ export class TestDatabase {
       REVOKE ALL ON dish_videos FROM PUBLIC, anon, authenticated;
       GRANT ALL ON dish_videos TO service_role;
 
+      -- 20261118120000_xp_award_attempts.sql: re-assert after broad GRANTs
+      REVOKE ALL ON xp_award_attempts FROM PUBLIC, anon, authenticated;
+      GRANT ALL ON xp_award_attempts TO service_role;
+
       -- 20261116000000_mastery_sessions.sql: re-assert after broad GRANTs
       REVOKE ALL ON mastery_sessions FROM PUBLIC, anon, authenticated;
       GRANT SELECT, INSERT, UPDATE ON mastery_sessions TO service_role;
@@ -260,6 +264,7 @@ export class TestDatabase {
   }
 
   async cleanupTestData(): Promise<void> {
+    await this.pool.query('DELETE FROM xp_award_attempts');
     await this.pool.query('DELETE FROM generated_recipe_xp_events');
     await this.pool.query('DELETE FROM generated_recipe_check_ins');
     await this.pool.query('DELETE FROM user_generated_dish_completions');
@@ -884,33 +889,22 @@ export class TestDatabase {
   }
 
   /**
-   * SQL twin of the ai-server reconcile scan (ai-server/src/jobs/supabase-reconcile-source.ts).
-   * That job runs two PostgREST anti-joins (check_ins with no xp_events, and
-   * generated_recipe_check_ins with no generated_recipe_xp_events) and merges
-   * them oldest first, at most `limit`. This UNION is the same result.
+   * The ai-server reconcile scan (ai-server/src/jobs/supabase-reconcile-source.ts)
+   * is one RPC, get_xp_reconcile_candidates, so this calls that same function
+   * as service_role (the production path) instead of keeping a copy of its SQL.
+   * Never-attempted first, then oldest last attempt, then oldest check-in;
+   * check-ins with attempts >= maxAttempts are left out.
    */
   async findCheckInsMissingXp(
     from: Date,
     to: Date,
-    limit: number
+    limit: number,
+    maxAttempts = 15,
+    retryBaseMinutes = 10
   ): Promise<{ check_in_id: string; slot_id: number | null; created_at: string; kind: 'slot' | 'generated' }[]> {
-    const result = await this.pool.query(
-      `SELECT c.id AS check_in_id, c.slot_id, c.created_at, 'slot'::text AS kind
-         FROM check_ins c
-        WHERE NOT EXISTS (SELECT 1 FROM xp_events e WHERE e.check_in_id = c.id)
-          AND c.created_at >= $1
-          AND c.created_at <= $2
-        UNION ALL
-       SELECT g.id, NULL::integer, g.created_at, 'generated'::text
-         FROM generated_recipe_check_ins g
-        WHERE NOT EXISTS (
-          SELECT 1 FROM generated_recipe_xp_events e WHERE e.check_in_id = g.id
-        )
-          AND g.created_at >= $1
-          AND g.created_at <= $2
-        ORDER BY created_at ASC, check_in_id ASC
-        LIMIT $3`,
-      [from, to, limit]
+    const result = await this.asServiceRole(
+      'SELECT check_in_id, slot_id, created_at, kind FROM get_xp_reconcile_candidates($1, $2, $3, $4, $5)',
+      [from, to, limit, maxAttempts, retryBaseMinutes]
     );
     return result.rows.map((row) => ({
       check_in_id: row.check_in_id,
@@ -918,6 +912,70 @@ export class TestDatabase {
       created_at: new Date(row.created_at).toISOString(),
       kind: row.kind === 'generated' ? 'generated' : 'slot',
     }));
+  }
+
+  async countXpReconcileGivenUp(from: Date, to: Date, maxAttempts: number): Promise<number> {
+    const result = await this.asServiceRole(
+      'SELECT count_xp_reconcile_given_up($1, $2, $3) AS n',
+      [from, to, maxAttempts]
+    );
+    return result.rows[0].n;
+  }
+
+  async listXpReconcileGivenUp(from: Date, to: Date, maxAttempts: number, limit: number): Promise<string[]> {
+    const result = await this.asServiceRole(
+      'SELECT check_in_id FROM list_xp_reconcile_given_up($1, $2, $3, $4)',
+      [from, to, maxAttempts, limit]
+    );
+    return result.rows.map((r) => r.check_in_id);
+  }
+
+  /** record_xp_award_attempt as service_role; kind is 'path' or 'generated'. */
+  async recordXpAwardAttempt(checkInId: string, kind: 'path' | 'generated', reason: string): Promise<void> {
+    await this.asServiceRole('SELECT record_xp_award_attempt($1, $2, $3)', [checkInId, kind, reason]);
+  }
+
+  async getXpAwardAttempt(
+    checkInId: string
+  ): Promise<{ kind: string; attempts: number; last_attempt_at: Date; last_reason: string } | null> {
+    const result = await this.pool.query(
+      'SELECT kind, attempts, last_attempt_at, last_reason FROM xp_award_attempts WHERE check_in_id = $1',
+      [checkInId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  /** Test helper: set an attempt row directly (superuser) to stage ordering cases. */
+  async setXpAwardAttempt(
+    checkInId: string,
+    kind: 'path' | 'generated',
+    attempts: number,
+    minutesAgo: number
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO xp_award_attempts (check_in_id, kind, attempts, last_attempt_at, last_reason)
+       VALUES ($1, $2, $3, NOW() - make_interval(mins => $4), 'http')
+       ON CONFLICT (check_in_id) DO UPDATE
+       SET attempts = EXCLUDED.attempts, last_attempt_at = EXCLUDED.last_attempt_at`,
+      [checkInId, kind, attempts, minutesAgo]
+    );
+  }
+
+  private async asServiceRole(sql: string, params: unknown[]): Promise<pg.QueryResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query('SET LOCAL ROLE service_role');
+      await client.query(`SELECT set_config('request.jwt.claim.role', 'service_role', true)`);
+      const result = await client.query(sql, params);
+      await client.query('COMMIT');
+      return result;
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   async backdateXpEvent(checkInId: string, daysAgo: number): Promise<void> {

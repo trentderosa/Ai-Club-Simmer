@@ -99,9 +99,9 @@ describe('F11 check-in XP', () => {
     postCheckIn(user.accessToken, { generated_recipe_id: gen.generated_recipe_id, rating, idempotency_key: randomUUID() });
 
   it('first free-form check-in awards xp_value (daily cap applies)', async () => {
-    const state = await readXpState(user);
-    const expected = modelAward({ base: gen.xp_value, isFirst: true, cfg, state, applyDailyCap: true });
     const res = await freeform();
+    const state = await readXpState(user, res.body.check_in_id);
+    const expected = modelAward({ base: gen.xp_value, isFirst: true, cfg, state, applyDailyCap: true });
     expect(res.status).toBe(201);
     expect(res.body.xp).toEqual({ status: 'awarded', xp_awarded: expected.xp, is_first_completion: true, capped: expected.capped });
     expect(expected.xp).toBe(gen.xp_value); // a lone max award (<= 177) is under the 200 cap
@@ -130,9 +130,9 @@ describe('F11 check-in XP', () => {
     let sawDailyOrWeeklyCap = false;
     let lastXp = -1;
     for (let i = 0; i < 6 && lastXp !== 0; i += 1) {
-      const state = await readXpState(user);
-      const expected = modelAward({ base: gen.xp_value, isFirst: false, cfg, state, applyDailyCap: true });
       const res = await freeform(i === 1 ? 'hard' : 'ok');
+      const state = await readXpState(user, res.body.check_in_id);
+      const expected = modelAward({ base: gen.xp_value, isFirst: false, cfg, state, applyDailyCap: true });
       expect(res.status).toBe(201);
       expect(res.body.xp.status).toBe('awarded');
       expect(res.body.xp.is_first_completion).toBe(false);

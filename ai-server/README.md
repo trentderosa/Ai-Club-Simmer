@@ -184,6 +184,8 @@ that file exists; already-set environment variables still win. Optional settings
 | `XP_RECONCILE_LOOKBACK_HOURS` | `168` | `1`–`720` | Only check-ins created in this many past hours |
 | `XP_RECONCILE_MIN_AGE_SECONDS` | `120` | `0`–`86400` | Skip newer check-ins whose live award may still be running |
 | `XP_RECONCILE_BATCH_LIMIT` | `100` | `1`–`1000` | Most check-ins per run (`batch_full: true` in the summary means run again) |
+| `XP_RECONCILE_MAX_ATTEMPTS` | `15` | `1`–`100` | Failed attempts per check-in before it is given up on |
+| `XP_RECONCILE_RETRY_BASE_MINUTES` | `10` | `1`–`1440` | Retry backoff base: n failures wait base × 2^(n-1) minutes, max 24 h |
 | `XP_AWARD_TIMEOUT_MS` | `5000` | `100`–`60000` | Timeout for the scan and for each award call |
 
 The lookback, minimum age, batch limit and timeout settings also apply to the in-server
@@ -191,28 +193,57 @@ schedule. An out-of-range value stops the server from starting when the schedule
 
 How it works:
 
-1. Two PostgREST reads, with the service role, in the window, each oldest first and capped
-   at the batch limit. One is `check_ins` with no matching `xp_events` row
-   (`select=id,slot_id,created_at,xp_events(id)&xp_events=is.null`). The other is
-   `generated_recipe_check_ins` with no matching `generated_recipe_xp_events` row
-   (`select=id,created_at,generated_recipe_xp_events(id)&generated_recipe_xp_events=is.null`).
-   The job merges them oldest first and keeps at most the batch limit. It reads only ids,
-   slot ids and timestamps. No migration was needed.
-2. For each one, in that order, it calls `award_slot_xp(check_in_id)` or
+1. One PostgREST RPC, with the service role: `get_xp_reconcile_candidates(p_from, p_to,
+   p_limit, p_max_attempts, p_retry_base_minutes)` (migration `20261118120000_xp_award_attempts.sql`, applied after
+   merge). It returns check-ins in the window with no `xp_events` row (path) or no
+   `generated_recipe_xp_events` row (Cook anything), joined to the server-only
+   `xp_award_attempts` table. Order: never attempted first, then oldest last attempt, then
+   oldest check-in, at most the batch limit. Check-ins with `attempts >= XP_RECONCILE_MAX_ATTEMPTS`
+   are left out, so 100+ check-ins that keep failing can't starve newer ones. A check-in with n failed
+   attempts is also skipped until `last_attempt_at` + base × 2^(n-1) minutes (base is
+   `XP_RECONCILE_RETRY_BASE_MINUTES`, max 24 h). With the defaults the gaps are 10, 20, 40, 80, 160,
+   320, 640, 1280, then 1440 minutes, so the 15 attempts are spread over about 7.8 days (past the
+   168-hour lookback) and a short outage can't use them up. It reads only ids,
+   slot ids and timestamps. The job then processes the chosen batch oldest first, so first-vs-repeat
+   follows check-in order inside a batch. (A newer check-in can now be awarded before an older one
+   that keeps failing.)
+2. For each one, oldest first, it calls `award_slot_xp(check_in_id)` or
    `award_generated_recipe_xp(check_in_id)`. The database still applies the formula, the
    50% repeat rule, the 100 XP/week repeat cap and, for Cook anything, the daily cap.
 3. If a check-in got its award in the meantime (another run, or a late live award),
    `UNIQUE(check_in_id)` on that XP table rejects the second one (Postgres `23505`, HTTP 409).
    The job counts it as `skipped`, not failed. So repeated or concurrent runs never double-award.
-4. It logs `xp_reconcile_awarded` / `xp_reconcile_award_failed` per check-in and one
-   `xp_reconcile_summary` line with `scanned`, `awarded`, `skipped` and `failed`.
+4. Every failed award calls `record_xp_award_attempt(check_in_id, kind, reason)`, which adds
+   one to that check-in's attempts and stores a short reason code (`timeout`, `http`,
+   `network`, `invalid_response`, `not_configured`, `unknown`). A success or an already-awarded
+   check-in needs no row. After the run it logs `xp_reconcile_given_up` with the count of
+   in-window check-ins that hit the max attempts and up to 20 of their `check_in_ids` (ids only).
+5. It logs `xp_reconcile_awarded` / `xp_reconcile_award_failed` per check-in and one
+   `xp_reconcile_summary` line with `scanned`, `awarded`, `skipped`, `failed` and `given_up`.
+
+If the migration isn't applied yet, the scan fails with `xp_award_attempts migration not applied (20261118120000)`.
+
+To retry a given-up check-in, reset its attempts (safe: awards are idempotent, `UNIQUE(check_in_id)`
+rejects a second one):
+
+```sql
+DELETE FROM xp_award_attempts WHERE check_in_id = '<id from the log>';
+-- or everything:
+DELETE FROM xp_award_attempts;
+```
+
+The functions and the table are service-role only (RLS on, no client policies; anon and
+authenticated have no access). `check_in_id` has no foreign key because it points at one of two
+tables; delete triggers on both check-in tables remove the attempt row instead.
 
 Exit code `0` means no failures, `1` means an award or the scan failed, and `2` means bad config or arguments.
 The server also runs this job on a timer (`src/jobs/reconcile-scheduler.ts`). It is on when
 `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set, stub auth is off and
 `XP_RECONCILE_INTERVAL_MS` is not `0`. The first run is one interval after start, runs never
 overlap (a busy tick is skipped and logs `xp_reconcile_skipped_overlap`), and errors are logged
-without stopping later runs. It logs `xp_reconcile_summary` only when it scanned or failed
+without stopping later runs. When a run's batch was full and made progress (something awarded or already awarded), it schedules one follow-up run 5 seconds
+later (not overlapping, timer unref'd) instead of waiting the whole interval, at most 3 follow-ups
+in a row; the next regular tick starts fresh. It logs `xp_reconcile_summary` only when it scanned or failed
 something. The CLI stays available for dry runs and one-off retries.
 
 The weekly cap is computed for the week the award runs (UTC), so a repeat retried in a later
