@@ -308,6 +308,27 @@ export const XP_RECONCILE_LOOKBACK_HOURS = { default: 168, min: 1, max: 720 } as
 export const XP_RECONCILE_MIN_AGE_SECONDS = { default: 120, min: 0, max: 86400 } as const;
 export const XP_RECONCILE_BATCH_LIMIT = { default: 100, min: 1, max: 1000 } as const;
 
+export const XP_RECONCILE_INTERVAL_MS = {
+  default: 600000,
+  /** 0 turns the in-server schedule off. */
+  off: 0,
+  min: 60000,
+  max: 86400000,
+} as const;
+
+/**
+ * How often the AI server retries missing XP awards. 0 disables it; any other
+ * value must be within [min, max] so a typo can't hammer the database.
+ */
+export function loadXpReconcileIntervalMs(env: Env = process.env): number {
+  const { default: def, min, max } = XP_RECONCILE_INTERVAL_MS;
+  const value = parseBoundedIntEnv(env, 'XP_RECONCILE_INTERVAL_MS', def, 0, max);
+  if (value !== 0 && value < min) {
+    throw new Error(`XP_RECONCILE_INTERVAL_MS must be 0 (off) or a whole number from ${min} to ${max}`);
+  }
+  return value;
+}
+
 export interface ReconcileConfig {
   url: string;
   serviceRoleKey: string;

@@ -72,7 +72,7 @@ Set `TRUST_PROXY=true` behind a tunnel so rate limiting sees real client IPs. Po
 
 - [ ] Make a demo account, onboard it, and cook through all 10 slots once to pre-generate the recipes. Review every recipe for wrong steps and missing safety flags (PRD open question 6).
 - [ ] Watch the cached video for each technique (`select * from technique_videos`). Fix any off-target video by updating its `video_id` (PRD open question 7).
-- [ ] Run the XP reconcile job in case any award failed: `npm run reconcile:xp -- --dry-run`, then `npm run reconcile:xp`.
+- [ ] Optional check: when `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set and stub auth is off, the server retries failed XP awards every 10 minutes on its own. To see if any are pending, run `npm run reconcile:xp -- --dry-run`; to retry right now, `npm run reconcile:xp`.
 - [ ] Do a fresh-account dry run of the full loop on a phone over the tunnel (PRD success criterion 1).
 - [ ] Do a run with Ollama stopped. Saved recipes should still load (PRD §6).
 - [ ] Have a backup: a second demo account that has already reached slot 10, for the mastery challenge (success criterion 2).
