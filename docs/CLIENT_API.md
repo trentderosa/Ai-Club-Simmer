@@ -278,17 +278,9 @@ const { data: book } = await supabase.rpc('get_my_recipe_book');
 
 If the list is empty, show: "Cook a recipe and finish the check-in to add it to your recipe book."
 
-Read-only full recipe:
+Read-only full recipe: open the entry's slot with `POST /api/recipes/generate/:slotId` (F3). For a completed slot it returns the saved recipe (`cached: true`, nothing is regenerated), with `videos`, `dish_videos` and `photo`, and slot 10 steps stay masked. The app does this by opening `/recipe/[slotId]`.
 
-```ts
-const { data } = await supabase
-  .from('user_recipes')
-  .select('recipe_json, video_ids')
-  .eq('id', entry.user_recipe_id)
-  .single();
-// data.recipe_json has the same shape as `recipe` above; data.video_ids the same shape as `videos`
-// data.video_ids is null until a complete video lookup is saved; treat null as {}
-```
+Do not read `recipe_json` from `user_recipes` directly: clients can't select that column (migration `20261116000000_mastery_sessions.sql`), so slot 10 hidden steps can't leak. The request returns `403`.
 
 ## What the client must not do
 
