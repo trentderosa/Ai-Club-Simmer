@@ -69,6 +69,21 @@ export class SupabaseGeneratedCheckInRepository implements GeneratedCheckInRepos
     return Array.isArray(rows) && rows.length > 0;
   }
 
+  async getDishName(userId: string, generatedRecipeId: string): Promise<string | null> {
+    const url = new URL(`${this.baseUrl}/user_generated_recipes`);
+    url.searchParams.set('select', 'dish_query');
+    url.searchParams.set('id', `eq.${generatedRecipeId}`);
+    url.searchParams.set('user_id', `eq.${userId}`);
+    url.searchParams.set('limit', '1');
+    const rows = await this.request<Array<{ dish_query?: string }>>(
+      url.toString(),
+      { method: 'GET' },
+      'select generated recipe dish'
+    );
+    const dish = Array.isArray(rows) ? rows[0]?.dish_query : undefined;
+    return typeof dish === 'string' && dish.trim() ? dish : null;
+  }
+
   async create(params: CreateGeneratedCheckInParams): Promise<GeneratedCheckInRecord> {
     if (params.id) {
       const existingUrl = new URL(`${this.baseUrl}/generated_recipe_check_ins`);

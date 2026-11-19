@@ -2,7 +2,8 @@
  * Security / RLS with two real users. A owns data, B (and the anon key alone)
  * try to read or change it.
  *
- * SETUP NOTES (service role): A's slot 1 and slot 10 recipes, a mastery
+ * SETUP NOTES (service role): A's slot 1 (generated for real with
+ * E2E_REAL_GENERATION=1) and slot 10 recipes, a mastery
  * session and a Cook anything recipe are inserted directly so there is private
  * data to attack. A's slot 1 check-in and XP go through the real AI server.
  * `pg` (DB_URL) is used only to confirm no rows changed.
@@ -12,7 +13,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ai } from '../helpers/ai.js';
 import { env } from '../helpers/env.js';
-import { pathCheckIn, pathSlots, seedRecipe, userRecipeId } from '../helpers/game.js';
+import { pathCheckIn, pathSlots, seedRecipe, seedRecipeDirect, storedRecipe, userRecipeId } from '../helpers/game.js';
 import type { Json } from '../helpers/http.js';
 import { expectOk, rest, rpc, svcRest } from '../helpers/supabase.js';
 import { Cast, ONBOARDING, type E2eUser } from '../helpers/users.js';
@@ -23,6 +24,7 @@ let B: E2eUser;
 let aCheckInId: string;
 let aRecipeId: string;
 let aSlot10RecipeId: string;
+let aSlot1Title: string;
 let slot1: number;
 let slot10: number;
 let pool: pg.Pool;
@@ -47,7 +49,9 @@ beforeAll(async () => {
   aRecipeId = await seedRecipe(A, slot1);
   const res = await pathCheckIn(A, slot1);
   aCheckInId = expectOk(res, 'A check-in').check_in_id;
-  aSlot10RecipeId = await seedRecipe(A, slot10);
+  aSlot1Title = (await storedRecipe(A, slot1)).title;
+  // Slot 10 is locked for A, so it is always a stored seed (generation would refuse it).
+  aSlot10RecipeId = await seedRecipeDirect(A, slot10);
   expectOk(
     await svcRest('mastery_sessions', {
       method: 'POST',
@@ -95,7 +99,7 @@ describe('user B cannot read user A private data', () => {
   it('user_recipes: recipe_json is unreadable for everyone on the client; B sees none of A rows', async () => {
     const asB = await rest(B.accessToken, `user_recipes?select=recipe_json&id=eq.${aRecipeId}`);
     expect([401, 403]).toContain(asB.status);
-    expect(JSON.stringify(asB.body)).not.toContain('E2E Seed Salad');
+    expect(JSON.stringify(asB.body)).not.toContain(aSlot1Title);
     const rowsB = await rest(B.accessToken, `user_recipes?select=id,user_id,slot_id&user_id=eq.${A.id}`);
     expect(rowsB.body).toEqual([]);
     // even the owner cannot read recipe_json from the client (hidden steps of slot 10)

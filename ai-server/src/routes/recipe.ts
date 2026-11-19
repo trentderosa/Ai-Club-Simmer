@@ -342,9 +342,13 @@ export function createRecipeRouter(
         ? { ...userProfile, dietaryNeeds: dietaryNeedsOverride }
         : userProfile;
 
+      // Photo and dish videos don't depend on the recipe, so look them up while
+      // Ollama generates. dishMedia never rejects (it catches internally).
+      const mediaPromise = dishMedia(slot.dishName);
       const result = await singleFlightGenerate(userId, slot, profileForGeneration);
 
       if (!result.success) {
+        // mediaPromise is left to settle on its own; it never rejects.
         console.error('Recipe generation failed:', result.error);
         res.status(500).json({
           error: 'Recipe generation failed. Please try again.',
@@ -354,7 +358,7 @@ export function createRecipeRouter(
         return;
       }
 
-      const media = await dishMedia(slot.dishName);
+      const media = await mediaPromise;
       res.json({
         recipe: slot.isFinal ? maskRecipeForMastery(result.recipe) : result.recipe,
         cached: false,

@@ -1,5 +1,5 @@
 import type { UserProfile } from '../schemas/user.js';
-import { sanitizeUserText } from '../services/recipe-generator.js';
+import { FOOD_SAFETY_RULE, sanitizeUserText } from '../services/recipe-generator.js';
 
 const USER_DATA_OPEN = '<user_data>';
 const USER_DATA_CLOSE = '</user_data>';
@@ -62,7 +62,8 @@ CRITICAL CONSTRAINTS:
 3. Keep ingredient costs appropriate for their budget.
 4. Flag any step involving heat, knives, boiling water, raw meat, or hot oil as a safety step (isSafetyStep: true).
 5. Include "whyItMatters" explanations for key technique steps to help them learn.
-6. Include "techniqueName" for steps that could benefit from a video demonstration.${dietaryConstraint}
+6. Include "techniqueName" for steps that could benefit from a video demonstration. Write it as a short plain-English phrase such as "pan toast" or "dice onion", with no label or prefix.
+${FOOD_SAFETY_RULE}${dietaryConstraint}
 
 Generate a complete recipe with:
 - A clear title

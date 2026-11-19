@@ -3,7 +3,7 @@ import type { GeneratedCheckInRepository } from '../repositories/generated-check
 import type { CheckInBadges, CheckInInput, CheckInResponse, CheckInXp, CoachNote } from '../types/check-in.js';
 import { isGeneratedCheckIn, isPathCheckIn } from '../types/check-in.js';
 import type { PathRepository } from '../repositories/path-repository.js';
-import type { CoachNoteGenerator } from './coach-note.js';
+import type { CoachNoteContext, CoachNoteGenerator } from './coach-note.js';
 import { xpAwardErrorReason, type XpAwarder } from './xp-awarder.js';
 
 export interface CheckInLogger {
@@ -15,7 +15,8 @@ export interface CheckInServiceOptions {
    * Slot lookups (mastery validation) and badge lookups (F9). Without it
    * (dev in-memory mode) badges are reported as skipped.
    */
-  pathRepository?: Pick<PathRepository, 'getPathSlot' | 'badgesEarnedBy'> | null;
+  pathRepository?: (Pick<PathRepository, 'getPathSlot' | 'badgesEarnedBy'> &
+    Partial<Pick<PathRepository, 'getEquipment'>>) | null;
   /** Cook-anything check-ins. Without it, generated_recipe_id check-ins fail validation. */
   generatedCheckInRepository?: GeneratedCheckInRepository | null;
   /** Awards XP for cook-anything check-ins via award_generated_recipe_xp. */
@@ -92,7 +93,10 @@ export class CheckInService {
       ? await this.coachNoteGenerator.generate(
           input.rating,
           input.went_well ?? null,
-          input.was_hard ?? null
+          input.was_hard ?? null,
+          await this.coachNoteContext(userId, () =>
+            this.pathRepository ? this.pathRepository.getPathSlot(checkIn.slot_id) : Promise.resolve(null)
+          )
         )
       : REPLAY_COACH_NOTE;
 
@@ -104,6 +108,34 @@ export class CheckInService {
       badges,
       suggest_repeat: input.rating === 'hard',
     };
+  }
+
+  /**
+   * Dish name and equipment for the coach note. Best effort: a failed lookup
+   * is logged and the note is generated without it (never fails a check-in).
+   */
+  private async coachNoteContext(
+    userId: string,
+    lookUpDish: () => Promise<{ dishName: string } | string | null | undefined>
+  ): Promise<CoachNoteContext> {
+    const context: CoachNoteContext = {};
+    const [dish, equipment] = await Promise.all([
+      lookUpDish().catch((error: unknown) => this.logLookupFailure('coach_note_dish_lookup_failed', error)),
+      this.pathRepository?.getEquipment
+        ? this.pathRepository.getEquipment(userId).catch((error: unknown) =>
+            this.logLookupFailure('coach_note_equipment_lookup_failed', error)
+          )
+        : Promise.resolve(null),
+    ]);
+    const dishName = typeof dish === 'string' ? dish : dish?.dishName;
+    if (dishName) context.dishName = dishName;
+    if (equipment && equipment.length > 0) context.equipment = equipment;
+    return context;
+  }
+
+  private logLookupFailure(message: string, error: unknown): null {
+    this.logger.error(message, { error: error instanceof Error ? error.message : String(error) });
+    return null;
   }
 
   /**
@@ -158,7 +190,12 @@ export class CheckInService {
       ? await this.coachNoteGenerator.generate(
           input.rating,
           input.went_well ?? null,
-          input.was_hard ?? null
+          input.was_hard ?? null,
+          await this.coachNoteContext(userId, () =>
+            this.generatedCheckInRepository?.getDishName
+              ? this.generatedCheckInRepository.getDishName(userId, input.generated_recipe_id)
+              : Promise.resolve(null)
+          )
         )
       : REPLAY_COACH_NOTE;
 

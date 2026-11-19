@@ -27,6 +27,8 @@ export interface PathRepository {
    */
   getUserProfile(userId: string): Promise<UserProfile | null>;
   isSlotUnlocked(userId: string, slotId: number): Promise<boolean>;
+  /** The user's onboarding equipment (one small query), for the check-in coach note. */
+  getEquipment?(userId: string): Promise<string[]>;
   badgesEarnedBy(checkInId: string): Promise<EarnedBadge[]>;
 }
 
@@ -169,6 +171,16 @@ export class SupabasePathRepository implements PathRepository {
       return null;
     }
     return parsed.data;
+  }
+
+  async getEquipment(userId: string): Promise<string[]> {
+    const rows = await this.rest.select<unknown>('profiles', {
+      select: 'equipment',
+      id: `eq.${userId}`,
+    });
+    if (rows.length === 0) return [];
+    const row = z.object({ equipment: z.array(z.string()).nullable() }).parse(rows[0]);
+    return normalizeEquipment(row.equipment);
   }
 
   async isSlotUnlocked(userId: string, slotId: number): Promise<boolean> {

@@ -192,6 +192,8 @@ For a path check-in, send `user_recipe_id` and `slot_id`. For a Cook anything ch
 
 `idempotency_key` is a client-generated UUID, unique for one check-in attempt. The server stores it as `check_ins.id` (the existing primary key; no new column). Send the same key if you retry after a timeout or drop: the first write wins, a second POST with that key returns the original check-in and does not insert another row or award XP again (`award_slot_xp` is already `UNIQUE(check_in_id)`). A replay also skips a second Coach's note generation and returns a short "already saved" note. A key that already belongs to a different user, recipe, or slot returns `409 { code: "IDEMPOTENCY_CONFLICT" }`. Older clients that omit the key keep the previous behavior (a new id each time). After a timeout, the client should re-read `get_my_plan()` and only re-POST if this slot's `times_completed` did not go up.
 
+**All ids must be real UUIDs.** Every id the client sends (`user_recipe_id`, `generated_recipe_id`, `mastery_session_id`, `idempotency_key`, and the session id in `/api/mastery/sessions/:sessionId/reveal`) must be an RFC 9562 / RFC 4122 UUID. The server validates with zod v4's `z.string().uuid()`, which checks the version and variant bits, so an arbitrary 36-character hex string with dashes is rejected. A bad id in a check-in body returns `400 { code: "VALIDATION_ERROR" }`; a bad session id in a mastery path returns `400 { code: "VALIDATION_ERROR" }` too (before any lookup, so it never reaches `404`). Generate `idempotency_key` with `crypto.randomUUID()` (web) or `randomUUID()` from `expo-crypto`.
+
 Response `201`:
 
 ```jsonc
