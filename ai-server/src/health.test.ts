@@ -412,6 +412,85 @@ describe('GET /health/deep', () => {
     );
   });
 
+  it('warns health_deep_degraded only when the status changes to degraded', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let ollamaUp = true;
+    const fetchImpl = vi.fn((input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        if (!ollamaUp) {
+          return Promise.reject(new Error('ollama down'));
+        }
+        return Promise.resolve(jsonResponse({ models: [{ name: 'llama3.2:latest' }] }));
+      }
+      if (url.includes('/rest/v1/path_slots')) {
+        return Promise.resolve(jsonResponse([{ id: 1 }]));
+      }
+      return Promise.reject(new Error(`unexpected url ${url}`));
+    }) as typeof fetch;
+
+    const healthDeps = deps(fetchImpl, { youtubeApiKey: undefined });
+    const app = express();
+    mountHealthRoutes(app, healthDeps);
+
+    const first = await request(app).get('/health/deep');
+    expect(first.status).toBe(200);
+    expect(first.body.status).toBe('degraded');
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+      'health_deep_degraded',
+      expect.objectContaining({ youtube: 'not_configured', ollama: 'ok', supabase: 'ok' })
+    );
+
+    await vi.advanceTimersByTimeAsync(DEEP_HEALTH_CACHE_TTL_MS);
+    const stillDegraded = await request(app).get('/health/deep');
+    expect(stillDegraded.body.status).toBe('degraded');
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    const cachedHit = await request(app).get('/health/deep');
+    expect(cachedHit.body.status).toBe('degraded');
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    ollamaUp = false;
+    await vi.advanceTimersByTimeAsync(DEEP_HEALTH_CACHE_TTL_MS);
+    const failed = await request(app).get('/health/deep');
+    expect(failed.status).toBe(503);
+    expect(failed.body.status).toBe('fail');
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn).toHaveBeenLastCalledWith(
+      'health_deep_failed',
+      expect.objectContaining({ ollama: 'unreachable', youtube: 'not_configured' })
+    );
+
+    await vi.advanceTimersByTimeAsync(DEEP_HEALTH_CACHE_TTL_MS);
+    const failedAgain = await request(app).get('/health/deep');
+    expect(failedAgain.body.status).toBe('fail');
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenLastCalledWith(
+      'health_deep_failed',
+      expect.objectContaining({ ollama: 'unreachable' })
+    );
+
+    ollamaUp = true;
+    await vi.advanceTimersByTimeAsync(DEEP_HEALTH_CACHE_TTL_MS);
+    const degradedAgain = await request(app).get('/health/deep');
+    expect(degradedAgain.status).toBe(200);
+    expect(degradedAgain.body.status).toBe('degraded');
+    expect(warn).toHaveBeenCalledTimes(4);
+    expect(warn).toHaveBeenLastCalledWith(
+      'health_deep_degraded',
+      expect.objectContaining({ youtube: 'not_configured', ollama: 'ok' })
+    );
+
+    await vi.advanceTimersByTimeAsync(DEEP_HEALTH_CACHE_TTL_MS);
+    const quiet = await request(app).get('/health/deep');
+    expect(quiet.body.status).toBe('degraded');
+    expect(warn).toHaveBeenCalledTimes(4);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(SERVICE_ROLE);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('ollama down');
+  });
+
   it('caches a degraded report for the same TTL and does not call YouTube', async () => {
     vi.useFakeTimers();
     vi.spyOn(console, 'warn').mockImplementation(() => {});

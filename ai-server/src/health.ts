@@ -56,6 +56,26 @@ export interface DeepHealthDeps {
 }
 
 /**
+ * Failures warn on every fresh check. A missing YouTube key is a normal
+ * lasting `degraded` state, so that warning is logged only when the status
+ * changes to `degraded`. Reason codes only: no keys, URLs, or error text.
+ */
+function logDeepHealth(report: DeepHealthReport, previousStatus: DeepHealthStatus | undefined): void {
+  const details = {
+    ollama: report.checks.ollama.reason ?? report.checks.ollama.status,
+    supabase: report.checks.supabase.reason ?? report.checks.supabase.status,
+    youtube: report.checks.youtube.reason ?? report.checks.youtube.status,
+  };
+  if (report.status === 'fail') {
+    console.warn('health_deep_failed', details);
+    return;
+  }
+  if (report.status === 'degraded' && previousStatus !== 'degraded') {
+    console.warn('health_deep_degraded', details);
+  }
+}
+
+/**
  * GET /health stays a process check. GET /health/deep reports dependencies.
  * YouTube is "is the key set?", not a Data API call, so it spends no quota
  * and does not change search caching or quota cooldown.
@@ -81,14 +101,9 @@ export function mountHealthRoutes(app: Express, deps: DeepHealthDeps): void {
     }
     inflight = runDeepHealthCheck(deps)
       .then((report) => {
+        const previousStatus = cached?.report.status;
         cached = { report, expiresAt: Date.now() + cacheTtlMs };
-        if (report.status === 'fail' || report.status === 'degraded') {
-          console.warn(report.status === 'fail' ? 'health_deep_failed' : 'health_deep_degraded', {
-            ollama: report.checks.ollama.reason ?? report.checks.ollama.status,
-            supabase: report.checks.supabase.reason ?? report.checks.supabase.status,
-            youtube: report.checks.youtube.reason ?? report.checks.youtube.status,
-          });
-        }
+        logDeepHealth(report, previousStatus);
         return report;
       })
       .finally(() => {
