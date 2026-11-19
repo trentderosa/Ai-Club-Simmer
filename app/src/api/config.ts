@@ -31,21 +31,107 @@ export function parseMockXpStatus(raw: string | undefined): MockXpStatus {
   return v === 'failed' || v === 'skipped' ? v : 'awarded';
 }
 
-export const config: AppConfig = {
-  supabaseUrl: process.env.EXPO_PUBLIC_SUPABASE_URL ?? '',
-  supabaseAnonKey: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '',
-  aiServerUrl: (process.env.EXPO_PUBLIC_AI_SERVER_URL ?? '').replace(/\/+$/, ''),
-  mockMode: parseMockMode(process.env.EXPO_PUBLIC_MOCK_MODE),
-  mockXpStatus: parseMockXpStatus(process.env.EXPO_PUBLIC_MOCK_XP_STATUS),
-};
+export interface PublicEnv {
+  EXPO_PUBLIC_SUPABASE_URL?: string;
+  EXPO_PUBLIC_SUPABASE_ANON_KEY?: string;
+  EXPO_PUBLIC_AI_SERVER_URL?: string;
+  EXPO_PUBLIC_MOCK_MODE?: string;
+  EXPO_PUBLIC_MOCK_XP_STATUS?: string;
+}
 
-/** Names of env vars the current mode needs but doesn't have. */
+function clean(value: string | undefined): string {
+  return (value ?? '').trim();
+}
+
+/** Reads the public env. Callers must pass literal `process.env.EXPO_PUBLIC_*` reads so Expo can inline them. */
+export function configFromEnv(env: PublicEnv): AppConfig {
+  return {
+    supabaseUrl: clean(env.EXPO_PUBLIC_SUPABASE_URL),
+    supabaseAnonKey: clean(env.EXPO_PUBLIC_SUPABASE_ANON_KEY),
+    aiServerUrl: clean(env.EXPO_PUBLIC_AI_SERVER_URL).replace(/\/+$/, ''),
+    mockMode: parseMockMode(env.EXPO_PUBLIC_MOCK_MODE),
+    mockXpStatus: parseMockXpStatus(env.EXPO_PUBLIC_MOCK_XP_STATUS),
+  };
+}
+
+export const config: AppConfig = configFromEnv({
+  EXPO_PUBLIC_SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
+  EXPO_PUBLIC_SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
+  EXPO_PUBLIC_AI_SERVER_URL: process.env.EXPO_PUBLIC_AI_SERVER_URL,
+  EXPO_PUBLIC_MOCK_MODE: process.env.EXPO_PUBLIC_MOCK_MODE,
+  EXPO_PUBLIC_MOCK_XP_STATUS: process.env.EXPO_PUBLIC_MOCK_XP_STATUS,
+});
+
+/** Absolute http(s) URL with a host and no embedded user or password. */
+export function isAbsoluteHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+    if (!url.hostname) return false;
+    if (url.username || url.password) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isPresentToken(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.length > 0 && !/\s/.test(trimmed);
+}
+
+/**
+ * Names of env vars the current mode needs but doesn't have.
+ * A blank, whitespace-only, or non-http(s) URL counts as missing, so the app
+ * shows the setup screen instead of starting the live backend.
+ */
 export function missingConfig(c: AppConfig): string[] {
   const missing: string[] = [];
   if (c.mockMode !== 'all') {
-    if (!c.supabaseUrl) missing.push('EXPO_PUBLIC_SUPABASE_URL');
-    if (!c.supabaseAnonKey) missing.push('EXPO_PUBLIC_SUPABASE_ANON_KEY');
+    if (!isAbsoluteHttpUrl(c.supabaseUrl)) missing.push('EXPO_PUBLIC_SUPABASE_URL');
+    if (!isPresentToken(c.supabaseAnonKey)) missing.push('EXPO_PUBLIC_SUPABASE_ANON_KEY');
   }
-  if (c.mockMode === 'off' && !c.aiServerUrl) missing.push('EXPO_PUBLIC_AI_SERVER_URL');
+  if (c.mockMode === 'off' && !isAbsoluteHttpUrl(c.aiServerUrl)) missing.push('EXPO_PUBLIC_AI_SERVER_URL');
   return missing;
+}
+
+const EXAMPLE_SUPABASE_HOST = 'your-project-ref.supabase.co';
+const EXAMPLE_ANON_KEY = 'your-anon-key';
+
+/** Loopback hosts hit the visitor's own machine, so they are not a public backend. */
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host === '::1' || host === '0.0.0.0') return true;
+  const v4 = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+  return v4 !== null && v4.slice(1).every((part) => Number(part) <= 255);
+}
+
+function isPublicSiteUrl(value: string): boolean {
+  if (!isAbsoluteHttpUrl(value)) return false;
+  const url = new URL(value.trim());
+  // The Pages site is https, so an http backend is mixed content and never loads.
+  if (url.protocol !== 'https:') return false;
+  if (url.hostname.toLowerCase() === EXAMPLE_SUPABASE_HOST) return false;
+  return !isLoopbackHost(url.hostname);
+}
+
+/**
+ * Pages deploy check. Same requirements as `missingConfig`, plus https
+ * (the public site cannot call an http backend), the `.env.example`
+ * placeholders, and loopback hosts.
+ * Full mock mode (`1` / `true` / `all`) needs nothing.
+ */
+export function pagesConfigProblems(c: AppConfig): string[] {
+  const problems = missingConfig(c);
+  if (c.mockMode === 'all') return problems;
+  if (!problems.includes('EXPO_PUBLIC_SUPABASE_URL') && !isPublicSiteUrl(c.supabaseUrl)) {
+    problems.push('EXPO_PUBLIC_SUPABASE_URL');
+  }
+  if (!problems.includes('EXPO_PUBLIC_SUPABASE_ANON_KEY') && c.supabaseAnonKey.trim().toLowerCase() === EXAMPLE_ANON_KEY) {
+    problems.push('EXPO_PUBLIC_SUPABASE_ANON_KEY');
+  }
+  if (c.mockMode === 'off' && !problems.includes('EXPO_PUBLIC_AI_SERVER_URL') && !isPublicSiteUrl(c.aiServerUrl)) {
+    problems.push('EXPO_PUBLIC_AI_SERVER_URL');
+  }
+  return problems;
 }

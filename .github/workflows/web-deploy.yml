@@ -28,7 +28,10 @@ jobs:
         working-directory: app
     env:
       # Repository variables (Settings > Secrets and variables > Actions > Variables).
-      # Mock mode is on unless EXPO_PUBLIC_MOCK_MODE is set to something else.
+      # Public values only. The anon key belongs here; a service-role key does not.
+      # Unset stays mock. Repository variables are strings, so the string "0" is
+      # kept by `||` and only an empty value becomes 1. Do not rewrite this as
+      # `!= ''`: Actions compares loosely, and the string "0" equals "".
       EXPO_PUBLIC_MOCK_MODE: ${{ vars.EXPO_PUBLIC_MOCK_MODE || '1' }}
       EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
       EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
@@ -47,20 +50,9 @@ jobs:
           cache-dependency-path: app/package-lock.json
 
       - name: Require real values when mock mode is off
-        run: |
-          if [ "$EXPO_PUBLIC_MOCK_MODE" = "1" ]; then
-            echo "Mock mode: building with fake data and no backend."
-            exit 0
-          fi
-          trim() { printf '%s' "$1" | tr -d '[:space:]'; }
-          missing=""
-          [ -z "$(trim "$EXPO_PUBLIC_SUPABASE_URL")" ] && missing="$missing EXPO_PUBLIC_SUPABASE_URL"
-          [ -z "$(trim "$EXPO_PUBLIC_SUPABASE_ANON_KEY")" ] && missing="$missing EXPO_PUBLIC_SUPABASE_ANON_KEY"
-          [ -z "$(trim "$EXPO_PUBLIC_AI_SERVER_URL")" ] && missing="$missing EXPO_PUBLIC_AI_SERVER_URL"
-          if [ -n "$missing" ]; then
-            echo "::error::Mock mode is off but these repository variables are not set:$missing"
-            exit 1
-          fi
+        # Same rules as app/src/api/config.ts (pagesConfigProblems). Runs before
+        # npm ci; the script has no dependencies. Prints names, never values.
+        run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types scripts/check-pages-config.mjs
 
       - name: Install dependencies
         run: npm ci
