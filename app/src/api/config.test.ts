@@ -97,6 +97,14 @@ describe('config', () => {
     expect(pagesConfigProblems({ ...publicLive, aiServerUrl: 'http://[::1]:3001' })).toEqual(['EXPO_PUBLIC_AI_SERVER_URL']);
     expect(pagesConfigProblems({ ...publicLive, aiServerUrl: 'http://0.0.0.0:3001' })).toEqual(['EXPO_PUBLIC_AI_SERVER_URL']);
   });
+
+  it('requires https for the public site and still allows http locally', () => {
+    expect(missingConfig({ ...publicLive, supabaseUrl: 'http://abc.supabase.co', aiServerUrl: 'http://ai.example:3001' })).toEqual([]);
+    expect(pagesConfigProblems({ ...publicLive, supabaseUrl: 'http://abc.supabase.co', aiServerUrl: 'http://ai.example:3001' })).toEqual([
+      'EXPO_PUBLIC_SUPABASE_URL',
+      'EXPO_PUBLIC_AI_SERVER_URL',
+    ]);
+  });
 });
 
 function runPagesCheck(overrides: Record<string, string>) {

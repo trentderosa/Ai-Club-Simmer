@@ -108,14 +108,17 @@ function isLoopbackHost(hostname: string): boolean {
 
 function isPublicSiteUrl(value: string): boolean {
   if (!isAbsoluteHttpUrl(value)) return false;
-  const hostname = new URL(value.trim()).hostname;
-  if (hostname.toLowerCase() === EXAMPLE_SUPABASE_HOST) return false;
-  return !isLoopbackHost(hostname);
+  const url = new URL(value.trim());
+  // The Pages site is https, so an http backend is mixed content and never loads.
+  if (url.protocol !== 'https:') return false;
+  if (url.hostname.toLowerCase() === EXAMPLE_SUPABASE_HOST) return false;
+  return !isLoopbackHost(url.hostname);
 }
 
 /**
- * Pages deploy check. Same requirements as `missingConfig`, plus the
- * `.env.example` placeholders and loopback hosts, which are not a public backend.
+ * Pages deploy check. Same requirements as `missingConfig`, plus https
+ * (the public site cannot call an http backend), the `.env.example`
+ * placeholders, and loopback hosts.
  * Full mock mode (`1` / `true` / `all`) needs nothing.
  */
 export function pagesConfigProblems(c: AppConfig): string[] {

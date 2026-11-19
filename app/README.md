@@ -57,7 +57,7 @@ Set these as GitHub **repository variables** (Settings → Secrets and variables
 
 `1`, `true`, and `all` stay on the full mock and do not read the other three. `ai` uses real Supabase and a fake AI server, so the build requires the Supabase URL and the anon key. Any other value, including `0`, is live and requires all three.
 
-`app/scripts/check-pages-config.mjs` runs before the export. The build fails, and the last good deploy stays up, when a required value is blank, not an `http` or `https` URL, a placeholder from `.env.example` (`your-project-ref.supabase.co`, `your-anon-key`), or a loopback host (`localhost`, `127.0.0.1`, `0.0.0.0`, `::1`). Loopback would point the public site at the visitor's own machine. The log names the variables and does not print the values. A value that looks like a server-only Supabase key fails the build the same way.
+`app/scripts/check-pages-config.mjs` runs before the export. The build fails, and the last good deploy stays up, when a required value is blank, not `https`, a placeholder from `.env.example` (`your-project-ref.supabase.co`, `your-anon-key`), or a loopback host (`localhost`, `127.0.0.1`, `0.0.0.0`, `::1`). Plain `http` is rejected there because the Pages site is https. Loopback would point the public site at the visitor's own machine. The log names the variables and does not print the values. A value that looks like a server-only Supabase key fails the build the same way.
 
 Before the first live build, allow the Pages site through Supabase and the AI server:
 
@@ -67,7 +67,7 @@ Before the first live build, allow the Pages site through Supabase and the AI se
 
 `https://trentderosa.github.io` is the browser origin of the Pages URL `https://trentderosa.github.io/Ai-Club-Simmer/`. `ALLOWED_ORIGINS` entries are scheme and host only. A path on that entry is rejected when the AI server starts.
 
-Local `npm start` still accepts a loopback AI server URL. The setup screen is only for a missing or non-`http(s)` value.
+Local `npm start` still accepts an `http` URL, including loopback, for LAN dev. The setup screen is only for a missing or non-`http(s)` value.
 
 `npm run check:secrets` (also in `npm run check`) fails if anything in `app/` mentions the service role, contains a JWT with `role: service_role`, or contains an `sb_secret_` key. An ESLint rule blocks the same names in code. `app/app.config.ts` reads `app.json` and sets the web `baseUrl` only when `EXPO_BASE_URL` is set (for example `/Ai-Club-Simmer`).
 
