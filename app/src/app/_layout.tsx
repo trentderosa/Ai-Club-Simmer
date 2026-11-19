@@ -89,6 +89,7 @@ function RootStack() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="cook-anything" />
         <Stack.Screen name="recipe/[slotId]" />
+        <Stack.Screen name="book-entry/[kind]/[id]" />
         <Stack.Screen name="cook/[slotId]" options={{ animation: 'fade', gestureEnabled: false, contentStyle: { backgroundColor: color.sheet } }} />
         <Stack.Screen name="check-in/[slotId]" />
         <Stack.Screen name="complete/[slotId]" options={{ animation: 'fade', gestureEnabled: false }} />

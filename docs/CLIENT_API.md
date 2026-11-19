@@ -17,7 +17,7 @@ The app never holds the service-role key or the YouTube key, and it never calls 
 | Check-in (F6, F7, F9, F11) | AI server `POST /api/check-ins` (path: `user_recipe_id` + `slot_id`; free-form: `generated_recipe_id`) |
 | Mastery challenge (F8) | Same recipe call on slot 10, plus `POST /api/mastery/sessions`, `POST /api/mastery/sessions/:id/reveal`, and `mastery_session_id` in the check-in |
 | Badges (F9) | `rpc('get_my_badges')` |
-| Recipe book (F10) | `rpc('get_my_recipe_book')`, then `user_recipes` select for a full recipe |
+| Recipe book (F10) | `rpc('get_my_recipe_book')`; full recipe via the AI server (path) or `user_generated_recipes` (Cook anything); history via `check_ins` / `generated_recipe_check_ins` selects |
 
 ---
 
@@ -275,12 +275,45 @@ Show `earned: false` badges grayed out.
 
 ```ts
 const { data: book } = await supabase.rpc('get_my_recipe_book');
-// [{ slot_id, slot_order, dish_name, user_recipe_id, recipe_title, label: 'completed'|'mastered', added_at, times_cooked }]
+// [{ slot_id, slot_order, dish_name, user_recipe_id, recipe_title, label: 'completed'|'mastered', added_at, times_cooked,
+//    kind: 'path'|'cook_anything', generated_recipe_id, last_cooked_at, last_difficulty_rating }]
 ```
+
+The book lists path recipes you have checked in on and Cook anything dishes (F11) that have at least one check-in, each once. Path entries come first in path order; sort for display as you like.
+
+| Field | Path entry | Cook anything entry |
+| --- | --- | --- |
+| `kind` | `'path'` | `'cook_anything'` |
+| `slot_id`, `slot_order` | set | `null` |
+| `user_recipe_id` | the saved recipe (can be `null`) | `null` |
+| `generated_recipe_id` | `null` | `user_generated_recipes.id` |
+| `dish_name` | the path dish | the dish the user typed |
+| `recipe_title` | recipe title, else the dish | recipe title, else the typed dish |
+| `label` | `'completed'`, or `'mastered'` for slot 10 | `'completed'` |
+| `added_at` | first check-in | first check-in |
+| `times_cooked` | check-ins on the slot | check-ins on the recipe |
+| `last_cooked_at`, `last_difficulty_rating` | newest check-in | newest check-in |
 
 If the list is empty, show: "Cook a recipe and finish the check-in to add it to your recipe book."
 
 Read-only full recipe: open the entry's slot with `POST /api/recipes/generate/:slotId` (F3). For a completed slot it returns the saved recipe (`cached: true`, nothing is regenerated), with `videos`, `dish_videos` and `photo`, and slot 10 steps stay masked. The app does this by opening `/recipe/[slotId]`.
+
+Read-only Cook anything recipe: select it from `user_generated_recipes` by `generated_recipe_id` (the app does this on `/book-entry/cook-anything/[id]`; Cook again goes to `/generated-cook/[recipeId]`).
+
+Check-in history ("Your cooks"): RLS lets you read only your own rows, newest first.
+
+```ts
+// path entry
+await supabase.from('check_ins')
+  .select('id, difficulty_rating, went_well, was_hard, created_at')
+  .eq('slot_id', entry.slot_id).order('created_at', { ascending: false });
+// Cook anything entry
+await supabase.from('generated_recipe_check_ins')
+  .select('id, difficulty_rating, went_well, was_hard, created_at')
+  .eq('generated_recipe_id', entry.generated_recipe_id).order('created_at', { ascending: false });
+```
+
+`went_well` and `was_hard` can be `null`; hide them when empty.
 
 Do not read `recipe_json` from `user_recipes` directly: clients can't select that column (migration `20261116000000_mastery_sessions.sql`), so slot 10 hidden steps can't leak. The request returns `403`.
 

@@ -174,6 +174,8 @@ The user can type a dish name from Today and get an AI-generated recipe fitted t
 
 *Server side (migration `20261117140000_dish_photos.sql`, apply after merge):* `dish_photos` caches a found Commons photo by normalized dish name, service-role only (RLS on, no client policies). A genuine miss is also stored and retried after 7 days; timeouts and errors are not cached. A found photo is also stored as `photo_json` on `user_generated_recipes` so the app can reload it. Path recipes get the same lookup from the slot’s dish name and return it as `photo`. Today and the recipe book call `POST /api/dish-photos`, which only looks up the caller’s path-slot and Cook anything dish names and is rate-limited per IP before auth (default 60 per minute) and per user after auth. Lookup timeout is `DISH_PHOTO_LOOKUP_TIMEOUT_MS` (default 2500 ms). No API key.
 
+*Recipe book (F10):* once a Cook anything dish has a check-in it is listed in the recipe book next to the path recipes, once per dish, and opens a read-only view with the user's check-in history and Cook again.
+
 *Client (`app/`, UI Direction A):* Today opens `/cook-anything`. A successful generate goes to `/generated/[recipeId]`, then `/generated-cook`, `/generated-check-in`, and `/generated-complete`. Path and Cook anything recipe screens, Today’s next-dish card, and the recipe book use `photo` when it is a Commons raster, and `board.jpg` otherwise. Mock mode returns a canned 5/6/20 recipe worth 84 XP, a canned Commons-shaped photo, a canned dish video, and reuses both on the same normalized name (the dish "invisible stew" returns no photo so the fallback can be checked).
 
 ### F8. Mastery challenge (final path recipe only)
@@ -215,15 +217,15 @@ The user cooks the final recipe with the steps hidden, revealing individual step
 
 ### F10. Recipe book
 **Acceptance criteria**
-- [ ] Every recipe the user completes (cooked + check-in done, slots 1–10) is saved to their personal recipe book.
+- [ ] Every recipe the user completes (cooked + check-in done) is saved to their personal recipe book: path slots 1–10 and "Cook anything" dishes (F11) alike. A Cook anything dish appears after its first check-in, not before.
 - [ ] Each entry is labeled **Completed** or **Mastered**. Passing the mastery challenge (F8) marks that recipe as Mastered.
-- [ ] The recipe book lists saved recipes, and tapping one opens the full recipe (ingredients, steps, videos) in a read-only view.
-- [ ] A recipe appears only once, even if the user cooks it again.
+- [ ] The recipe book lists saved recipes, and tapping one opens the full recipe (ingredients, steps, videos) in a read-only view. That view also lists the user's own check-ins on it ("Your cooks": date, Easy / OK / Hard rating, what went well, what was hard; empty notes are hidden), newest first, and has a **Cook again** button that goes into the existing cook flow for that recipe. The final slot's hidden steps stay hidden in this view.
+- [ ] A recipe appears only once, even if the user cooks it again (a repeat raises its cook count and adds a check-in to "Your cooks").
 - [ ] An empty recipe book shows a message explaining how to add recipes.
 
-*Server side:* `get_my_recipe_book()` returns one entry per completed slot, labeled `completed`, or `mastered` for slot 10. The full recipe is read from `user_recipes`. Clients can't update or delete check-ins, so the history behind badges and the book can't be rewritten.
+*Server side:* `get_my_recipe_book()` returns one entry per completed path slot, labeled `completed`, or `mastered` for slot 10, plus one entry per Cook anything recipe that has at least one check-in (`kind` `cook_anything`, `slot_id` and `slot_order` null, `generated_recipe_id` set, label `completed`, `times_cooked` = its check-ins). Every entry also carries `last_cooked_at` and `last_difficulty_rating`. Path recipes are read through the AI server (clients can't select `user_recipes.recipe_json`); Cook anything recipes are read from `user_generated_recipes`. A user reads their own check-in history straight from `check_ins` and `generated_recipe_check_ins`; both are owner-only under RLS. Clients can't update or delete check-ins, so the history behind badges and the book can't be rewritten. Migration `20261118150000_recipe_book_cook_anything.sql` redefines the two book functions; it is applied after merge, and until then the app still works (it treats a row without `kind` as a path entry) but Cook anything dishes don't show up.
 
-*Client (`app/`, UI Direction A):* the recipe book lists entries from `get_my_recipe_book()`, newest first: the latest dish as a photo feature, earlier ones as rows, and unfinished path slots under "Still to come". Each row is labeled Completed or Mastered (and shows a cook count on repeats). The screen states that repeats earn 50% XP, up to 100 XP a week. Tapping an entry opens the existing recipe screen. An empty book uses the sentence from the client API doc. A simple bottom bar (Today, Recipe book, You) reaches the book and the profile; Nathan can restyle `app/src/components/tab-bar.tsx`.
+*Client (`app/`, UI Direction A):* the recipe book lists entries from `get_my_recipe_book()`, newest first: the latest dish as a photo feature, earlier ones as rows, and unfinished path slots under "Still to come". Each row is labeled Completed or Mastered (and shows a cook count on repeats). The screen states that repeats earn 50% XP, up to 100 XP a week. Cook anything rows say Completed and carry a small "Cook anything" tag. Tapping an entry opens a read-only detail screen (`/book-entry/[kind]/[id]`): the recipe with ingredients, steps and videos, "Your cooks", and a Cook again button that goes to `/cook/[slotId]` or `/generated-cook/[recipeId]`. An empty book uses the sentence from the client API doc. A simple bottom bar (Today, Recipe book, You) reaches the book and the profile; Nathan can restyle `app/src/components/tab-bar.tsx`.
 
 ## 5. Out of scope (MVP)
 

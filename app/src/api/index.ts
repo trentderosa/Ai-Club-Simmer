@@ -29,6 +29,6 @@ export function createBackend(c: AppConfig): Backend {
   };
 }
 
-export type { AppSession, Backend } from './backend';
+export type { AppSession, Backend, BookTarget } from './backend';
 export { ApiError, isApiError } from './errors';
 export * from './schemas';

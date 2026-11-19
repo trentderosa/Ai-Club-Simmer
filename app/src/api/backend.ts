@@ -8,6 +8,7 @@
  */
 import type {
   Badge,
+  CheckInHistoryEntry,
   CheckInInput,
   CheckInResponse,
   PlanSlot,
@@ -35,6 +36,9 @@ export interface SignUpResult {
   signedIn: boolean;
 }
 
+/** Which book entry's check-ins to read. */
+export type BookTarget = { kind: 'path'; slotId: number } | { kind: 'cook_anything'; generatedRecipeId: string };
+
 export interface Backend {
   readonly label: 'live' | 'mock' | 'mock-ai';
 
@@ -57,6 +61,8 @@ export interface Backend {
   // Badges (F9) and recipe book (F10)
   getBadges(): Promise<Badge[]>;
   getRecipeBook(): Promise<RecipeBookEntry[]>;
+  /** The user's own check-ins on one book entry, newest first (RLS: own rows only). */
+  getCheckInHistory(target: BookTarget): Promise<CheckInHistoryEntry[]>;
 
   // AI server (F3-F7, F9)
   generateRecipe(slotId: number, accessToken: string): Promise<RecipeResponse>;

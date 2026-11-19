@@ -7,6 +7,7 @@ import type { AppSession, Backend } from './backend';
 import { ApiError } from './errors';
 import {
   BadgesSchema,
+  CheckInHistorySchema,
   PlanSchema,
   PlanSummaryRowsSchema,
   ProfileInputSchema,
@@ -136,6 +137,21 @@ export function createLiveBackend(opts: {
       const { data, error } = await supabase.rpc('get_my_recipe_book');
       if (error) throw fromSupabaseError(error);
       return parseOrThrow(RecipeBookSchema, data, 'recipe book');
+    },
+
+    async getCheckInHistory(target) {
+      const columns = 'id, difficulty_rating, went_well, was_hard, created_at';
+      // RLS ("own rows only") scopes both tables to the signed-in user.
+      const query =
+        target.kind === 'path'
+          ? supabase.from('check_ins').select(columns).eq('slot_id', target.slotId)
+          : supabase.from('generated_recipe_check_ins').select(columns).eq('generated_recipe_id', target.generatedRecipeId);
+      const { data, error } = await query
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: false })
+        .limit(200);
+      if (error) throw fromSupabaseError(error);
+      return parseOrThrow(CheckInHistorySchema, data, 'check-in history');
     },
 
     generateRecipe: (slotId, token) => ai.generateRecipe(slotId, token),

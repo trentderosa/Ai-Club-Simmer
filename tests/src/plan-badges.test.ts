@@ -426,6 +426,167 @@ describe('plan, badges and recipe book', () => {
     });
   });
 
+  describe('F10 recipe book: Cook anything', () => {
+    interface BookRow {
+      slot_id: number | null;
+      slot_order: number | null;
+      dish_name: string;
+      user_recipe_id: string | null;
+      recipe_title: string;
+      label: string;
+      added_at: Date;
+      times_cooked: number;
+      kind: string;
+      generated_recipe_id: string | null;
+      last_cooked_at: Date;
+      last_difficulty_rating: string;
+    }
+
+    async function generatedCheckIn(
+      u: TestUser,
+      recipeId: string,
+      opts: { rating?: 'easy' | 'ok' | 'hard'; at?: string; wentWell?: string; wasHard?: string } = {}
+    ): Promise<string> {
+      const r = await db.getPool().query(
+        `INSERT INTO generated_recipe_check_ins
+           (user_id, generated_recipe_id, difficulty_rating, went_well, was_hard, created_at)
+         VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, NOW()))
+         RETURNING id`,
+        [u.id, recipeId, opts.rating ?? 'ok', opts.wentWell ?? null, opts.wasHard ?? null, opts.at ?? null]
+      );
+      return r.rows[0].id;
+    }
+
+    const book = (u: TestUser) => asUser<BookRow>(u.id, 'SELECT * FROM get_my_recipe_book()');
+
+    it('appears after the first check-in, not before', async () => {
+      const recipe = await db.createGeneratedRecipe(user.id, {
+        dishQuery: 'Pad Thai',
+        normalizedDishName: 'pad thai',
+        stepCount: 3,
+        ingredientCount: 4,
+        timeEstimateMinutes: 20,
+        recipeJson: { title: 'Weeknight Pad Thai', ingredients: [], steps: [] },
+      });
+      expect(await book(user)).toEqual([]);
+
+      await generatedCheckIn(user, recipe.id, { rating: 'hard', at: '2026-11-10T12:00:00Z' });
+      const rows = await book(user);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        kind: 'cook_anything',
+        slot_id: null,
+        slot_order: null,
+        user_recipe_id: null,
+        generated_recipe_id: recipe.id,
+        dish_name: 'Pad Thai',
+        recipe_title: 'Weeknight Pad Thai',
+        label: 'completed',
+        times_cooked: 1,
+        last_difficulty_rating: 'hard',
+      });
+      expect(rows[0].added_at.toISOString()).toBe('2026-11-10T12:00:00.000Z');
+    });
+
+    it('falls back to the typed dish when the recipe has no title', async () => {
+      const recipe = await db.createGeneratedRecipe(user.id, {
+        dishQuery: 'Shakshuka',
+        normalizedDishName: 'shakshuka',
+        stepCount: 2,
+        ingredientCount: 2,
+        timeEstimateMinutes: 10,
+        recipeJson: { ingredients: [], steps: [] },
+      });
+      await generatedCheckIn(user, recipe.id);
+      expect((await book(user))[0].recipe_title).toBe('Shakshuka');
+    });
+
+    it('is listed once after repeat cooks, with the right count and latest cook', async () => {
+      const recipe = await db.createGeneratedRecipe(user.id, { stepCount: 3, ingredientCount: 4, timeEstimateMinutes: 20 });
+      await generatedCheckIn(user, recipe.id, { rating: 'hard', at: '2026-11-01T10:00:00Z' });
+      await generatedCheckIn(user, recipe.id, { rating: 'ok', at: '2026-11-05T10:00:00Z' });
+      await generatedCheckIn(user, recipe.id, { rating: 'easy', at: '2026-11-09T10:00:00Z' });
+      const rows = await book(user);
+      expect(rows).toHaveLength(1);
+      expect(rows[0].times_cooked).toBe(3);
+      expect(rows[0].last_difficulty_rating).toBe('easy');
+      expect(rows[0].added_at.toISOString()).toBe('2026-11-01T10:00:00.000Z');
+      expect(rows[0].last_cooked_at.toISOString()).toBe('2026-11-09T10:00:00.000Z');
+    });
+
+    it('leaves path entries unchanged and lists them before Cook anything', async () => {
+      await cook(user, 2, { rating: 'easy' });
+      await cook(user, 1);
+      await cook(user, 1, { rating: 'hard' });
+      const recipe = await db.createGeneratedRecipe(user.id, { stepCount: 3, ingredientCount: 4, timeEstimateMinutes: 20 });
+      await generatedCheckIn(user, recipe.id);
+
+      const rows = await book(user);
+      expect(rows.map((r) => [r.kind, r.slot_order, r.label, r.times_cooked])).toEqual([
+        ['path', 1, 'completed', 2],
+        ['path', 2, 'completed', 1],
+        ['cook_anything', null, 'completed', 1],
+      ]);
+      expect(rows[0].generated_recipe_id).toBeNull();
+      expect(rows[0].user_recipe_id).toBeTruthy();
+      expect(rows[0].last_difficulty_rating).toBe('hard');
+      expect(rows[1].last_difficulty_rating).toBe('easy');
+    });
+
+    it('keeps two Cook anything dishes as two entries', async () => {
+      const a = await db.createGeneratedRecipe(user.id, { dishQuery: 'Pad Thai', normalizedDishName: 'pad thai', stepCount: 3, ingredientCount: 4, timeEstimateMinutes: 20 });
+      const b = await db.createGeneratedRecipe(user.id, { dishQuery: 'Ramen', normalizedDishName: 'ramen', stepCount: 3, ingredientCount: 4, timeEstimateMinutes: 20 });
+      await generatedCheckIn(user, a.id);
+      await generatedCheckIn(user, b.id);
+      await generatedCheckIn(user, b.id);
+      const rows = await book(user);
+      expect(rows.map((r) => [r.dish_name, r.times_cooked]).sort()).toEqual([
+        ['Pad Thai', 1],
+        ['Ramen', 2],
+      ]);
+    });
+
+    it("user A cannot see user B's book or check-ins", async () => {
+      const recipe = await db.createGeneratedRecipe(other.id, { stepCount: 3, ingredientCount: 4, timeEstimateMinutes: 20 });
+      await generatedCheckIn(other, recipe.id, { wentWell: 'private note for B' });
+      await cook(other, 1);
+
+      expect(await book(user)).toEqual([]);
+      expect(
+        await asUser(user.id, 'SELECT id FROM generated_recipe_check_ins WHERE generated_recipe_id = $1', [recipe.id])
+      ).toEqual([]);
+      expect(await asUser(user.id, 'SELECT id FROM check_ins')).toEqual([]);
+      expect(await asUser(user.id, 'SELECT id FROM user_generated_recipes')).toEqual([]);
+      expect(await book(other)).toHaveLength(2);
+
+      // B's recipe never shows up in A's book even if A also cooks something.
+      const mine = await db.createGeneratedRecipe(user.id, { dishQuery: 'Soup', normalizedDishName: 'soup', stepCount: 3, ingredientCount: 4, timeEstimateMinutes: 20 });
+      await generatedCheckIn(user, mine.id);
+      expect((await book(user)).map((r) => r.dish_name)).toEqual(['Soup']);
+    });
+
+    it('a client can read its own check-in history, newest first', async () => {
+      const recipe = await db.createGeneratedRecipe(user.id, { stepCount: 3, ingredientCount: 4, timeEstimateMinutes: 20 });
+      await generatedCheckIn(user, recipe.id, { rating: 'hard', at: '2026-11-01T10:00:00Z', wasHard: 'the noodles stuck' });
+      await generatedCheckIn(user, recipe.id, { rating: 'easy', at: '2026-11-09T10:00:00Z', wentWell: 'sauce' });
+      const rows = await asUser<{ difficulty_rating: string; went_well: string | null; was_hard: string | null }>(
+        user.id,
+        `SELECT difficulty_rating, went_well, was_hard FROM generated_recipe_check_ins
+         WHERE generated_recipe_id = $1 ORDER BY created_at DESC`,
+        [recipe.id]
+      );
+      expect(rows).toEqual([
+        { difficulty_rating: 'easy', went_well: 'sauce', was_hard: null },
+        { difficulty_rating: 'hard', went_well: null, was_hard: 'the noodles stuck' },
+      ]);
+    });
+
+    it('the service-role helper is not callable by clients', async () => {
+      await expect(asUser(user.id, 'SELECT * FROM get_recipe_book_for_user($1)', [user.id])).rejects.toThrow(/permission denied/i);
+      await expect(asRole('anon', 'SELECT * FROM get_my_recipe_book()')).rejects.toThrow(/permission denied/i);
+    });
+  });
+
   describe('F8 mastery reveal counts', () => {
     it('stored on the final slot, copied from the session', async () => {
       await cookThrough(user, 9);
