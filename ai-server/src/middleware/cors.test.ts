@@ -6,7 +6,7 @@ import {
   CORS_ALLOWED_METHODS,
   createCorsMiddleware,
 } from './cors.js';
-import { DEFAULT_ALLOWED_ORIGINS } from '../config.js';
+import { DEFAULT_ALLOWED_ORIGINS, parseAllowedOrigins } from '../config.js';
 
 const ALLOWED = 'http://localhost:8081';
 const ALSO_ALLOWED = 'http://127.0.0.1:19006';
@@ -102,6 +102,34 @@ describe('CORS middleware', () => {
       .set('Origin', ALSO_ALLOWED);
     expect(res.status).toBe(200);
     expect(res.headers['access-control-allow-origin']).toBe(ALSO_ALLOWED);
+  });
+
+  it('echoes the GitHub Pages origin when ALLOWED_ORIGINS lists it', async () => {
+    const pagesOrigin = 'https://trentderosa.github.io';
+    const origins = parseAllowedOrigins({
+      ALLOWED_ORIGINS: `http://localhost:8081, ${pagesOrigin}`,
+    });
+    const res = await request(createApp(origins))
+      .options('/api/check-ins')
+      .set('Origin', pagesOrigin)
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'Authorization, Content-Type, Idempotency-Key');
+
+    expect(res.status).toBe(204);
+    expect(res.headers['access-control-allow-origin']).toBe(pagesOrigin);
+    expect(res.headers['access-control-allow-origin']).not.toBe('*');
+    expect(res.headers['access-control-allow-credentials']).toBeUndefined();
+    expect(res.headers['vary']).toMatch(/Origin/i);
+  });
+
+  it('does not allow the GitHub Pages origin unless ALLOWED_ORIGINS lists it', async () => {
+    const res = await request(createApp())
+      .get('/health')
+      .set('Origin', 'https://trentderosa.github.io');
+
+    expect(res.status).toBe(200);
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(DEFAULT_ALLOWED_ORIGINS).not.toContain('https://trentderosa.github.io');
   });
 
   it('adds no Allow-Origin when the request has no Origin header', async () => {

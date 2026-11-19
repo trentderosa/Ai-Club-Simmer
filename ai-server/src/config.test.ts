@@ -133,6 +133,22 @@ describe('parseAllowedOrigins', () => {
     );
   });
 
+  it('accepts the GitHub Pages origin and rejects a path on that host', () => {
+    expect(
+      parseAllowedOrigins({
+        ALLOWED_ORIGINS:
+          'http://localhost:8081, https://trentderosa.github.io/',
+      })
+    ).toEqual(['http://localhost:8081', 'https://trentderosa.github.io']);
+    expect(() =>
+      parseAllowedOrigins({
+        ALLOWED_ORIGINS: 'https://trentderosa.github.io/Ai-Club-Simmer',
+      })
+    ).toThrow(
+      'ALLOWED_ORIGINS entries must be origins like http://localhost:8081 (scheme + host, optional port, no path)'
+    );
+  });
+
   it('rejects a list that has no origins after trimming', () => {
     expect(() => parseAllowedOrigins({ ALLOWED_ORIGINS: ' , , ' })).toThrow(
       'ALLOWED_ORIGINS is set but contains no origins. List explicit origins, or unset it to use the defaults.'

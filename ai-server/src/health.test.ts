@@ -335,13 +335,108 @@ describe('GET /health/deep', () => {
     expect(report.checks.youtube).toEqual({ status: 'ok' });
   });
 
-  it('reports not_configured and overall fail when the YouTube key is missing', async () => {
-    const report = await runDeepHealthCheck(deps(okFetch(), { youtubeApiKey: undefined }));
+  it('reports the YouTube key as skipped and the overall status as degraded', async () => {
+    for (const youtubeApiKey of [undefined, '', '   ']) {
+      const report = await runDeepHealthCheck(deps(okFetch(), { youtubeApiKey }));
+      const body = JSON.stringify(report);
 
-    expect(report.status).toBe('fail');
-    expect(report.checks.ollama).toEqual({ status: 'ok' });
-    expect(report.checks.supabase).toEqual({ status: 'ok' });
-    expect(report.checks.youtube).toEqual({ status: 'fail', reason: 'not_configured' });
+      expect(report.status).toBe('degraded');
+      expect(report.checks.ollama).toEqual({ status: 'ok' });
+      expect(report.checks.supabase).toEqual({ status: 'ok' });
+      expect(report.checks.youtube).toEqual({ status: 'skipped', reason: 'not_configured' });
+      expect(body).not.toContain(SERVICE_ROLE);
+      expect(body).not.toContain(YOUTUBE_KEY);
+    }
+  });
+
+  it('returns HTTP 200 when only the YouTube key is missing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = okFetch();
+    const app = express();
+    mountHealthRoutes(app, deps(fetchImpl, { youtubeApiKey: undefined }));
+
+    const response = await request(app).get('/health/deep');
+    const body = JSON.stringify(response.body);
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      status: 'degraded',
+      checks: {
+        ollama: { status: 'ok' },
+        supabase: { status: 'ok' },
+        youtube: { status: 'skipped', reason: 'not_configured' },
+      },
+    });
+    expect(body).not.toContain(SERVICE_ROLE);
+    expect(body).not.toContain(OLLAMA_URL);
+    expect(body).not.toContain(SUPABASE_URL);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const urls = fetchCalls(fetchImpl).map((call) => call[0]);
+    expect(urls.some((url) => url.includes('googleapis.com'))).toBe(false);
+    expect(warn).toHaveBeenCalledWith(
+      'health_deep_degraded',
+      expect.objectContaining({ youtube: 'not_configured', ollama: 'ok', supabase: 'ok' })
+    );
+  });
+
+  it('still fails the endpoint when Ollama is down and the YouTube key is missing', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = vi.fn((input: Parameters<typeof fetch>[0]) => {
+      const url = String(input);
+      if (url.includes('/api/tags')) {
+        return Promise.reject(new Error('ollama down'));
+      }
+      if (url.includes('/rest/v1/path_slots')) {
+        return Promise.resolve(jsonResponse([{ id: 1 }]));
+      }
+      return Promise.reject(new Error(`unexpected url ${url}`));
+    }) as typeof fetch;
+
+    const app = express();
+    mountHealthRoutes(app, deps(fetchImpl, { youtubeApiKey: undefined }));
+    const response = await request(app).get('/health/deep');
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      status: 'fail',
+      checks: {
+        ollama: { status: 'fail', reason: 'unreachable' },
+        supabase: { status: 'ok' },
+        youtube: { status: 'skipped', reason: 'not_configured' },
+      },
+    });
+    expect(JSON.stringify(response.body)).not.toContain('ollama down');
+    expect(warn).toHaveBeenCalledWith(
+      'health_deep_failed',
+      expect.objectContaining({ ollama: 'unreachable', youtube: 'not_configured' })
+    );
+  });
+
+  it('caches a degraded report for the same TTL and does not call YouTube', async () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchImpl = okFetch();
+    const app = express();
+    mountHealthRoutes(app, deps(fetchImpl, { youtubeApiKey: undefined }));
+
+    const first = await request(app).get('/health/deep');
+    expect(first.status).toBe(200);
+    expect(first.body.status).toBe('degraded');
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(DEEP_HEALTH_CACHE_TTL_MS - 1);
+    const cached = await request(app).get('/health/deep');
+    expect(cached.status).toBe(200);
+    expect(cached.body).toEqual(first.body);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const refreshed = await request(app).get('/health/deep');
+    expect(refreshed.status).toBe(200);
+    expect(refreshed.body.status).toBe('degraded');
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    const urls = fetchCalls(fetchImpl).map((call) => call[0]);
+    expect(urls.some((url) => url.includes('googleapis.com'))).toBe(false);
   });
 
   it('expires a failed report after the same TTL', async () => {
