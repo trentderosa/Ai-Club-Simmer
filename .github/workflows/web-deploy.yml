@@ -19,6 +19,10 @@ jobs:
   build:
     name: Build web export
     runs-on: ubuntu-latest
+    # configure-pages reads the Pages site settings; read-only, no write or OIDC here.
+    permissions:
+      contents: read
+      pages: read
     defaults:
       run:
         working-directory: app
