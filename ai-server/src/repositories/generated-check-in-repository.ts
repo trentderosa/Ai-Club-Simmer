@@ -25,14 +25,23 @@ export interface CreateGeneratedCheckInParams {
 export interface GeneratedCheckInRepository {
   validateRecipe(userId: string, generatedRecipeId: string): Promise<boolean>;
   create(params: CreateGeneratedCheckInParams): Promise<GeneratedCheckInRecord>;
+  /** The dish the user asked for (dish_query), for the coach note. Null if not found. */
+  getDishName?(userId: string, generatedRecipeId: string): Promise<string | null>;
 }
 
 export class InMemoryGeneratedCheckInRepository implements GeneratedCheckInRepository {
   private readonly recipes = new Set<string>();
   private readonly checkIns = new Map<string, GeneratedCheckInRecord>();
 
-  seedRecipe(userId: string, generatedRecipeId: string): void {
+  private readonly dishNames = new Map<string, string>();
+
+  seedRecipe(userId: string, generatedRecipeId: string, dishName?: string): void {
     this.recipes.add(`${userId}:${generatedRecipeId}`);
+    if (dishName) this.dishNames.set(`${userId}:${generatedRecipeId}`, dishName);
+  }
+
+  getDishName(userId: string, generatedRecipeId: string): Promise<string | null> {
+    return Promise.resolve(this.dishNames.get(`${userId}:${generatedRecipeId}`) ?? null);
   }
 
   validateRecipe(userId: string, generatedRecipeId: string): Promise<boolean> {

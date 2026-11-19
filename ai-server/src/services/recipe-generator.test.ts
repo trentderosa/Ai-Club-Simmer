@@ -3,12 +3,14 @@ import {
   generateRecipe,
   buildPrompt,
   ensureSafetyFlags,
+  cleanRecipe,
+  cleanTechniqueName,
   sanitizeUserText,
   SAFETY_KEYWORDS,
   PathSlot,
 } from './recipe-generator.js';
 import type { OllamaClient } from './ollama-client.js';
-import type { Recipe } from '../schemas/recipe.js';
+import { RecipeSchema, type Recipe } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 
 const mockSlot: PathSlot = {
@@ -799,5 +801,203 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
   it('adds the hidden-step hint to the prompt only for the final slot', () => {
     expect(buildPrompt(finalSlot, mockUserProfile)).toContain('final mastery recipe');
     expect(buildPrompt(mockSlot, mockUserProfile)).not.toContain('final mastery recipe');
+  });
+});
+
+describe('generateRecipe - rejected attempt logging', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  async function run(client: OllamaClient): ReturnType<typeof generateRecipe> {
+    const p = generateRecipe(client, mockSlot, mockUserProfile);
+    await vi.runAllTimersAsync();
+    return p;
+  }
+
+  it('warns on invalid JSON without logging the model text', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = createMockOllamaClient(['SECRET model text {{', JSON.stringify(validRecipeResponse)]);
+    await run(client);
+    expect(warn).toHaveBeenCalledWith('Recipe attempt rejected', { reason: 'invalid_json', attempt: 1 });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('SECRET');
+  });
+
+  it('warns on schema failures with issue paths and codes only', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = createMockOllamaClient([
+      JSON.stringify({ title: 'SECRET title' }),
+      JSON.stringify(validRecipeResponse),
+    ]);
+    await run(client);
+    const call = warn.mock.calls.find(([, ctx]) => (ctx as { reason?: string }).reason === 'schema_invalid');
+    expect(call).toBeDefined();
+    const ctx = call?.[1] as { attempt: number; issues: { path: string; code: string }[] };
+    expect(ctx.attempt).toBe(1);
+    expect(ctx.issues.map((i) => i.path)).toContain('ingredients');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('SECRET');
+  });
+
+  it('warns on ollama errors with name and message', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = createMockOllamaClient([new Error('connection refused'), JSON.stringify(validRecipeResponse)]);
+    await run(client);
+    expect(warn).toHaveBeenCalledWith('Recipe attempt rejected', {
+      reason: 'ollama_error',
+      attempt: 1,
+      name: 'Error',
+      message: 'connection refused',
+    });
+  });
+
+  it('logs once on success after retries, and not when the first attempt works', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    await run(createMockOllamaClient(['nope', 'nope', JSON.stringify(validRecipeResponse)]));
+    expect(warn).toHaveBeenCalledWith('Recipe generated after retries', { attempts: 3 });
+
+    warn.mockClear();
+    await run(createMockOllamaClient([JSON.stringify(validRecipeResponse)]));
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('recipe cleanup', () => {
+  it('cleanTechniqueName strips labels, splits camelCase, and drops empties', () => {
+    expect(cleanTechniqueName('techniqueName: panToasting')).toBe('pan toasting');
+    expect(cleanTechniqueName('TechniqueName:  dice onion ')).toBe('dice onion');
+    expect(cleanTechniqueName('Whisk eggs')).toBe('Whisk eggs');
+    expect(cleanTechniqueName('')).toBeUndefined();
+    expect(cleanTechniqueName('techniqueName:')).toBeUndefined();
+    expect(cleanTechniqueName('   ')).toBeUndefined();
+  });
+
+  it('cleanRecipe trims ingredients, strips the Simmer title prefix, and fixes technique names', () => {
+    const cleaned = cleanRecipe({
+      ...validRecipeResponse,
+      title: 'Simmer: Roast Chicken for Beginners',
+      ingredients: [{ name: ' Mixed greens', amount: ' 2 cups ' }],
+      steps: [
+        { instruction: 'Toast the bread.', isSafetyStep: true, techniqueName: 'techniqueName: panToasting' },
+        { instruction: 'Gather the plates.', isSafetyStep: false, techniqueName: '' },
+      ],
+    });
+    expect(cleaned.title).toBe('Roast Chicken for Beginners');
+    expect(cleaned.ingredients).toEqual([{ name: 'Mixed greens', amount: '2 cups' }]);
+    expect(cleaned.steps[0].techniqueName).toBe('pan toasting');
+    expect('techniqueName' in cleaned.steps[1]).toBe(false);
+    expect(cleaned.steps.map((s) => s.isSafetyStep)).toEqual([true, false]);
+  });
+
+  it('strips "Simmer -" prefixes but leaves other titles alone', () => {
+    const base = validRecipeResponse;
+    expect(cleanRecipe({ ...base, title: 'Simmer - Pasta' }).title).toBe('Pasta');
+    expect(cleanRecipe({ ...base, title: 'Simmered Pears' }).title).toBe('Simmered Pears');
+  });
+
+  it('generateRecipe returns the cleaned recipe', async () => {
+    const dirty = {
+      ...validRecipeResponse,
+      title: 'Simmer: Scrambled Eggs',
+      ingredients: [{ name: ' eggs', amount: '3' }],
+      steps: [
+        { instruction: 'Whisk the eggs well in a bowl.', isSafetyStep: false, techniqueName: 'techniqueName: whiskEggs' },
+      ],
+    };
+    const result = await generateRecipe(createMockOllamaClient([JSON.stringify(dirty)]), mockSlot, mockUserProfile);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.recipe.title).toBe('Scrambled Eggs');
+      expect(result.recipe.ingredients[0].name).toBe('eggs');
+      expect(result.recipe.steps[0].techniqueName).toBe('whisk eggs');
+    }
+  });
+
+  it('never changes step count or isSafetyStep', () => {
+    const cleaned = cleanRecipe(validRecipeResponse);
+    expect(cleaned.steps).toHaveLength(validRecipeResponse.steps.length);
+    expect(cleaned.steps.map((s) => s.isSafetyStep)).toEqual(validRecipeResponse.steps.map((s) => s.isSafetyStep));
+    expect(cleaned.steps.map((s) => s.instruction)).toEqual(validRecipeResponse.steps.map((s) => s.instruction));
+  });
+});
+
+describe('buildPrompt - food safety and honest coach note', () => {
+  it('forbids rinsing raw poultry or meat', () => {
+    const prompt = buildPrompt(mockSlot, mockUserProfile);
+    expect(prompt).toContain('NEVER tell the user to rinse or wash raw chicken, poultry, or meat');
+    expect(prompt).toContain('paper towels');
+  });
+
+  it('keeps the dietary and mastery numbering consistent with the food-safety rule', () => {
+    const prompt = buildPrompt(mockSlot, { ...mockUserProfile, dietaryNeeds: ['vegan'] });
+    expect(prompt).toContain('\n7. RESPECT dietary needs');
+  });
+
+  const withCheckIns = (difficulty: 'easy' | 'ok' | 'hard'): UserProfile => ({
+    ...mockUserProfile,
+    recentCheckIns: [{ recipeName: 'Toast', difficulty }],
+  });
+
+  it('describes ratings in words', () => {
+    expect(buildPrompt(mockSlot, withCheckIns('easy'))).toContain('Toast: rated easy');
+    expect(buildPrompt(mockSlot, withCheckIns('ok'))).toContain('Toast: rated okay / mostly fine');
+    expect(buildPrompt(mockSlot, withCheckIns('hard'))).toContain('Toast: rated hard');
+  });
+
+  it('tells the model not to invent feedback in the coachNote', () => {
+    const prompt = buildPrompt(mockSlot, withCheckIns('ok'));
+    expect(prompt).toContain('may ONLY mention feedback that appears in the data');
+    expect(prompt).toContain('Do NOT invent ratings, opinions, or feelings');
+  });
+});
+
+describe('recipe cleanup guards', () => {
+  const longCamel = 'x'.repeat(10) + ('Y' + 'z'.repeat(10)).repeat(7) + 'z'.repeat(8);
+
+  it('does not split a camelCase name past the 100 character schema max', () => {
+    expect(longCamel).toHaveLength(95);
+    const cleaned = cleanTechniqueName(longCamel);
+    expect(cleaned).toBe(longCamel);
+    expect((cleaned ?? '').length).toBeLessThanOrEqual(100);
+  });
+
+  it('the cleaned recipe always re-parses with RecipeSchema', async () => {
+    const recipe = {
+      ...validRecipeResponse,
+      steps: [{ instruction: 'Whisk the eggs well.', isSafetyStep: false, techniqueName: longCamel }],
+    };
+    expect(RecipeSchema.safeParse(cleanRecipe(recipe)).success).toBe(true);
+    const result = await generateRecipe(createMockOllamaClient([JSON.stringify(recipe)]), mockSlot, mockUserProfile);
+    expect(result.success).toBe(true);
+    if (result.success) expect(RecipeSchema.safeParse(result.recipe).success).toBe(true);
+  });
+
+  it('keeps the original recipe when the cleaned one fails the schema', () => {
+    const rejectAll = { safeParse: () => ({ success: false }) } as unknown as Parameters<typeof cleanRecipe>[1];
+    const dirty = { ...validRecipeResponse, title: 'Simmer: Eggs' };
+    expect(cleanRecipe(dirty, rejectAll).title).toBe('Simmer: Eggs');
+  });
+
+  it('does not strip "Simmer-Braised" from a title', () => {
+    expect(cleanRecipe({ ...validRecipeResponse, title: 'Simmer-Braised Short Ribs' }).title).toBe('Simmer-Braised Short Ribs');
+    expect(cleanRecipe({ ...validRecipeResponse, title: 'Simmer: Short Ribs' }).title).toBe('Short Ribs');
+  });
+
+  it('does not log or return SyntaxError text (which quotes model text) when JSON never parses', async () => {
+    vi.useFakeTimers();
+    const err = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const p = generateRecipe(createMockOllamaClient(['SECRETTEXT {', 'SECRETTEXT {', 'SECRETTEXT {']), mockSlot, mockUserProfile);
+    await vi.runAllTimersAsync();
+    const result = await p;
+    vi.useRealTimers();
+    expect(result.success).toBe(false);
+    expect(JSON.stringify(result)).not.toContain('SECRETTEXT');
+    expect(JSON.stringify(err.mock.calls)).not.toContain('SECRETTEXT');
+    expect(JSON.stringify(err.mock.calls)).toContain('invalid_json');
+    vi.restoreAllMocks();
   });
 });

@@ -4,7 +4,8 @@
  * rules (50% repeat, weekly repeat cap, free-form daily cap) read from xp_config.
  */
 import { randomUUID } from 'node:crypto';
-import { postCheckIn } from './ai.js';
+import { appendFileSync } from 'node:fs';
+import { generateSlot, postCheckIn } from './ai.js';
 import type { Json } from './http.js';
 import { expectOk, rest, rpc, svcRest } from './supabase.js';
 import type { E2eUser } from './users.js';
@@ -68,14 +69,51 @@ export const MINIMAL_RECIPE = {
   ],
 };
 
-/** SETUP (service role): store a recipe in user_recipes without paying for a real generation. */
+/**
+ * E2E_REAL_GENERATION=1 makes every setup recipe a real generation through the
+ * AI server (Ollama) instead of a service-role seed. Slower, but it exercises
+ * the model on every path slot. Timings go to the console and, when
+ * E2E_TIMING_FILE is set, to that file as JSON lines.
+ */
+export const REAL_GENERATION = process.env.E2E_REAL_GENERATION === '1';
+
+export function recordTiming(label: string, slotId: number | string, ms: number, extra: Record<string, unknown> = {}): void {
+  console.log(`[timing] ${label} slot ${slotId}: ${(ms / 1000).toFixed(1)}s`);
+  const file = process.env.E2E_TIMING_FILE;
+  if (file) appendFileSync(file, `${JSON.stringify({ label, slotId, ms, ...extra })}\n`);
+}
+
+/**
+ * SETUP: give the user a recipe for a path slot. By default it is stored with
+ * the service role (no generation). With E2E_REAL_GENERATION=1 it is generated
+ * for real through POST /api/recipes/generate/:slotId, which is what the app does.
+ */
 export async function seedRecipe(user: E2eUser, slotId: number, recipe: Json = MINIMAL_RECIPE): Promise<string> {
+  if (REAL_GENERATION) {
+    const res = await generateSlot(user.accessToken, slotId);
+    recordTiming('setup generation', slotId, res.ms, { status: res.status, cached: res.body?.cached });
+    expectOk(res, `generate slot ${slotId}`);
+    return userRecipeId(user, slotId);
+  }
+  return seedRecipeDirect(user, slotId, recipe);
+}
+
+/** SETUP (service role): always a stored seed, even in real-generation mode (e.g. a slot the user has not unlocked). */
+export async function seedRecipeDirect(user: E2eUser, slotId: number, recipe: Json = MINIMAL_RECIPE): Promise<string> {
   const res = await svcRest('user_recipes', {
     method: 'POST',
     prefer: 'return=representation',
     body: { user_id: user.id, slot_id: slotId, recipe_json: recipe },
   });
   return (expectOk(res, 'seed user_recipes') as Array<{ id: string }>)[0].id;
+}
+
+/** INSPECTION (service role): the full stored recipe for a user's path slot. */
+export async function storedRecipe(user: E2eUser, slotId: number): Promise<Json> {
+  const res = await svcRest(`user_recipes?select=recipe_json&user_id=eq.${user.id}&slot_id=eq.${slotId}`);
+  const rows = expectOk(res, 'stored recipe') as Array<{ recipe_json: Json }>;
+  if (rows.length !== 1) throw new Error(`expected 1 stored recipe for slot ${slotId}, got ${rows.length}`);
+  return rows[0].recipe_json;
 }
 
 /** The app's lookup of user_recipes.id (RLS: own rows, column grant on id). */
@@ -104,7 +142,7 @@ export async function pathCheckIn(
   });
 }
 
-/** Complete slots from..to with seeded recipes and real check-ins; returns the responses. */
+/** Complete slots with seeded (or, with E2E_REAL_GENERATION=1, generated) recipes and real check-ins; returns the responses. */
 export async function completeSlots(user: E2eUser, slotIds: number[]): Promise<Json[]> {
   const out: Json[] = [];
   for (const slotId of slotIds) {

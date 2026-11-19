@@ -44,4 +44,21 @@ describe('generateCookAnythingRecipe', () => {
     }
     expect(generate).toHaveBeenCalledTimes(3);
   });
+
+  it('cleans model quirks before returning (title prefix, ingredient spaces, technique labels)', async () => {
+    const dirty: Recipe = {
+      ...validRecipe,
+      title: 'Simmer: Pad Thai',
+      ingredients: [{ name: ' rice noodles', amount: '8 oz ' }],
+      steps: [{ instruction: 'Soak the noodles.', isSafetyStep: false, techniqueName: 'techniqueName: soakNoodles' }],
+    };
+    const generate = vi.fn().mockResolvedValue(JSON.stringify(dirty));
+    const result = await generateCookAnythingRecipe({ generate }, 'Pad Thai', user);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.recipe.title).toBe('Pad Thai');
+      expect(result.recipe.ingredients[0]).toEqual({ name: 'rice noodles', amount: '8 oz' });
+      expect(result.recipe.steps[0].techniqueName).toBe('soak noodles');
+    }
+  });
 });

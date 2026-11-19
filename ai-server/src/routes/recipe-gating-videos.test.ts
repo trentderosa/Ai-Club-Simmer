@@ -10,6 +10,7 @@ import type { PathRepository } from '../repositories/path-repository.js';
 import { InMemoryTechniqueVideoCache, VideoFinder, type VideoSearchClient } from '../services/video-finder.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { Recipe } from '../schemas/recipe.js';
+import type { DishPhotoFinder } from '../services/dish-photo.js';
 
 /**
  * F2 path gating and F4 technique videos on POST /api/recipes/generate/:slotId,
@@ -307,5 +308,75 @@ describe('F8 mastery: the final slot never sends hidden step text', () => {
     await recipes.save(USER_ID, 2, recipe);
     const res = await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
     expect(res.body.recipe.steps[0].instruction).toBe('Whisk the eggs');
+  });
+});
+
+describe('dish media runs while the recipe generates', () => {
+  function appWith(ollama: OllamaClient, findForDish: (dish: string) => Promise<unknown>): express.Express {
+    const supabase = createSupabaseService({
+      jwtVerifier: createJwtVerifier({ jwtSecret: SECRET }),
+      userRecipeRepository: new InMemoryUserRecipeRepository(),
+      pathRepository: pathRepo(),
+    });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      '/api/recipes',
+      createRecipeRouter(
+        {
+          ollamaClient: ollama,
+          supabase,
+          photoFinder: { findForDish } as unknown as DishPhotoFinder,
+        },
+        { rateLimit: { windowMs: 60000, maxRequests: 100 } }
+      )
+    );
+    return app;
+  }
+
+  it('starts the photo lookup before generation finishes', async () => {
+    const order: string[] = [];
+    let finishGeneration: () => void = () => undefined;
+    const ollama: OllamaClient = {
+      generate: vi.fn(() => {
+        order.push('generate:start');
+        return new Promise<string>((resolve) => {
+          finishGeneration = (): void => {
+            order.push('generate:end');
+            resolve(JSON.stringify(recipe));
+          };
+        });
+      }),
+    };
+    const findForDish = vi.fn((_dish: string) => {
+      order.push('photo:start');
+      return Promise.resolve({ photo: null });
+    });
+    const pending = request(appWith(ollama, findForDish))
+      .post('/api/recipes/generate/2')
+      .set('Authorization', `Bearer ${token()}`)
+      .then((res) => res);
+
+    // Both have started while generation is still pending.
+    await vi.waitFor(() => expect(order).toContain('generate:start'));
+    expect(order).toContain('photo:start');
+    expect(order).not.toContain('generate:end');
+    finishGeneration();
+    const res = await pending;
+    expect(res.status).toBe(200);
+    expect(res.body.cached).toBe(false);
+  });
+
+  it('keeps the 500 path when generation fails, and a failing photo lookup never leaks', async () => {
+    const ollama: OllamaClient = { generate: vi.fn().mockResolvedValue('not json') };
+    const findForDish = vi.fn().mockRejectedValue(new Error('commons down'));
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const res = await request(appWith(ollama, findForDish))
+      .post('/api/recipes/generate/2')
+      .set('Authorization', `Bearer ${token()}`);
+    expect(res.status).toBe(500);
+    expect(res.body.type).toBe('generation_failed');
+    vi.restoreAllMocks();
   });
 });

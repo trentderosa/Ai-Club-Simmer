@@ -5,12 +5,13 @@
  * seeded with the service role, then are completed with REAL check-ins (that is
  * what unlocks slot 10). User A's slot 10 recipe is generated for real through
  * Ollama. User B (zero-reveal path) has a seeded slot 10 recipe so the masking
- * and session checks are deterministic.
+ * and session checks are deterministic. With E2E_REAL_GENERATION=1 every
+ * recipe (slots 1-9 and B's slot 10) is generated for real instead.
  */
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ai, generateSlot, postCheckIn } from '../helpers/ai.js';
-import { completeSlots, getBadges, getPlan, getRecipeBook, getSummary, MINIMAL_RECIPE, pathSlots, seedRecipe, userRecipeId } from '../helpers/game.js';
+import { completeSlots, getBadges, getPlan, getRecipeBook, getSummary, pathSlots, recordTiming, seedRecipe, storedRecipe, userRecipeId } from '../helpers/game.js';
 import type { Json } from '../helpers/http.js';
 import { rest, svcRest } from '../helpers/supabase.js';
 import { Cast, type E2eUser } from '../helpers/users.js';
@@ -76,7 +77,7 @@ describe('F8 user A: reveals one step', () => {
 
   it('generates slot 10 for real; hidden steps are masked, safety steps visible', async () => {
     const res = await generateSlot(A.accessToken, slot10);
-    console.log(`[timing] real generation of slot 10: ${(res.ms / 1000).toFixed(1)}s`);
+    recordTiming('real generation (06 slot 10)', slot10, res.ms, { status: res.status });
     expect(res.status).toBe(200);
     expect(res.body.cached).toBe(false);
     const stored = await svcRest(`user_recipes?select=recipe_json&user_id=eq.${A.id}&slot_id=eq.${slot10}`);
@@ -208,10 +209,13 @@ describe('F8 user A: reveals one step', () => {
 
 describe('F8 user B: zero-reveal run earns the mastery badge', () => {
   let sessionId: string;
+  let bReal: Json; // INSPECTION (service role): B's stored slot 10 recipe
 
   it('completes slots 1-9, then has a (seeded) slot 10 recipe', async () => {
     await completeSlots(B, ids.slice(0, 9));
     await seedRecipe(B, slot10);
+    bReal = await storedRecipe(B, slot10);
+    expect(hiddenIdx(bReal).length, 'slot 10 recipe has no non-safety steps; nothing to hide').toBeGreaterThan(0);
     expect((await getPlan(B))[9].status).toBe('current');
   }, LONG);
 
@@ -219,14 +223,14 @@ describe('F8 user B: zero-reveal run earns the mastery badge', () => {
     const res = await generateSlot(B.accessToken, slot10);
     expect(res.status).toBe(200);
     expect(res.body.cached).toBe(true);
-    assertMasked(res.body.recipe, MINIMAL_RECIPE);
+    assertMasked(res.body.recipe, bReal);
   });
 
   it('starts a session and checks in with zero reveals', async () => {
     const start = await ai('/api/mastery/sessions', { token: B.accessToken, body: { slot_id: slot10 } });
     expect(start.status).toBe(201);
     sessionId = start.body.session_id;
-    expect(start.body.hidden_step_indices).toEqual(hiddenIdx(MINIMAL_RECIPE));
+    expect(start.body.hidden_step_indices).toEqual(hiddenIdx(bReal));
     const res = await postCheckIn(B.accessToken, {
       user_recipe_id: await userRecipeId(B, slot10), slot_id: slot10, rating: 'easy',
       mastery_session_id: sessionId, idempotency_key: randomUUID(),
@@ -237,7 +241,7 @@ describe('F8 user B: zero-reveal run earns the mastery badge', () => {
     expect(codes).toContain('path_weeknight_basics');
     expect(res.body.xp).toMatchObject({ status: 'awarded', xp_awarded: slot10Xp, is_first_completion: true });
     const row = await rest(B.accessToken, `check_ins?select=hidden_steps,revealed_steps&slot_id=eq.${slot10}`);
-    expect(row.body).toEqual([{ hidden_steps: hiddenIdx(MINIMAL_RECIPE).length, revealed_steps: 0 }]);
+    expect(row.body).toEqual([{ hidden_steps: hiddenIdx(bReal).length, revealed_steps: 0 }]);
   });
 
   it('badges screen and recipe book agree', async () => {

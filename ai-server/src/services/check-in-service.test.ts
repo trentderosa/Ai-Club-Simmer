@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { randomUUID } from 'crypto';
 import { CheckInService, REPLAY_COACH_NOTE, type CheckInLogger } from './check-in-service.js';
 import { InMemoryCheckInRepository } from '../repositories/in-memory-check-in-repository.js';
+import { InMemoryGeneratedCheckInRepository } from '../repositories/generated-check-in-repository.js';
 import type { CoachNoteGenerator } from './coach-note.js';
 import { XpAwardError, type XpAwardResult, type XpAwarder } from './xp-awarder.js';
 
@@ -227,5 +228,97 @@ describe('CheckInService idempotent retry', () => {
       capped: false,
     });
     expect(awarder.award).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('CheckInService coach note context', () => {
+  const userId = randomUUID();
+  const recipeId = randomUUID();
+  let repository: InMemoryCheckInRepository;
+  let coach: CoachNoteGenerator;
+  let logger: CheckInLogger;
+  const slot = { id: 1, dishName: 'Sheet Pan Vegetables', techniqueFocus: 'roasting' };
+  const input = (): { user_recipe_id: string; slot_id: number; rating: 'ok'; idempotency_key: string } => ({ user_recipe_id: recipeId, slot_id: 1, rating: 'ok' as const, idempotency_key: randomUUID() });
+
+  beforeEach(() => {
+    repository = new InMemoryCheckInRepository();
+    repository.seedUserRecipe({ id: recipeId, user_id: userId, slot_id: 1 });
+    coach = { generate: vi.fn().mockResolvedValue({ note: 'Nice work.' }) };
+    logger = { error: vi.fn() };
+  });
+
+  it('passes the slot dish name and the equipment to the coach note', async () => {
+    const pathRepository = {
+      getPathSlot: vi.fn().mockResolvedValue(slot),
+      badgesEarnedBy: vi.fn().mockResolvedValue([]),
+      getEquipment: vi.fn().mockResolvedValue(['stove', 'oven', 'knife']),
+    };
+    const service = new CheckInService(repository, coach, null, logger, { pathRepository });
+    await service.processCheckIn(userId, input());
+    expect(pathRepository.getEquipment).toHaveBeenCalledWith(userId);
+    expect(coach.generate).toHaveBeenCalledWith('ok', null, null, {
+      dishName: 'Sheet Pan Vegetables',
+      equipment: ['stove', 'oven', 'knife'],
+    });
+  });
+
+  it('still generates the note when the equipment lookup fails', async () => {
+    const pathRepository = {
+      getPathSlot: vi.fn().mockResolvedValue(slot),
+      badgesEarnedBy: vi.fn().mockResolvedValue([]),
+      getEquipment: vi.fn().mockRejectedValue(new Error('db down')),
+    };
+    const service = new CheckInService(repository, coach, null, logger, { pathRepository });
+    const result = await service.processCheckIn(userId, input());
+    expect(result.coach_note).toBe('Nice work.');
+    expect(coach.generate).toHaveBeenCalledWith('ok', null, null, { dishName: 'Sheet Pan Vegetables' });
+    expect(logger.error).toHaveBeenCalledWith('coach_note_equipment_lookup_failed', { error: 'db down' });
+  });
+
+  it('still generates the note when the slot lookup fails', async () => {
+    const pathRepository = {
+      getPathSlot: vi.fn().mockRejectedValue(new Error('slot down')),
+      badgesEarnedBy: vi.fn().mockResolvedValue([]),
+      getEquipment: vi.fn().mockResolvedValue(['stove']),
+    };
+    const service = new CheckInService(repository, coach, null, logger, { pathRepository });
+    await service.processCheckIn(userId, input());
+    expect(coach.generate).toHaveBeenCalledWith('ok', null, null, { equipment: ['stove'] });
+  });
+
+  it('uses the generated recipe dish name for Cook anything check-ins', async () => {
+    const generatedCheckInRepository = new InMemoryGeneratedCheckInRepository();
+    const generatedId = randomUUID();
+    generatedCheckInRepository.seedRecipe(userId, generatedId, 'Pad Thai');
+    const pathRepository = {
+      getPathSlot: vi.fn(),
+      badgesEarnedBy: vi.fn().mockResolvedValue([]),
+      getEquipment: vi.fn().mockResolvedValue(['wok']),
+    };
+    const service = new CheckInService(repository, coach, null, logger, {
+      pathRepository,
+      generatedCheckInRepository,
+    });
+    await service.processCheckIn(userId, {
+      generated_recipe_id: generatedId,
+      rating: 'easy',
+      idempotency_key: randomUUID(),
+    });
+    expect(pathRepository.getPathSlot).not.toHaveBeenCalled();
+    expect(coach.generate).toHaveBeenCalledWith('easy', null, null, { dishName: 'Pad Thai', equipment: ['wok'] });
+  });
+
+  it('skips the lookups on an idempotent replay', async () => {
+    const pathRepository = {
+      getPathSlot: vi.fn().mockResolvedValue(slot),
+      badgesEarnedBy: vi.fn().mockResolvedValue([]),
+      getEquipment: vi.fn().mockResolvedValue(['stove']),
+    };
+    const service = new CheckInService(repository, coach, null, logger, { pathRepository });
+    const body = input();
+    await service.processCheckIn(userId, body);
+    pathRepository.getEquipment.mockClear();
+    await service.processCheckIn(userId, body);
+    expect(pathRepository.getEquipment).not.toHaveBeenCalled();
   });
 });

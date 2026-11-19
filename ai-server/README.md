@@ -26,6 +26,18 @@ If recipe generation fails because Ollama is unreachable, the server log include
 the underlying cause (for example `ECONNREFUSED` and the `OLLAMA_BASE_URL` host).
 The client still gets a generic `Recipe generation failed. Please try again.` error.
 
+Every rejected generation attempt is logged as `Recipe attempt rejected` with a `reason`
+(`invalid_json`, `schema_invalid` with issue paths and codes only, `ollama_error` with the error
+name and message, or `mastery_too_few_hidden_steps`) and the attempt number, never model text.
+A success after retries logs `Recipe generated after retries`. The recipe is cleaned after
+validation (trimmed ingredients, no "Simmer:" title prefix, tidy technique names), and the photo
+and dish-video lookup runs while Ollama generates. The check-in Coach's note prompt gets the
+dish name and the user's equipment (one small `profiles` read, plus one dish read per new
+check-in: `getPathSlot` for a path slot, or a `user_generated_recipes` read scoped by id and
+user_id for Cook anything; a failed lookup is logged and the note is written without it).
+A JSON parse failure is logged and returned only as `invalid_json`, because the parser's
+error text quotes the model's output.
+
 ## CORS
 
 The Expo web build is a browser, so the server sends CORS headers only for
@@ -132,7 +144,7 @@ collapsed whitespace, punctuation stripped). A saved row in `user_generated_reci
 that user and normalized name is returned as `cached: true` and does not count against the
 per-user generation rate limit (`COOK_ANYTHING_RATE_LIMIT_*`, default 5 uncached
 generations per hour). Otherwise the server generates through the existing Ollama recipe
-path, looks up videos the same way as a path slot, looks up a Wikimedia Commons dish photo (`src/services/dish-photo.ts`; CC0 / public domain / CC BY / CC BY-SA only; a found photo is cached in `dish_photos` and stored as `photo_json`; a genuine miss is cached for 7 days) and dish videos (`dish_videos`), clamps the XP *counts* (not the
+path, applies the same food-safety prompt rule (no rinsing raw poultry or meat) and the same recipe cleanup as path recipes, looks up videos the same way as a path slot, looks up a Wikimedia Commons dish photo (`src/services/dish-photo.ts`; CC0 / public domain / CC BY / CC BY-SA only; a found photo is cached in `dish_photos` and stored as `photo_json`; a genuine miss is cached for 7 days) and dish videos (`dish_videos`), clamps the XP *counts* (not the
 saved recipe body) to `FREEFORM_COUNT_BOUNDS` (1–10 / 1–12 / 1–45), and stores the
 frozen `xp_value`. A later save of the same dish cannot raise those counts. A fully
 clamped recipe has `xp_value` 177, below roast chicken (181). The daily cap

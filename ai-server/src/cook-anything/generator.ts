@@ -2,7 +2,9 @@ import { ZodError } from 'zod';
 import { getRecipeJsonSchema } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 import {
+  cleanRecipe,
   ensureSafetyFlags,
+  INVALID_JSON_REASON,
   type RecipeGenerationResponse,
 } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
@@ -48,7 +50,7 @@ export async function generateCookAnythingRecipe(
         lastError = validationResult.error;
         continue;
       }
-      return { success: true, recipe: ensureSafetyFlags(validationResult.data) };
+      return { success: true, recipe: ensureSafetyFlags(cleanRecipe(validationResult.data, FreeformRecipeSchema)) };
     } catch (error) {
       lastError = error as Error;
     }
@@ -57,10 +59,12 @@ export async function generateCookAnythingRecipe(
   const errorMessage =
     lastError instanceof ZodError
       ? `Schema validation failed: ${lastError.issues.map((e) => e.message).join(', ')}`
-      : `Generation failed: ${lastError?.message || 'Unknown error'}`;
+      : lastError instanceof SyntaxError
+        ? `Generation failed: ${INVALID_JSON_REASON}`
+        : `Generation failed: ${lastError?.message || 'Unknown error'}`;
 
   if (!(lastError instanceof ZodError)) {
-    logGenerationFailure(lastError);
+    logGenerationFailure(lastError instanceof SyntaxError ? new Error(INVALID_JSON_REASON) : lastError);
   }
 
   return {

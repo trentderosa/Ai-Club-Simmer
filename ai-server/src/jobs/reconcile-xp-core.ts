@@ -95,9 +95,9 @@ export interface ReconcileOptions {
   lookbackHours: number;
   minAgeSeconds: number;
   batchLimit: number;
-  /** Failed attempts before a check-in is given up on. Defaults to 10. */
+  /** Failed attempts before a check-in is given up on. Defaults to DEFAULT_RECONCILE_MAX_ATTEMPTS. */
   maxAttempts?: number;
-  /** Retry backoff base in minutes. Defaults to 10. */
+  /** Retry backoff base in minutes. Defaults to DEFAULT_RECONCILE_RETRY_BASE_MINUTES. */
   retryBaseMinutes?: number;
   dryRun?: boolean;
   now?: Date;

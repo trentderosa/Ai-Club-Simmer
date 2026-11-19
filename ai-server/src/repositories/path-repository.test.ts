@@ -53,6 +53,24 @@ describe('SupabasePathRepository', () => {
     });
   });
 
+  describe('getEquipment', () => {
+    it('reads only the equipment column and normalizes it', async () => {
+      mockFetch.mockResolvedValueOnce(ok([{ equipment: [' stove ', 'Oven', 'oven', ''] }]));
+      expect(await repo.getEquipment(USER_ID)).toEqual(['stove', 'Oven']);
+      const url = calledUrl();
+      expect(url.pathname).toBe('/rest/v1/profiles');
+      expect(url.searchParams.get('select')).toBe('equipment');
+      expect(url.searchParams.get('id')).toBe(`eq.${USER_ID}`);
+    });
+
+    it('returns an empty list for a missing profile or null equipment', async () => {
+      mockFetch.mockResolvedValueOnce(ok([]));
+      expect(await repo.getEquipment(USER_ID)).toEqual([]);
+      mockFetch.mockResolvedValueOnce(ok([{ equipment: null }]));
+      expect(await repo.getEquipment(USER_ID)).toEqual([]);
+    });
+  });
+
   describe('getUserProfile', () => {
     const profileRow = {
       id: USER_ID,

@@ -1,5 +1,5 @@
-import { ZodError } from 'zod';
-import { Recipe, RecipeSchema, getRecipeJsonSchema } from '../schemas/recipe.js';
+import { z, ZodError } from 'zod';
+import { Recipe, RecipeSchema, MAX_TECHNIQUE_NAME_LENGTH, getRecipeJsonSchema } from '../schemas/recipe.js';
 import { UserProfile } from '../schemas/user.js';
 import type { OllamaClient } from './ollama-client.js';
 import { countedHiddenStepCount, MASTERY_MIN_HIDDEN_STEPS, MASTERY_MIN_STEPS } from '../mastery/mask.js';
@@ -152,6 +152,16 @@ function sanitizeUserText(text: string, maxLength = 500): string {
  * We only include user fields that affect recipe generation to minimize
  * prompt size and avoid leaking unnecessary user data to the model.
  */
+/** Shared by the path and Cook anything prompts. */
+export const FOOD_SAFETY_RULE =
+  'FOOD SAFETY: NEVER tell the user to rinse or wash raw chicken, poultry, or meat (it spreads bacteria). Pat it dry with paper towels instead.';
+
+const RATING_WORDS: Record<'easy' | 'ok' | 'hard', string> = {
+  easy: 'easy',
+  ok: 'okay / mostly fine',
+  hard: 'hard',
+};
+
 function buildPrompt(slot: PathSlot, user: UserProfile): string {
   // Sanitize all user-provided free-text fields
   const sanitizedEquipment = user.equipment.map((e) => sanitizeUserText(e, 100));
@@ -187,7 +197,7 @@ function buildPrompt(slot: PathSlot, user: UserProfile): string {
       .slice(-3)
       .map((c) => {
         const recipeName = sanitizeUserText(c.recipeName, 100);
-        let feedback = `- ${recipeName}: rated ${c.difficulty}`;
+        let feedback = `- ${recipeName}: rated ${RATING_WORDS[c.difficulty]}`;
         if (c.whatWentWell) {
           feedback += `, went well: ${sanitizeUserText(c.whatWentWell, 200)}`;
         }
@@ -206,7 +216,7 @@ Recent cooking feedback:
 ${recentFeedback}
 </user_data>
 
-Based on this feedback, include a short "coachNote" at the top of the recipe that references what they found challenging or successful.`;
+Based on this feedback, include a short "coachNote" at the top of the recipe that references what they found challenging or successful. The coachNote may ONLY mention feedback that appears in the data above. Do NOT invent ratings, opinions, or feelings (for example, do not say they found a dish easy or enjoyable unless the data says so). If a rating has no notes, mention only the rating in plain words.`;
   }
 
   // Dietary constraint instructions only added when user has dietary needs
@@ -241,7 +251,8 @@ CRITICAL CONSTRAINTS:
 3. Keep ingredient costs appropriate for their budget.
 4. Flag any step involving heat, knives, boiling water, raw meat, or hot oil as a safety step (isSafetyStep: true).
 5. Include "whyItMatters" explanations for key technique steps to help them learn.
-6. Include "techniqueName" for steps that could benefit from a video demonstration.${dietaryConstraint}${masteryConstraint}
+6. Include "techniqueName" for steps that could benefit from a video demonstration. Write it as a short plain-English phrase such as "pan toast" or "dice onion", with no label or prefix.
+${FOOD_SAFETY_RULE}${dietaryConstraint}${masteryConstraint}
 ${coachContext}
 
 Generate a complete recipe with:
@@ -284,6 +295,55 @@ function ensureSafetyFlags(recipe: Recipe): Recipe {
         ...step,
         isSafetyStep: step.isSafetyStep || hasSafetyKeyword,
       };
+    }),
+  };
+}
+
+/** SyntaxError messages quote model text, so only this reason is logged for them. */
+export const INVALID_JSON_REASON = 'invalid_json';
+
+const SIMMER_TITLE_PREFIX = /^\s*simmer\s*(?::|\s[-\u2013\u2014])\s*/i;
+const TECHNIQUE_LABEL_PREFIX = /^\s*technique\s*name\s*:\s*/i;
+
+/** "techniqueName: panToasting" -> "pan toasting"; junk that cleans to nothing -> undefined. */
+export function cleanTechniqueName(name: string): string | undefined {
+  const cleaned = name.replace(TECHNIQUE_LABEL_PREFIX, '').replace(/\s+/g, ' ').trim();
+  // Only a lone camelCase token ("panToasting") is split and lowercased; normal
+  // phrases keep their case because videos are looked up by the exact name.
+  if (/^[a-z][a-z0-9]*(?:[A-Z][a-z0-9]*)+$/.test(cleaned)) {
+    const split = cleaned.replace(/([a-z0-9])([A-Z])/g, '$1 $2').toLowerCase();
+    // Splitting adds spaces; never let it push the name past the schema max.
+    if (split.length <= MAX_TECHNIQUE_NAME_LENGTH) return split;
+  }
+  return cleaned || undefined;
+}
+
+/**
+ * Tidies model quirks after validation: stray whitespace in ingredients, label
+ * text in technique names, an app-name prefix on the title. Never touches
+ * instructions, isSafetyStep, or the number of steps, so mastery masking is
+ * unaffected.
+ */
+export function cleanRecipe(recipe: Recipe, schema: z.ZodType<Recipe> = RecipeSchema): Recipe {
+  const cleaned = cleanRecipeUnchecked(recipe);
+  // The cleaned recipe must still pass the schema it was validated against
+  // (it is re-validated when read back from the database). If not, keep the original.
+  return schema.safeParse(cleaned).success ? cleaned : recipe;
+}
+
+function cleanRecipeUnchecked(recipe: Recipe): Recipe {
+  const strippedTitle = recipe.title.replace(SIMMER_TITLE_PREFIX, '').trim();
+  return {
+    ...recipe,
+    title: strippedTitle || recipe.title.trim(),
+    ingredients: recipe.ingredients.map((ingredient) => ({
+      name: ingredient.name.trim() || ingredient.name,
+      amount: ingredient.amount.trim() || ingredient.amount,
+    })),
+    steps: recipe.steps.map((step) => {
+      const { techniqueName, ...rest } = step;
+      const cleaned = techniqueName === undefined ? undefined : cleanTechniqueName(techniqueName);
+      return cleaned ? { ...rest, techniqueName: cleaned } : rest;
     }),
   };
 }
@@ -340,6 +400,7 @@ export async function generateRecipe(
         parsed = JSON.parse(responseText);
       } catch (parseError) {
         lastError = parseError as Error;
+        console.warn('Recipe attempt rejected', { reason: 'invalid_json', attempt });
         continue; // Retry on JSON parse failure
       }
 
@@ -348,12 +409,22 @@ export async function generateRecipe(
       const validationResult = RecipeSchema.safeParse(parsed);
       if (!validationResult.success) {
         lastError = validationResult.error;
+        // Issue paths and codes only: never model text or user data.
+        console.warn('Recipe attempt rejected', {
+          reason: 'schema_invalid',
+          attempt,
+          issues: validationResult.error.issues.map((issue) => ({
+            path: issue.path.join('.'),
+            code: issue.code,
+          })),
+        });
         continue; // Retry on schema validation failure
       }
 
       // Step 3: Post-process to ensure safety flags are set.
       // Only reached if schema validation passed - never returns half-valid data.
-      const recipeWithSafetyFlags = ensureSafetyFlags(validationResult.data);
+      // Cleanup runs first so the hideable-step count sees the final recipe.
+      const recipeWithSafetyFlags = ensureSafetyFlags(cleanRecipe(validationResult.data));
 
       // Step 4 (final slot only): the mastery challenge hides non-safety steps,
       // so count them after safety flagging. Too few counts as a failed attempt.
@@ -374,6 +445,10 @@ export async function generateRecipe(
         }
       }
 
+      if (attempt > 1) {
+        console.warn('Recipe generated after retries', { attempts: attempt });
+      }
+
       return {
         success: true,
         recipe: recipeWithSafetyFlags,
@@ -381,6 +456,12 @@ export async function generateRecipe(
     } catch (error) {
       // Ollama client error (network, model not found, etc.)
       lastError = error as Error;
+      console.warn('Recipe attempt rejected', {
+        reason: 'ollama_error',
+        attempt,
+        name: lastError.name,
+        message: lastError.message,
+      });
       // Continue to retry
     }
   }
@@ -389,10 +470,12 @@ export async function generateRecipe(
   const errorMessage =
     lastError instanceof ZodError
       ? `Schema validation failed: ${lastError.issues.map((e) => e.message).join(', ')}`
-      : `Generation failed: ${lastError?.message || 'Unknown error'}`;
+      : lastError instanceof SyntaxError
+        ? `Generation failed: ${INVALID_JSON_REASON}`
+        : `Generation failed: ${lastError?.message || 'Unknown error'}`;
 
   if (!(lastError instanceof ZodError)) {
-    logGenerationFailure(lastError);
+    logGenerationFailure(lastError instanceof SyntaxError ? new Error(INVALID_JSON_REASON) : lastError);
   }
 
   return {
