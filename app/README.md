@@ -42,7 +42,7 @@ Expo inlines every `EXPO_PUBLIC_*` value into the app bundle, so **only public v
 
 If a required value is missing for the current mode, the app shows a setup screen that names it.
 
-`npm run check:secrets` (also in `npm run check`) fails if anything in `app/` mentions the service role, contains a JWT with `role: service_role`, or contains an `sb_secret_` key. An ESLint rule blocks the same names in code.
+`npm run check:secrets` (also in `npm run check`) fails if anything in `app/` mentions the service role, contains a JWT with `role: service_role`, or contains an `sb_secret_` key. An ESLint rule blocks the same names in code. `app/app.config.ts` reads `app.json` and sets the web `baseUrl` only when `EXPO_BASE_URL` is set (for example `/Ai-Club-Simmer`).
 
 ## Scripts
 
@@ -54,6 +54,8 @@ If a required value is missing for the current mode, the app shows a setup scree
 | `npm run check:secrets` | Service-role guard (see above) |
 | `npm run check` | All four, as CI runs them |
 | `npm run export:web:mock` | Static web build in mock mode, into `dist/` |
+| `npm run export:web:pages` | Web build for GitHub Pages under `/Ai-Club-Simmer` (or `EXPO_BASE_URL`), plus `404.html` and `.nojekyll` |
+| `npm run check:secrets:dist` | Scans `dist/` for the same service-role patterns. Prints paths and kinds, never values |
 
 ## Structure
 

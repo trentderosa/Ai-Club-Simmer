@@ -33,6 +33,17 @@ npm run check          # typecheck, lint, service-role guard, tests
 
 To use the real backend, copy `app/.env.example` to `app/.env.local` and fill in the `EXPO_PUBLIC_*` values below. The app only ever uses the Supabase anon key. See [app/README.md](app/README.md) for the structure, how each screen maps to the API, and known gaps.
 
+### Web build on GitHub Pages
+
+The web build of the app is published to `https://trentderosa.github.io/Ai-Club-Simmer/` by `.github/workflows/web-deploy.yml`. It runs on every push to `main` that touches `app/**`, and by hand from the Actions tab. It runs `npm run check`, exports the site with `npm run export:web:pages`, scans `dist/` for service-role keys (`npm run check:secrets:dist`), and deploys it. The Pages build sets `EXPO_BASE_URL=/<repo name>`, which `app/app.config.ts` turns into the Expo web `baseUrl`. Local `npm run web` and the root export are unchanged. The export also copies `index.html` to `404.html` so a refresh on a deep link loads the app.
+
+By default it publishes a mock-mode build (fake data, no backend). One-time setup:
+1. Settings, Pages, Source: **GitHub Actions**.
+2. To go live later, add these repository **variables** (Settings, Secrets and variables, Actions, Variables). They are public, so only the anon key goes in: `EXPO_PUBLIC_MOCK_MODE` (`0`), `EXPO_PUBLIC_SUPABASE_URL`, `EXPO_PUBLIC_SUPABASE_ANON_KEY`, `EXPO_PUBLIC_AI_SERVER_URL`. If mock mode is off and one is missing, the build fails.
+3. Before switching mock mode off, add `https://trentderosa.github.io` to `ALLOWED_ORIGINS` on the AI server and add the Pages URL to the allowed redirect URLs in Supabase auth.
+
+The Pages site is public, and so is everything in the built app.
+
 ## AI server
 
 Requires Node.js 18 or later (CI uses 20). For live recipe generation, a local [Ollama](https://ollama.com) instance should be running.
