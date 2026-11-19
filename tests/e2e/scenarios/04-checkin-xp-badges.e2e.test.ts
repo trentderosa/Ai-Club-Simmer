@@ -194,7 +194,7 @@ describe('F10 recipe book: documented full-recipe read', () => {
   });
 
   it('a book entry opens its full recipe through the AI server, as the app does', async () => {
-    // app/src/app/(tabs)/book.tsx opens /recipe/[slotId], which calls POST /api/recipes/generate/:slotId.
+    // app/src/app/(tabs)/book.tsx opens /book-entry/path/[id], which loads the recipe through POST /api/recipes/generate/:slotId.
     const book = await getRecipeBook(user);
     const res = await generateSlot(user.accessToken, book[0].slot_id);
     expect(res.status).toBe(200);

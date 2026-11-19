@@ -1,4 +1,4 @@
-import { BadgesSchema, CheckInInputSchema, MasteryRevealResponseSchema, MasteryStartResponseSchema, parseStoredDishPhoto, RecipeBookSchema, RecipeStepSchema } from './schemas';
+import { BadgesSchema, CheckInHistorySchema, CheckInInputSchema, MasteryRevealResponseSchema, MasteryStartResponseSchema, parseStoredDishPhoto, RecipeBookSchema, RecipeStepSchema } from './schemas';
 
 describe('recipe book and badge schemas', () => {
   it('parses a get_my_recipe_book row, including a null user_recipe_id', () => {
@@ -12,6 +12,10 @@ describe('recipe book and badge schemas', () => {
         label: 'completed',
         added_at: '2026-11-10T12:00:00.000Z',
         times_cooked: 2,
+        kind: 'path',
+        generated_recipe_id: null,
+        last_cooked_at: '2026-11-11T12:00:00.000Z',
+        last_difficulty_rating: 'easy',
       },
       {
         slot_id: 10,
@@ -22,9 +26,50 @@ describe('recipe book and badge schemas', () => {
         label: 'mastered',
         added_at: null,
         times_cooked: 1,
+        kind: 'path',
+        generated_recipe_id: null,
+        last_cooked_at: null,
+        last_difficulty_rating: null,
       },
     ];
     expect(RecipeBookSchema.parse(rows)).toEqual(rows);
+  });
+
+  it('parses a Cook anything row with null slot fields', () => {
+    const row = {
+      slot_id: null,
+      slot_order: null,
+      dish_name: 'pad thai',
+      user_recipe_id: null,
+      recipe_title: 'Weeknight Pad Thai',
+      label: 'completed',
+      added_at: '2026-11-10T12:00:00.000Z',
+      times_cooked: 3,
+      kind: 'cook_anything',
+      generated_recipe_id: '10000000-0000-4000-8000-000000000001',
+      last_cooked_at: '2026-11-12T12:00:00.000Z',
+      last_difficulty_rating: 'hard',
+    };
+    expect(RecipeBookSchema.parse([row])).toEqual([row]);
+  });
+
+  it('still parses the old row shape (database without the new migration) as a path entry', () => {
+    const [row] = RecipeBookSchema.parse([
+      { slot_id: 1, slot_order: 1, dish_name: 'Salad', user_recipe_id: null, recipe_title: 'Salad', label: 'completed', added_at: null, times_cooked: 1 },
+    ]);
+    expect(row).toMatchObject({ kind: 'path', generated_recipe_id: null, last_cooked_at: null, last_difficulty_rating: null });
+  });
+
+  it('rejects a path row without a slot_id and a Cook anything row without a recipe id', () => {
+    const base = { dish_name: 'x', user_recipe_id: null, recipe_title: 'x', label: 'completed', added_at: null, times_cooked: 1 };
+    expect(() => RecipeBookSchema.parse([{ ...base, slot_id: null, slot_order: null, kind: 'path' }])).toThrow();
+    expect(() => RecipeBookSchema.parse([{ ...base, slot_id: null, slot_order: null, kind: 'cook_anything', generated_recipe_id: null }])).toThrow();
+  });
+
+  it('parses check-in history rows', () => {
+    const rows = [{ id: 'abc', difficulty_rating: 'ok', went_well: null, was_hard: 'timing', created_at: '2026-11-12T12:00:00.000Z' }];
+    expect(CheckInHistorySchema.parse(rows)).toEqual(rows);
+    expect(() => CheckInHistorySchema.parse([{ ...rows[0], difficulty_rating: 'meh' }])).toThrow();
   });
 
   it('rejects an unknown book label', () => {

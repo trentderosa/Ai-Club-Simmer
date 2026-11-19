@@ -194,6 +194,65 @@ describe('mock backend', () => {
   });
 });
 
+describe('mock recipe book: Cook anything and check-in history', () => {
+  const U1 = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee1';
+  const U2 = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee2';
+  const U3 = 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeee3';
+
+  it('adds a Cook anything dish to the book only after a check-in, once, with the right count', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    const pathOnly = (await b.getRecipeBook()).length;
+    const dish = await b.cookAnything('pad thai', 't');
+    expect((await b.getRecipeBook()).length).toBe(pathOnly);
+
+    await b.submitCheckIn({ generated_recipe_id: dish.generated_recipe_id, rating: 'hard', was_hard: ' noodles stuck ', idempotency_key: U1 }, 't');
+    await b.submitCheckIn({ generated_recipe_id: dish.generated_recipe_id, rating: 'easy', went_well: 'sauce', idempotency_key: U2 }, 't');
+    const book = await b.getRecipeBook();
+    expect(book).toHaveLength(pathOnly + 1);
+    expect(book.filter((e) => e.kind === 'path').map((e) => e.slot_id)).toEqual([1, 2, 3]);
+    const entry = book.find((e) => e.kind === 'cook_anything');
+    expect(entry).toMatchObject({
+      slot_id: null,
+      slot_order: null,
+      user_recipe_id: null,
+      generated_recipe_id: dish.generated_recipe_id,
+      dish_name: 'pad thai',
+      label: 'completed',
+      times_cooked: 2,
+      last_difficulty_rating: 'easy',
+    });
+    expect(entry?.recipe_title).toBe(dish.recipe.title);
+
+    const history = await b.getCheckInHistory({ kind: 'cook_anything', generatedRecipeId: dish.generated_recipe_id });
+    expect(history.map((h) => [h.difficulty_rating, h.went_well, h.was_hard])).toEqual([
+      ['easy', 'sauce', null],
+      ['hard', null, 'noodles stuck'],
+    ]);
+  });
+
+  it('records path check-ins with notes, newest first, and keeps them per slot', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    await b.generateRecipe(3, 't');
+    await b.submitCheckIn({ user_recipe_id: mockUserRecipeId(3), slot_id: 3, rating: 'hard', was_hard: 'boil over', idempotency_key: U3 }, 't');
+    const slot3 = await b.getCheckInHistory({ kind: 'path', slotId: 3 });
+    expect(slot3[0]).toMatchObject({ difficulty_rating: 'hard', was_hard: 'boil over', went_well: null });
+    // Slot 2 was cooked twice before the demo user's history started (one plain row per canned cook).
+    expect(await b.getCheckInHistory({ kind: 'path', slotId: 2 })).toHaveLength(2);
+    expect(await b.getCheckInHistory({ kind: 'path', slotId: 9 })).toEqual([]);
+    const entry = (await b.getRecipeBook()).find((e) => e.slot_id === 3);
+    expect(entry).toMatchObject({ kind: 'path', generated_recipe_id: null, last_difficulty_rating: 'hard' });
+  });
+
+  it('does not carry history to a different account', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    const dish = await b.cookAnything('ramen', 't');
+    await b.submitCheckIn({ generated_recipe_id: dish.generated_recipe_id, rating: 'ok' }, 't');
+    await b.signUp('fresh@simmer.test', 'secret1', 'Sam');
+    expect((await b.getRecipeBook())).toEqual([]);
+    expect(await b.getCheckInHistory({ kind: 'cook_anything', generatedRecipeId: dish.generated_recipe_id })).toEqual([]);
+  });
+});
+
 describe('mock mastery account and check-in payload', () => {
   it('keeps the default demo user on startSignedIn and on a normal sign-in', async () => {
     const started = createMockBackend({ latency: 0, startSignedIn: true });

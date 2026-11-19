@@ -17,6 +17,7 @@ import {
   ProfileInputSchema,
   type Badge,
   type CheckInBadge,
+  type CheckInHistoryEntry,
   type CheckInResponse,
   type Profile,
   type ProfileInput,
@@ -60,6 +61,12 @@ export function catalogBadge(code: string): CheckInBadge {
   return { code: badge.code, name: badge.name, description: badge.description, kind: badge.kind };
 }
 
+/** One recorded check-in, like a check_ins / generated_recipe_check_ins row. */
+export interface MockCheckIn extends CheckInHistoryEntry {
+  slotId: number | null;
+  generatedRecipeId: string | null;
+}
+
 interface MockState {
   session: AppSession | null;
   profile: Profile | null;
@@ -71,6 +78,7 @@ interface MockState {
   checkInsByKey: Map<string, CheckInResponse>;
   generatedByName: Map<string, CookAnythingResponse>;
   generatedCompletions: Set<string>;
+  checkInLog: MockCheckIn[];
   masteryEarnedAt: string | null;
   /** F8 server-side mastery sessions, like the mastery_sessions table. */
   masterySessions: Map<string, MockMasterySession>;
@@ -113,6 +121,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     checkInsByKey: new Map(),
     generatedByName: new Map(),
     generatedCompletions: new Set(),
+    checkInLog: [],
     masteryEarnedAt: null,
     masterySessions: new Map(),
   };
@@ -145,6 +154,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     state.checkInsByKey = new Map();
     state.generatedByName = new Map();
     state.generatedCompletions = new Set();
+    state.checkInLog = [];
     state.masteryEarnedAt = null;
     state.masterySessions = new Map();
     for (const s of SLOTS.slice(0, user.completedSlots)) {
@@ -154,6 +164,18 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       state.totalXp += s.xp_value;
       const added = user.addedAt[s.slot_id];
       if (added) state.firstCompletedAt[s.slot_id] = added;
+      // One plain check-in per canned cook so the book's history isn't empty.
+      for (let i = 0; i <= extra; i++) {
+        state.checkInLog.push({
+          id: `mock-seed-${s.slot_id}-${i}`,
+          slotId: s.slot_id,
+          generatedRecipeId: null,
+          difficulty_rating: 'ok',
+          went_well: null,
+          was_hard: null,
+          created_at: added ?? user.createdAt,
+        });
+      }
     }
     return {
       userId,
@@ -241,6 +263,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       state.checkInsByKey = new Map();
       state.generatedByName = new Map();
       state.generatedCompletions = new Set();
+      state.checkInLog = [];
       state.masteryEarnedAt = null;
       state.masterySessions = new Map();
       setSession({ userId: 'mock-user-new', email, firstName: firstName.trim() || null, accessToken: 'mock-access-token' });
@@ -292,7 +315,22 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     async getRecipeBook() {
       await delay(350);
       requireSession();
-      return deriveMockRecipeBook(state.completions, state.firstCompletedAt, state.recipeSlots);
+      return deriveMockRecipeBook(
+        state.completions,
+        state.firstCompletedAt,
+        state.recipeSlots,
+        state.checkInLog,
+        [...state.generatedByName.values()],
+      );
+    },
+
+    async getCheckInHistory(target) {
+      await delay(200);
+      requireSession();
+      return state.checkInLog
+        .filter((c) => (target.kind === 'path' ? c.slotId === target.slotId : c.generatedRecipeId === target.generatedRecipeId))
+        .sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id.localeCompare(a.id))
+        .map(({ id, difficulty_rating, went_well, was_hard, created_at }) => ({ id, difficulty_rating, went_well, was_hard, created_at }));
     },
 
     async generateRecipe(slotId): Promise<RecipeResponse> {
@@ -463,8 +501,18 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
           xp = { status: xpStatus };
         }
         const reply = MOCK_CHECK_IN_REPLIES[body.rating];
+        const checkInId = body.idempotency_key ?? `mock-check-in-${Date.now()}`;
+        state.checkInLog.push({
+          id: checkInId,
+          slotId: null,
+          generatedRecipeId: found.generated_recipe_id,
+          difficulty_rating: body.rating,
+          went_well: body.went_well?.trim() || null,
+          was_hard: body.was_hard?.trim() || null,
+          created_at: new Date().toISOString(),
+        });
         const response: CheckInResponse = {
-          check_in_id: body.idempotency_key ?? `mock-check-in-${Date.now()}`,
+          check_in_id: checkInId,
           coach_note: reply.note,
           focus_area: reply.focus,
           xp,
@@ -519,8 +567,18 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       }
 
       const reply = MOCK_CHECK_IN_REPLIES[body.rating];
+      const checkInId = body.idempotency_key ?? `mock-check-in-${Date.now()}`;
+      state.checkInLog.push({
+        id: checkInId,
+        slotId: slot.slot_id,
+        generatedRecipeId: null,
+        difficulty_rating: body.rating,
+        went_well: body.went_well?.trim() || null,
+        was_hard: body.was_hard?.trim() || null,
+        created_at: new Date().toISOString(),
+      });
       const response: CheckInResponse = {
-        check_in_id: body.idempotency_key ?? `mock-check-in-${Date.now()}`,
+        check_in_id: checkInId,
         coach_note: reply.note,
         focus_area: reply.focus,
         xp,
@@ -562,15 +620,49 @@ export function deriveMockRecipeBook(
   completions: Record<number, number>,
   firstCompletedAt: Record<number, string>,
   recipeSlots: Set<number>,
+  checkIns: readonly MockCheckIn[] = [],
+  generated: readonly CookAnythingResponse[] = [],
 ): RecipeBookEntry[] {
-  return SLOTS.filter((s) => (completions[s.slot_id] ?? 0) > 0).map((s) => ({
-    slot_id: s.slot_id,
-    slot_order: s.slot_order,
-    dish_name: s.dish_name,
-    user_recipe_id: recipeSlots.has(s.slot_id) ? mockUserRecipeId(s.slot_id) : null,
-    recipe_title: RECIPES[s.slot_id]?.title ?? s.dish_name,
-    label: s.is_final ? 'mastered' : 'completed',
-    added_at: firstCompletedAt[s.slot_id] ?? null,
-    times_cooked: completions[s.slot_id],
-  }));
+  const newest = (rows: readonly MockCheckIn[]) =>
+    [...rows].sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || b.id.localeCompare(a.id))[0];
+  const path: RecipeBookEntry[] = SLOTS.filter((s) => (completions[s.slot_id] ?? 0) > 0).map((s) => {
+    const last = newest(checkIns.filter((c) => c.slotId === s.slot_id));
+    return {
+      slot_id: s.slot_id,
+      slot_order: s.slot_order,
+      dish_name: s.dish_name,
+      user_recipe_id: recipeSlots.has(s.slot_id) ? mockUserRecipeId(s.slot_id) : null,
+      recipe_title: RECIPES[s.slot_id]?.title ?? s.dish_name,
+      label: s.is_final ? 'mastered' : 'completed',
+      added_at: firstCompletedAt[s.slot_id] ?? null,
+      times_cooked: completions[s.slot_id],
+      kind: 'path',
+      generated_recipe_id: null,
+      last_cooked_at: last?.created_at ?? null,
+      last_difficulty_rating: last?.difficulty_rating ?? null,
+    };
+  });
+  // Cook anything: one entry per saved dish that has at least one check-in.
+  const cook: RecipeBookEntry[] = [];
+  for (const g of generated) {
+    const rows = checkIns.filter((c) => c.generatedRecipeId === g.generated_recipe_id);
+    if (rows.length === 0) continue;
+    const first = [...rows].sort((a, b) => Date.parse(a.created_at) - Date.parse(b.created_at))[0];
+    const last = newest(rows);
+    cook.push({
+      slot_id: null,
+      slot_order: null,
+      dish_name: g.dish_query,
+      user_recipe_id: null,
+      recipe_title: g.recipe.title || g.dish_query,
+      label: 'completed',
+      added_at: first.created_at,
+      times_cooked: rows.length,
+      kind: 'cook_anything',
+      generated_recipe_id: g.generated_recipe_id,
+      last_cooked_at: last.created_at,
+      last_difficulty_rating: last.difficulty_rating,
+    });
+  }
+  return [...path, ...cook];
 }

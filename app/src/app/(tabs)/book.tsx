@@ -1,7 +1,8 @@
 /**
  * Recipe book (F10). Lists completed / mastered recipes from get_my_recipe_book.
  * The latest dish is a photo feature, earlier ones are rows, and the rest of
- * the path sits under "Still to come". Tapping an entry opens the recipe screen.
+ * the path sits under "Still to come". Cook anything dishes sit in the same
+ * list with a small tag. Tapping an entry opens its read-only detail screen.
  */
 import { useFocusEffect, useRouter } from 'expo-router';
 import { useCallback, useMemo, useRef, useState } from 'react';
@@ -15,11 +16,15 @@ import { gutter } from '../../components/layout';
 import { EmptyState, ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
 import {
+  COOK_ANYTHING_TAG,
   EMPTY_BOOK_COPY,
   REPEAT_XP_NOTE,
+  bookEntryKey,
+  bookEntryRoute,
   filterBookEntries,
   formatAddedOn,
   formatBookLabel,
+  isCookAnything,
   recipeBookHeadline,
   sortBookEntries,
   upcomingDishes,
@@ -54,7 +59,10 @@ export default function RecipeBook() {
   );
 
   const onError = useErrorAction(reload);
-  const open = (slotId: number) => router.push({ pathname: '/recipe/[slotId]', params: { slotId: String(slotId) } });
+  const open = (entry: RecipeBookEntry) => {
+    const route = bookEntryRoute(entry);
+    if (route) router.push({ pathname: '/book-entry/[kind]/[id]', params: route });
+  };
 
   const techniqueBySlot = useMemo(() => {
     const map: Record<number, string> = {};
@@ -138,7 +146,7 @@ function BookBody({
   upcoming: PlanSlot[];
   techniqueBySlot: Record<number, string>;
   querying: boolean;
-  onOpen: (slotId: number) => void;
+  onOpen: (entry: RecipeBookEntry) => void;
   onClear: () => void;
 }) {
   const photos = useDishPhotos(visible.map((entry) => entry.dish_name));
@@ -152,10 +160,10 @@ function BookBody({
   const [feature, ...rows] = visible;
   return (
     <>
-      <FeaturedEntry entry={feature} photo={photos[normalizeDishName(feature.dish_name)] ?? null} technique={techniqueBySlot[feature.slot_id]} onOpen={() => onOpen(feature.slot_id)} />
+      <FeaturedEntry entry={feature} photo={photos[normalizeDishName(feature.dish_name)] ?? null} technique={techniqueFor(feature, techniqueBySlot)} onOpen={() => onOpen(feature)} />
       {rows.length > 0 ? <View style={[gutter, styles.listRule]} /> : null}
       {rows.map((entry) => (
-        <BookRow key={entry.slot_id} entry={entry} photo={photos[normalizeDishName(entry.dish_name)] ?? null} technique={techniqueBySlot[entry.slot_id]} onOpen={() => onOpen(entry.slot_id)} />
+        <BookRow key={bookEntryKey(entry)} entry={entry} photo={photos[normalizeDishName(entry.dish_name)] ?? null} technique={techniqueFor(entry, techniqueBySlot)} onOpen={() => onOpen(entry)} />
       ))}
       {!querying && upcoming.length > 0 ? (
         <>
@@ -190,7 +198,7 @@ function FeaturedEntry({ entry, photo, technique, onOpen }: { entry: RecipeBookE
         <DishPhotoFill photo={photo} />
       </View>
       <View style={styles.featureMeta}>
-        <BookLabel label={entry.label} times={entry.times_cooked} />
+        <BookLabel entry={entry} />
         {added ? <T variant="caption">{added}</T> : null}
       </View>
       <T variant="h2" style={{ marginTop: 4 }}>
@@ -212,7 +220,7 @@ function BookRow({ entry, photo, technique, onOpen }: { entry: RecipeBookEntry; 
       style={({ pressed }) => [styles.row, pressed && { opacity: 0.85 }]}
     >
       <View style={{ flex: 1, paddingRight: 12 }}>
-        <BookLabel label={entry.label} times={entry.times_cooked} />
+        <BookLabel entry={entry} />
         <T variant="h3" style={{ marginTop: 4 }}>
           {entry.recipe_title}
         </T>
@@ -227,15 +235,25 @@ function BookRow({ entry, photo, technique, onOpen }: { entry: RecipeBookEntry; 
   );
 }
 
-function BookLabel({ label, times }: { label: RecipeBookEntry['label']; times: number }) {
+function BookLabel({ entry }: { entry: RecipeBookEntry }) {
+  const tint = entry.label === 'mastered' ? color.tomato : color.herb;
   return (
     <View style={styles.labelRow}>
-      <Icon name="check" size={14} color={label === 'mastered' ? color.tomato : color.herb} />
-      <T variant="byline" style={{ color: label === 'mastered' ? color.tomato : color.herb }}>
-        {formatBookLabel(label, times)}
+      <Icon name="check" size={14} color={tint} />
+      <T variant="byline" style={{ color: tint }}>
+        {formatBookLabel(entry.label, entry.times_cooked)}
       </T>
+      {isCookAnything(entry) ? (
+        <T variant="caption" color="ink3" style={styles.tag}>
+          {COOK_ANYTHING_TAG}
+        </T>
+      ) : null}
     </View>
   );
+}
+
+function techniqueFor(entry: RecipeBookEntry, techniqueBySlot: Record<number, string>): string | undefined {
+  return entry.slot_id === null ? undefined : techniqueBySlot[entry.slot_id];
 }
 
 function byline(entry: RecipeBookEntry, technique?: string): string {
@@ -265,6 +283,7 @@ const styles = StyleSheet.create({
   thumb: { width: 76, height: 76, borderRadius: radius.sm, overflow: 'hidden', backgroundColor: color.paperDeep },
   thumbCredit: { right: 2, bottom: 2, maxWidth: '100%' },
   labelRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
+  tag: { marginLeft: 6, paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.sm, borderWidth: 1, borderColor: color.rule },
   future: { marginHorizontal: space.gutter, flexDirection: 'row', alignItems: 'baseline', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: color.rule, borderStyle: 'dashed' },
   futureNum: { width: 34, fontFamily: font.display, fontSize: 16, lineHeight: 22, color: color.ink3 },
   futureName: { flex: 1, fontFamily: font.body, fontSize: 16, lineHeight: 22, color: color.ink3 },

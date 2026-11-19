@@ -101,17 +101,40 @@ export const BadgesSchema = z.array(BadgeSchema);
 export const RecipeBookLabelSchema = z.enum(['completed', 'mastered']);
 export type RecipeBookLabel = z.infer<typeof RecipeBookLabelSchema>;
 
-export const RecipeBookEntrySchema = z.object({
-  slot_id: z.number().int(),
-  slot_order: z.number().int(),
-  dish_name: z.string(),
-  /** null when a check-in exists but the saved recipe row is missing. */
-  user_recipe_id: z.string().uuid().nullable(),
-  recipe_title: z.string(),
-  label: RecipeBookLabelSchema,
-  added_at: z.string().nullable(),
-  times_cooked: z.number().int(),
-});
+export const RecipeBookKindSchema = z.enum(['path', 'cook_anything']);
+export type RecipeBookKind = z.infer<typeof RecipeBookKindSchema>;
+
+export const RecipeBookEntrySchema = z
+  .object({
+    /** null on Cook anything entries. */
+    slot_id: z.number().int().nullable(),
+    /** null on Cook anything entries. */
+    slot_order: z.number().int().nullable(),
+    /** The path dish, or the dish the user typed for Cook anything. */
+    dish_name: z.string(),
+    /** null when a check-in exists but the saved recipe row is missing (and on Cook anything). */
+    user_recipe_id: z.string().uuid().nullable(),
+    recipe_title: z.string(),
+    label: RecipeBookLabelSchema,
+    added_at: z.string().nullable(),
+    times_cooked: z.number().int(),
+    /**
+     * Added by 20261118150000_recipe_book_cook_anything.sql. The defaults keep
+     * the app working against a database that doesn't have it yet.
+     */
+    kind: RecipeBookKindSchema.default('path'),
+    generated_recipe_id: z.string().uuid().nullable().default(null),
+    last_cooked_at: z.string().nullable().default(null),
+    last_difficulty_rating: z.enum(['easy', 'ok', 'hard']).nullable().default(null),
+  })
+  .superRefine((val, ctx) => {
+    if (val.kind === 'path' && val.slot_id === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'A path book entry needs a slot_id' });
+    }
+    if (val.kind === 'cook_anything' && val.generated_recipe_id === null) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'A Cook anything book entry needs a generated_recipe_id' });
+    }
+  });
 export type RecipeBookEntry = z.infer<typeof RecipeBookEntrySchema>;
 export const RecipeBookSchema = z.array(RecipeBookEntrySchema);
 
@@ -280,6 +303,20 @@ export const CheckInInputSchema = z
     }
   });
 export type CheckInInput = z.infer<typeof CheckInInputSchema>;
+
+/**
+ * One past check-in on a book entry (check_ins or generated_recipe_check_ins
+ * rows the user owns), newest first.
+ */
+export const CheckInHistoryEntrySchema = z.object({
+  id: z.string(),
+  difficulty_rating: z.enum(RATINGS),
+  went_well: z.string().nullable(),
+  was_hard: z.string().nullable(),
+  created_at: z.string(),
+});
+export type CheckInHistoryEntry = z.infer<typeof CheckInHistoryEntrySchema>;
+export const CheckInHistorySchema = z.array(CheckInHistoryEntrySchema);
 
 export const CheckInXpSchema = z.discriminatedUnion('status', [
   z.object({
