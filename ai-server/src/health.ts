@@ -3,10 +3,21 @@ import type { Express, Request, Response as ExpressResponse } from 'express';
 /** Per-check limit. Checks run together, so the route waits at most this long. */
 export const DEEP_HEALTH_TIMEOUT_MS = 2000;
 
-/** How long GET /health/deep reuses the last report (ok or fail). */
+/** How long GET /health/deep reuses the last report (ok, degraded, or fail). */
 export const DEEP_HEALTH_CACHE_TTL_MS = 5000;
 
+/** Ollama and Supabase. These two gate whether the endpoint succeeds. */
 export type HealthStatus = 'ok' | 'fail';
+
+/**
+ * Overall deep-health result.
+ * `degraded` means Ollama and Supabase are up and YouTube was skipped.
+ * The route returns HTTP 200 for `ok` and `degraded`, and 503 for `fail`.
+ */
+export type DeepHealthStatus = 'ok' | 'degraded' | 'fail';
+
+/** YouTube is a key-presence check. A missing key is skipped, not a failure. */
+export type YouTubeHealthStatus = 'ok' | 'skipped';
 
 /** Fixed codes only. Never a URL, key, or error message. */
 export type HealthFailReason = 'not_configured' | 'unreachable' | 'timeout' | 'model_missing';
@@ -16,12 +27,18 @@ export interface HealthCheck {
   reason?: HealthFailReason;
 }
 
+export interface YouTubeHealthCheck {
+  status: YouTubeHealthStatus;
+  /** Present when the key is missing. The key itself is never copied here. */
+  reason?: 'not_configured';
+}
+
 export interface DeepHealthReport {
-  status: HealthStatus;
+  status: DeepHealthStatus;
   checks: {
     ollama: HealthCheck;
     supabase: HealthCheck;
-    youtube: HealthCheck;
+    youtube: YouTubeHealthCheck;
   };
 }
 
@@ -39,8 +56,31 @@ export interface DeepHealthDeps {
 }
 
 /**
+ * Failures warn on every fresh check. A missing YouTube key is a normal
+ * lasting `degraded` state, so that warning is logged only when the status
+ * changes to `degraded`. Reason codes only: no keys, URLs, or error text.
+ */
+function logDeepHealth(report: DeepHealthReport, previousStatus: DeepHealthStatus | undefined): void {
+  const details = {
+    ollama: report.checks.ollama.reason ?? report.checks.ollama.status,
+    supabase: report.checks.supabase.reason ?? report.checks.supabase.status,
+    youtube: report.checks.youtube.reason ?? report.checks.youtube.status,
+  };
+  if (report.status === 'fail') {
+    console.warn('health_deep_failed', details);
+    return;
+  }
+  if (report.status === 'degraded' && previousStatus !== 'degraded') {
+    console.warn('health_deep_degraded', details);
+  }
+}
+
+/**
  * GET /health stays a process check. GET /health/deep reports dependencies.
- * YouTube is "is the key set?", not a Data API call.
+ * YouTube is "is the key set?", not a Data API call, so it spends no quota
+ * and does not change search caching or quota cooldown.
+ * Ollama and Supabase gate success. A missing YouTube key is skipped and
+ * the overall status is degraded (HTTP 200), not a failed check.
  */
 export function mountHealthRoutes(app: Express, deps: DeepHealthDeps): void {
   app.get('/health', (_req: Request, res: ExpressResponse) => {
@@ -61,14 +101,9 @@ export function mountHealthRoutes(app: Express, deps: DeepHealthDeps): void {
     }
     inflight = runDeepHealthCheck(deps)
       .then((report) => {
+        const previousStatus = cached?.report.status;
         cached = { report, expiresAt: Date.now() + cacheTtlMs };
-        if (report.status === 'fail') {
-          console.warn('health_deep_failed', {
-            ollama: report.checks.ollama.reason ?? report.checks.ollama.status,
-            supabase: report.checks.supabase.reason ?? report.checks.supabase.status,
-            youtube: report.checks.youtube.reason ?? report.checks.youtube.status,
-          });
-        }
+        logDeepHealth(report, previousStatus);
         return report;
       })
       .finally(() => {
@@ -80,7 +115,7 @@ export function mountHealthRoutes(app: Express, deps: DeepHealthDeps): void {
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
   app.get('/health/deep', async (_req: Request, res: ExpressResponse) => {
     const report = await getDeepHealthReport();
-    res.status(report.status === 'ok' ? 200 : 503).json(report);
+    res.status(report.status === 'fail' ? 503 : 200).json(report);
   });
 }
 
@@ -92,14 +127,18 @@ export async function runDeepHealthCheck(deps: DeepHealthDeps): Promise<DeepHeal
     checkSupabase(deps.supabaseUrl, deps.supabaseServiceRoleKey, timeoutMs, fetchImpl),
     Promise.resolve(checkYouTube(deps.youtubeApiKey)),
   ]);
-  const status: HealthStatus =
-    ollama.status === 'ok' && supabase.status === 'ok' && youtube.status === 'ok' ? 'ok' : 'fail';
+  const status: DeepHealthStatus =
+    ollama.status === 'fail' || supabase.status === 'fail'
+      ? 'fail'
+      : youtube.status === 'skipped'
+        ? 'degraded'
+        : 'ok';
   return { status, checks: { ollama, supabase, youtube } };
 }
 
-function checkYouTube(apiKey: string | undefined): HealthCheck {
+function checkYouTube(apiKey: string | undefined): YouTubeHealthCheck {
   if (!apiKey || apiKey.trim().length === 0) {
-    return { status: 'fail', reason: 'not_configured' };
+    return { status: 'skipped', reason: 'not_configured' };
   }
   return { status: 'ok' };
 }

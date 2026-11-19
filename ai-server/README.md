@@ -49,6 +49,12 @@ Allowed requests get their `Origin` echoed back and `Vary: Origin`. Preflight
 (`OPTIONS`) allows `Authorization`, `Content-Type`, and `Idempotency-Key`.
 Unknown origins get no CORS headers. A wildcard (`*`) is rejected at startup.
 
+The live GitHub Pages app is the origin `https://trentderosa.github.io` (scheme
+and host only; the `/Ai-Club-Simmer` path is not part of the origin). Add that
+origin to `ALLOWED_ORIGINS` so the Pages app can call this server. Setting the
+variable replaces the defaults, so include any dev origins you still want.
+The Pages origin is not in the default list.
+
 ## Production config
 
 Set these in the server's environment (never in the repo, chat, or logs):
@@ -73,13 +79,13 @@ With `NODE_ENV=production`, the server exits at startup and names any missing va
 
 `GET /health` is unauthenticated and does not call Ollama, Supabase, or YouTube. It returns `{"status":"ok","timestamp":"..."}`.
 
-`GET /health/deep` is also unauthenticated. It reports `ok` or `fail` for three checks, in parallel, each limited to 2 seconds:
+`GET /health/deep` is also unauthenticated. It reports three checks in parallel. Ollama and Supabase are each limited to 2 seconds. YouTube is a local key-presence check and does not call the Data API, so it spends no quota and does not change search caching or the quota cooldown.
 
 - **Ollama:** `GET /api/tags` on the configured host, and the configured model name is in that list (`llama3.2` matches `llama3.2:latest`).
 - **Supabase:** one row from `path_slots` (`select=id&limit=1`) using the service-role key.
-- **YouTube:** the API key is set. The Data API is not called, so this does not spend quota.
+- **YouTube:** the API key is set. A missing or blank key is `skipped` with reason `not_configured`. The Data API is not called.
 
-`status` is `ok` only when all three are `ok`. A failure includes a reason of `not_configured`, `unreachable`, `timeout`, or `model_missing`. The HTTP status is 200 when `status` is `ok` and 503 when it is `fail`; the body shape is unchanged. The last report (ok or fail) is cached for 5 seconds (`DEEP_HEALTH_CACHE_TTL_MS`). Concurrent requests reuse one in-flight check, so repeated hits make at most one Ollama `/api/tags` call and one Supabase `path_slots` read per window. The body never includes keys, request URLs, response bodies, or stack traces. A missing YouTube key is `not_configured`, which makes the overall status `fail` even when Ollama and Supabase are up.
+Ollama and Supabase gate the endpoint. `status` is `ok` when both are `ok` and the YouTube key is set. `status` is `degraded` when both are `ok` and YouTube is `skipped`. `status` is `fail` when Ollama or Supabase fails, including when the YouTube key is also missing, so an operator can see Ollama is down without a missing key failing an otherwise healthy check. A failing dependency includes a reason of `not_configured`, `unreachable`, `timeout`, or `model_missing`. The HTTP status is 200 when `status` is `ok` or `degraded`, and 503 when it is `fail`. The last report (ok, degraded, or fail) is cached for 5 seconds (`DEEP_HEALTH_CACHE_TTL_MS`). Concurrent requests reuse one in-flight check, so repeated hits make at most one Ollama `/api/tags` call and one Supabase `path_slots` read per window. The body never includes keys, request URLs, response bodies, or stack traces. A fresh `fail` logs `health_deep_failed` as a warning on every new check. `health_deep_degraded` is logged only when the status changes to `degraded`, so a missing YouTube key does not warn again on every cache refresh. Logs use reason codes only.
 
 ## Recipes: path order and videos
 
