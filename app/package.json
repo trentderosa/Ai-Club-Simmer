@@ -48,6 +48,8 @@
     "web": "expo start --web",
     "web:mock": "EXPO_PUBLIC_MOCK_MODE=1 expo start --web",
     "export:web:mock": "EXPO_PUBLIC_MOCK_MODE=1 expo export --platform web --output-dir dist",
+    "export:web:pages": "node scripts/export-web-pages.mjs",
+    "check:secrets:dist": "node scripts/check-secrets.mjs --dir dist",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --max-warnings=0",
     "test": "jest",

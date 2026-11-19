@@ -7,50 +7,47 @@
  *  - a new-style Supabase secret key (sb_secret_...)
  * The app may only use the anon key. Markdown docs, eslint.config.js (which
  * holds the matching lint rule) and this script are allowed to name it.
+ *
+ * `--dir dist` scans a built output folder instead (every text file, no
+ * allow list). Matched values are never printed, only paths and the kind.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
+const { scanDir } = createRequire(import.meta.url)('./secret-scan.cjs');
+
 const root = fileURLToPath(new URL('..', import.meta.url));
-const SKIP_DIRS = new Set(['node_modules', '.expo', 'dist', 'web-build', 'ios', 'android', '.git', 'coverage']);
-const ALLOW = new Set(['scripts/check-secrets.mjs', 'eslint.config.js']);
-const NAME = /service[_\s-]?role|serviceRole/i;
-const JWT = /eyJ[\w-]{10,}\.([\w-]{10,})\.[\w-]{10,}/g;
-const SECRET_KEY = /\bsb_secret_[\w-]{8,}/;
-const TEXT = /\.(ts|tsx|js|jsx|mjs|cjs|json|yml|yaml)$|^\.env/;
+const dirFlag = process.argv.indexOf('--dir');
 
-function jwtRole(payload) {
-  try {
-    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')).role;
-  } catch {
-    return undefined;
+if (dirFlag !== -1) {
+  const arg = process.argv[dirFlag + 1];
+  if (!arg) {
+    console.error('Usage: check-secrets.mjs [--dir <built output folder>]');
+    process.exit(2);
   }
+  const dir = resolve(process.cwd(), arg);
+  if (!existsSync(dir)) {
+    console.error(`Build output folder not found: ${arg}`);
+    process.exit(2);
+  }
+  const hits = scanDir(dir, { text: /\.(html|js|mjs|cjs|json|map|css|txt|xml|webmanifest)$/ });
+  if (hits.length) {
+    console.error('Server-only Supabase credentials found in the built output:');
+    for (const h of hits) console.error(`  ${h}`);
+    process.exit(1);
+  }
+  console.log(`OK: no service-role key or references in ${arg}.`);
+  process.exit(0);
 }
 
-const hits = [];
-function walk(dir) {
-  for (const name of readdirSync(dir)) {
-    const full = join(dir, name);
-    const rel = relative(root, full);
-    if (statSync(full).isDirectory()) {
-      if (!SKIP_DIRS.has(name)) walk(full);
-      continue;
-    }
-    if (!TEXT.test(name)) continue;
-    readFileSync(full, 'utf8')
-      .split('\n')
-      .forEach((line, i) => {
-        const where = `${rel}:${i + 1}`;
-        if (!ALLOW.has(rel) && NAME.test(line)) hits.push(`${where}: mentions the service role`);
-        if (SECRET_KEY.test(line)) hits.push(`${where}: looks like a Supabase secret key`);
-        for (const m of line.matchAll(JWT)) {
-          if (jwtRole(m[1]) === 'service_role') hits.push(`${where}: JWT with role service_role`);
-        }
-      });
-  }
-}
-walk(root);
+const hits = scanDir(root, {
+  root,
+  skipDirs: new Set(['node_modules', '.expo', 'dist', 'web-build', 'ios', 'android', '.git', 'coverage']),
+  allow: new Set(['scripts/check-secrets.mjs', 'scripts/secret-scan.cjs', 'eslint.config.js']),
+  text: /\.(ts|tsx|js|jsx|mjs|cjs|json|yml|yaml)$|^\.env/,
+});
 
 if (hits.length) {
   console.error('Server-only Supabase credentials referenced in app/ (the app may only use the anon key):');
