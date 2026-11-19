@@ -26,7 +26,7 @@ npm start
 
 On a phone, `EXPO_PUBLIC_AI_SERVER_URL` must be reachable from the phone. Prefer an HTTPS tunnel (ngrok or Cloudflare Tunnel; see the PRD) so the access token isn't sent over plain HTTP on the LAN, and so iOS release builds aren't blocked by App Transport Security. A LAN URL like `http://192.168.1.20:3001` (start the ai-server with `HOST=0.0.0.0`) is fine for local development. `127.0.0.1` only works in a simulator on the same machine.
 
-The Expo web build can talk to the live AI server from origins in `ALLOWED_ORIGINS` (default: `http://localhost:8081`, `http://127.0.0.1:8081`, `http://localhost:19006`, and `http://127.0.0.1:19006`).
+The Expo web build can talk to the live AI server from origins in `ALLOWED_ORIGINS` (default: `http://localhost:8081`, `http://127.0.0.1:8081`, `http://localhost:19006`, and `http://127.0.0.1:19006`). The Pages site needs `https://trentderosa.github.io` on that list before mock mode is turned off. See [GitHub Pages](#github-pages).
 
 ## Environment
 
@@ -37,10 +37,37 @@ Expo inlines every `EXPO_PUBLIC_*` value into the app bundle, so **only public v
 | `EXPO_PUBLIC_SUPABASE_URL` | Supabase project URL |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon (public) key. RLS limits each user to their own rows. |
 | `EXPO_PUBLIC_AI_SERVER_URL` | ai-server base URL. Prefer an HTTPS tunnel for phones; a LAN `http://…` URL is for local dev. |
-| `EXPO_PUBLIC_MOCK_MODE` | `1` = fake everything (no network). `ai` = real Supabase, fake ai-server. Unset or `0` = live. |
+| `EXPO_PUBLIC_MOCK_MODE` | `1`, `true`, or `all` = fake everything (no network). `ai` = real Supabase, fake ai-server. Unset or `0` = live. |
 | `EXPO_PUBLIC_MOCK_XP_STATUS` | Mock only: the check-in's `xp.status`, `awarded` (default), `failed` or `skipped`. Use it to see the honest "XP pending" screen. |
 
-If a required value is missing for the current mode, the app shows a setup screen that names it.
+If a required value is missing, blank, or not an `http`/`https` URL, the app shows the setup screen that names it and does not start the live backend.
+
+## GitHub Pages
+
+The public site is `https://trentderosa.github.io/Ai-Club-Simmer/`, published by `.github/workflows/web-deploy.yml`. The workflow defaults to mock mode. When the repository variable `EXPO_PUBLIC_MOCK_MODE` is unset, the build sets it to `1`. The site stays on that mock build until the variables below are set and a later build succeeds. This repo does not turn mock mode off.
+
+Set these as GitHub **repository variables** (Settings → Secrets and variables → Actions → Variables). They are public: Expo inlines every `EXPO_PUBLIC_*` value into the bundle. Use the anon key only. The service-role key and the YouTube key stay on the AI server, never in a repository variable.
+
+| Variable | Value when leaving mock mode |
+| --- | --- |
+| `EXPO_PUBLIC_MOCK_MODE` | `0` |
+| `EXPO_PUBLIC_SUPABASE_URL` | Supabase project URL, `https://<project-ref>.supabase.co` |
+| `EXPO_PUBLIC_SUPABASE_ANON_KEY` | Supabase anon (public) key |
+| `EXPO_PUBLIC_AI_SERVER_URL` | AI server base URL browsers can reach (an HTTPS tunnel) |
+
+`1`, `true`, and `all` stay on the full mock and do not read the other three. `ai` uses real Supabase and a fake AI server, so the build requires the Supabase URL and the anon key. Any other value, including `0`, is live and requires all three.
+
+`app/scripts/check-pages-config.mjs` runs before the export. The build fails, and the last good deploy stays up, when a required value is blank, not an `http` or `https` URL, a placeholder from `.env.example` (`your-project-ref.supabase.co`, `your-anon-key`), or a loopback host (`localhost`, `127.0.0.1`, `0.0.0.0`, `::1`). Loopback would point the public site at the visitor's own machine. The log names the variables and does not print the values. A value that looks like a server-only Supabase key fails the build the same way.
+
+Before the first live build, allow the Pages site through Supabase and the AI server:
+
+- **Supabase redirect URLs** (Authentication → URL configuration → Redirect URLs): `https://trentderosa.github.io/Ai-Club-Simmer/**`
+- **Supabase Site URL**: `https://trentderosa.github.io/Ai-Club-Simmer` (the app does not send its own email redirect, so confirmation links use the Site URL)
+- **AI server `ALLOWED_ORIGINS`**: `https://trentderosa.github.io`
+
+`https://trentderosa.github.io` is the browser origin of the Pages URL `https://trentderosa.github.io/Ai-Club-Simmer/`. `ALLOWED_ORIGINS` entries are scheme and host only. A path on that entry is rejected when the AI server starts.
+
+Local `npm start` still accepts a loopback AI server URL. The setup screen is only for a missing or non-`http(s)` value.
 
 `npm run check:secrets` (also in `npm run check`) fails if anything in `app/` mentions the service role, contains a JWT with `role: service_role`, or contains an `sb_secret_` key. An ESLint rule blocks the same names in code. `app/app.config.ts` reads `app.json` and sets the web `baseUrl` only when `EXPO_BASE_URL` is set (for example `/Ai-Club-Simmer`).
 
@@ -125,7 +152,7 @@ Leagues, streaks and the week row, cooking levels (L1–L4; the profile shows ex
 
 ## Known gaps
 
-- **Web against the live ai-server:** the web build can use the real backend when the page origin is in the AI server's `ALLOWED_ORIGINS` allowlist (the default is Expo's localhost/127.0.0.1 dev origins on ports 8081 and 19006; see the root README and `ai-server/README.md`). Add a tunnel or production origin to that list if you need it. Other origins get no CORS headers. iOS/Android aren't affected.
+- **Web against the live ai-server:** the web build can use the real backend when the page origin is in the AI server's `ALLOWED_ORIGINS` allowlist (the default is Expo's localhost/127.0.0.1 dev origins on ports 8081 and 19006; see the root README and `ai-server/README.md`). The Pages origin to add is `https://trentderosa.github.io`. Other origins get no CORS headers. iOS/Android aren't affected.
 - **`EXPO_PUBLIC_MOCK_MODE=ai`:** recipes and check-ins are fake and nothing is written to Supabase, so the real plan doesn't advance after a mock check-in.
 - Sessions are stored with AsyncStorage (localStorage on web), which isn't encrypted. Supabase's session can exceed SecureStore's size limit; a "large secure store" wrapper is the usual fix if we want encryption at rest.
 - App icon and splash are the Expo template placeholders.
