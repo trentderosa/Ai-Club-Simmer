@@ -2,12 +2,14 @@
 -- Simmer - Recipe book includes "Cook anything" recipes (F10)
 -- =============================================================================
 -- Before: get_recipe_book_for_user / get_my_recipe_book only read path
--- check-ins (check_ins via first_check_ins_for_user), so a finished Cook
--- anything dish never reached the book.
--- After: path entries are unchanged, plus one entry per Cook anything recipe
--- that has at least one check-in (generated_recipe_check_ins).
+-- check-ins, so a finished Cook anything dish never reached the book.
+-- Those two functions are NOT changed here: older app builds parse them with
+-- non-null slot_id / slot_order, so their path-only shape and grants stay.
+-- New functions get_recipe_book_v2_for_user (service_role only) and
+-- get_my_recipe_book_v2 (authenticated only) return path entries plus one
+-- entry per Cook anything recipe with at least one check-in.
 --
--- New columns (appended, existing ones keep their order and meaning):
+-- v2 columns: the original eight (same order) plus
 --   kind                   'path' | 'cook_anything'
 --   generated_recipe_id    user_generated_recipes.id (null for path)
 --   last_cooked_at         newest check-in time
@@ -16,19 +18,13 @@
 -- 'completed', added_at is the first check-in time and times_cooked is the
 -- number of check-ins. dish_name is the dish the user typed.
 --
--- The return type changes, so both functions are dropped and recreated.
--- Grants are re-applied exactly as in 20261115000000 (service-role helper,
--- authenticated-only client RPC). No tables change; the check-in tables
--- already have owner-only SELECT policies, so the app can read its own
--- check-in history directly.
+-- No tables change; the check-in tables already have owner-only SELECT
+-- policies, so the app can read its own check-in history directly.
 --
 -- This is a NEW migration. Kai applies it to prod only after the PR is merged.
 -- =============================================================================
 
-DROP FUNCTION IF EXISTS get_my_recipe_book();
-DROP FUNCTION IF EXISTS get_recipe_book_for_user(UUID);
-
-CREATE FUNCTION get_recipe_book_for_user(p_user_id UUID)
+CREATE FUNCTION get_recipe_book_v2_for_user(p_user_id UUID)
 RETURNS TABLE (
     slot_id INTEGER,
     slot_order INTEGER,
@@ -125,7 +121,7 @@ AS $$
     ORDER BY (x.c_kind = 'cook_anything'), x.c_slot_order, x.c_added_at, x.c_generated_id;
 $$;
 
-CREATE FUNCTION get_my_recipe_book()
+CREATE FUNCTION get_my_recipe_book_v2()
 RETURNS TABLE (
     slot_id INTEGER,
     slot_order INTEGER,
@@ -149,12 +145,12 @@ BEGIN
     IF auth.uid() IS NULL THEN
         RAISE EXCEPTION 'Authentication required';
     END IF;
-    RETURN QUERY SELECT * FROM get_recipe_book_for_user(auth.uid());
+    RETURN QUERY SELECT * FROM get_recipe_book_v2_for_user(auth.uid());
 END;
 $$;
 
-REVOKE EXECUTE ON FUNCTION get_recipe_book_for_user(UUID) FROM PUBLIC, anon, authenticated;
-GRANT EXECUTE ON FUNCTION get_recipe_book_for_user(UUID) TO service_role;
+REVOKE EXECUTE ON FUNCTION get_recipe_book_v2_for_user(UUID) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION get_recipe_book_v2_for_user(UUID) TO service_role;
 
-REVOKE EXECUTE ON FUNCTION get_my_recipe_book() FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION get_my_recipe_book() TO authenticated;
+REVOKE EXECUTE ON FUNCTION get_my_recipe_book_v2() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION get_my_recipe_book_v2() TO authenticated;

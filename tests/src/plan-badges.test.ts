@@ -457,7 +457,7 @@ describe('plan, badges and recipe book', () => {
       return r.rows[0].id;
     }
 
-    const book = (u: TestUser) => asUser<BookRow>(u.id, 'SELECT * FROM get_my_recipe_book()');
+    const book = (u: TestUser) => asUser<BookRow>(u.id, 'SELECT * FROM get_my_recipe_book_v2()');
 
     it('appears after the first check-in, not before', async () => {
       const recipe = await db.createGeneratedRecipe(user.id, {
@@ -582,8 +582,26 @@ describe('plan, badges and recipe book', () => {
     });
 
     it('the service-role helper is not callable by clients', async () => {
-      await expect(asUser(user.id, 'SELECT * FROM get_recipe_book_for_user($1)', [user.id])).rejects.toThrow(/permission denied/i);
-      await expect(asRole('anon', 'SELECT * FROM get_my_recipe_book()')).rejects.toThrow(/permission denied/i);
+      await expect(asUser(user.id, 'SELECT * FROM get_recipe_book_v2_for_user($1)', [user.id])).rejects.toThrow(/permission denied/i);
+      await expect(asRole('anon', 'SELECT * FROM get_my_recipe_book_v2()')).rejects.toThrow(/permission denied/i);
+    });
+
+    it('v2 needs a signed-in user', async () => {
+      await expect(asUser('', 'SELECT * FROM get_my_recipe_book_v2()')).rejects.toThrow(/Authentication required/);
+    });
+
+    it('the original get_my_recipe_book() stays path-only with non-null slots', async () => {
+      await cook(user, 1);
+      const recipe = await db.createGeneratedRecipe(user.id, { stepCount: 3, ingredientCount: 4, timeEstimateMinutes: 20 });
+      await generatedCheckIn(user, recipe.id);
+      const rows = await asUser<Record<string, unknown>>(user.id, 'SELECT * FROM get_my_recipe_book()');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].slot_id).not.toBeNull();
+      expect(rows[0].slot_order).not.toBeNull();
+      expect(Object.keys(rows[0])).toEqual([
+        'slot_id', 'slot_order', 'dish_name', 'user_recipe_id', 'recipe_title', 'label', 'added_at', 'times_cooked',
+      ]);
+      expect((await book(user)).map((r) => r.kind)).toEqual(['path', 'cook_anything']);
     });
   });
 

@@ -18,6 +18,7 @@ import {
   RecipeSchema,
   VideosSchema,
 } from './schemas';
+import { rpcRecipeBook } from './recipe-book-rpc';
 import { createSupabaseClient } from './supabase';
 
 export function toAppSession(session: Session | null): AppSession | null {
@@ -134,7 +135,7 @@ export function createLiveBackend(opts: {
     },
 
     async getRecipeBook() {
-      const { data, error } = await supabase.rpc('get_my_recipe_book');
+      const { data, error } = await rpcRecipeBook((fn) => supabase.rpc(fn));
       if (error) throw fromSupabaseError(error);
       return parseOrThrow(RecipeBookSchema, data, 'recipe book');
     },

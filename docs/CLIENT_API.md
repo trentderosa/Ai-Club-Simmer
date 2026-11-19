@@ -17,7 +17,7 @@ The app never holds the service-role key or the YouTube key, and it never calls 
 | Check-in (F6, F7, F9, F11) | AI server `POST /api/check-ins` (path: `user_recipe_id` + `slot_id`; free-form: `generated_recipe_id`) |
 | Mastery challenge (F8) | Same recipe call on slot 10, plus `POST /api/mastery/sessions`, `POST /api/mastery/sessions/:id/reveal`, and `mastery_session_id` in the check-in |
 | Badges (F9) | `rpc('get_my_badges')` |
-| Recipe book (F10) | `rpc('get_my_recipe_book')`; full recipe via the AI server (path) or `user_generated_recipes` (Cook anything); history via `check_ins` / `generated_recipe_check_ins` selects |
+| Recipe book (F10) | `rpc('get_my_recipe_book_v2')`; full recipe via the AI server (path) or `user_generated_recipes` (Cook anything); history via `check_ins` / `generated_recipe_check_ins` selects |
 
 ---
 
@@ -274,10 +274,12 @@ Show `earned: false` badges grayed out.
 ## F10. Recipe book
 
 ```ts
-const { data: book } = await supabase.rpc('get_my_recipe_book');
+const { data: book } = await supabase.rpc('get_my_recipe_book_v2');
 // [{ slot_id, slot_order, dish_name, user_recipe_id, recipe_title, label: 'completed'|'mastered', added_at, times_cooked,
 //    kind: 'path'|'cook_anything', generated_recipe_id, last_cooked_at, last_difficulty_rating }]
 ```
+
+`get_my_recipe_book()` still exists with its original path-only shape for older app builds. New clients call `get_my_recipe_book_v2()` and fall back to the original only if v2 is missing (database not migrated yet).
 
 The book lists path recipes you have checked in on and Cook anything dishes (F11) that have at least one check-in, each once. Path entries come first in path order; sort for display as you like.
 
@@ -296,7 +298,7 @@ The book lists path recipes you have checked in on and Cook anything dishes (F11
 
 If the list is empty, show: "Cook a recipe and finish the check-in to add it to your recipe book."
 
-Read-only full recipe: open the entry's slot with `POST /api/recipes/generate/:slotId` (F3). For a completed slot it returns the saved recipe (`cached: true`, nothing is regenerated), with `videos`, `dish_videos` and `photo`, and slot 10 steps stay masked. The app does this by opening `/recipe/[slotId]`.
+Read-only full recipe: open the entry's slot with `POST /api/recipes/generate/:slotId` (F3). For a completed slot it returns the saved recipe (`cached: true`, nothing is regenerated), with `videos`, `dish_videos` and `photo`, and slot 10 steps stay masked. The app does this by opening `/book-entry/path/[id]`.
 
 Read-only Cook anything recipe: select it from `user_generated_recipes` by `generated_recipe_id` (the app does this on `/book-entry/cook-anything/[id]`; Cook again goes to `/generated-cook/[recipeId]`).
 

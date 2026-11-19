@@ -93,13 +93,27 @@ function CookAnythingEntry({ recipeId }: { recipeId: string | undefined }) {
   );
 }
 
+interface CookHistory {
+  rows: CheckInHistoryEntry[];
+  /** From the recipe book entry (the history read is capped); null if unknown. */
+  timesCooked: number | null;
+}
+
 /** The user's own check-ins on this entry. Reloads when the screen regains focus (after cooking again). */
 function useCheckInHistory(target: BookTarget | null) {
   const { backend } = useSession();
   const key = target ? (target.kind === 'path' ? `path:${target.slotId}` : `cook:${target.generatedRecipeId}`) : 'none';
-  const state = useAsync<CheckInHistoryEntry[]>(async () => {
+  const state = useAsync<CookHistory>(async () => {
     if (!target) throw new ApiError('not_found', 'Unknown recipe.');
-    return backend.getCheckInHistory(target);
+    const [rows, timesCooked] = await Promise.all([
+      backend.getCheckInHistory(target),
+      // The history read is capped, so the count comes from the book entry. A failure here just hides the count.
+      backend
+        .getRecipeBook()
+        .then((book) => book.find((e) => (target.kind === 'path' ? e.kind === 'path' && e.slot_id === target.slotId : e.generated_recipe_id === target.generatedRecipeId))?.times_cooked ?? null)
+        .catch(() => null),
+    ]);
+    return { rows, timesCooked };
   }, [backend, key]);
   const { reload } = state;
   const first = useRef(true);
@@ -130,7 +144,7 @@ function EntryView({
 }: {
   state: Loadable;
   title: string;
-  history: Loadable & { data: CheckInHistoryEntry[] | null };
+  history: Loadable & { data: CookHistory | null };
   overline: string;
   recipe: Recipe | undefined;
   videos: Videos | undefined;
@@ -203,11 +217,12 @@ function EntryView({
   );
 }
 
-function YourCooks({ history }: { history: Loadable & { data: CheckInHistoryEntry[] | null } }) {
-  const rows = history.data;
+function YourCooks({ history }: { history: Loadable & { data: CookHistory | null } }) {
+  const rows = history.data?.rows ?? null;
+  const count = history.data ? (history.data.timesCooked ?? history.data.rows.length) : null;
   return (
     <View style={styles.sec}>
-      <SectionHead title="Your cooks" aside={rows ? `${rows.length} ${rows.length === 1 ? 'cook' : 'cooks'}` : undefined} />
+      <SectionHead title="Your cooks" aside={count !== null ? `${count} ${count === 1 ? 'cook' : 'cooks'}` : undefined} />
       {rows && rows.length > 0 ? (
         rows.map((row) => <CookRow key={row.id} row={row} />)
       ) : history.status === 'error' ? (
