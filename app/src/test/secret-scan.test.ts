@@ -1,4 +1,4 @@
-import { validateBaseUrl } from '../../app.config';
+import appConfig, { validateBaseUrl } from '../../app.config';
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 // No @types/node in this app, so the few Node modules are typed by hand.
@@ -68,4 +68,22 @@ describe('validateBaseUrl', () => {
       expect(() => validateBaseUrl(v)).toThrow(/EXPO_BASE_URL/);
     },
   );
+});
+
+describe('app.config baseUrl', () => {
+  const original = process.env.EXPO_BASE_URL;
+  const build = () => appConfig({ config: {} } as never);
+  afterEach(() => {
+    if (original === undefined) delete process.env.EXPO_BASE_URL;
+    else process.env.EXPO_BASE_URL = original;
+  });
+  it('sets baseUrl when the variable is set', () => {
+    process.env.EXPO_BASE_URL = '/Ai-Club-Simmer';
+    expect(build().experiments?.baseUrl).toBe('/Ai-Club-Simmer');
+  });
+  it.each([undefined, ''])('leaves baseUrl unset for %p (site root)', (v) => {
+    if (v === undefined) delete process.env.EXPO_BASE_URL;
+    else process.env.EXPO_BASE_URL = v;
+    expect(build().experiments?.baseUrl).toBeUndefined();
+  });
 });

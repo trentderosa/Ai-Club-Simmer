@@ -10,8 +10,6 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -31,7 +29,6 @@ jobs:
       EXPO_PUBLIC_SUPABASE_URL: ${{ vars.EXPO_PUBLIC_SUPABASE_URL }}
       EXPO_PUBLIC_SUPABASE_ANON_KEY: ${{ vars.EXPO_PUBLIC_SUPABASE_ANON_KEY }}
       EXPO_PUBLIC_AI_SERVER_URL: ${{ vars.EXPO_PUBLIC_AI_SERVER_URL }}
-      EXPO_BASE_URL: /${{ github.event.repository.name }}
       EXPO_NO_DOTENV: '1'
 
     steps:
@@ -51,10 +48,11 @@ jobs:
             echo "Mock mode: building with fake data and no backend."
             exit 0
           fi
+          trim() { printf '%s' "$1" | tr -d '[:space:]'; }
           missing=""
-          [ -z "$EXPO_PUBLIC_SUPABASE_URL" ] && missing="$missing EXPO_PUBLIC_SUPABASE_URL"
-          [ -z "$EXPO_PUBLIC_SUPABASE_ANON_KEY" ] && missing="$missing EXPO_PUBLIC_SUPABASE_ANON_KEY"
-          [ -z "$EXPO_PUBLIC_AI_SERVER_URL" ] && missing="$missing EXPO_PUBLIC_AI_SERVER_URL"
+          [ -z "$(trim "$EXPO_PUBLIC_SUPABASE_URL")" ] && missing="$missing EXPO_PUBLIC_SUPABASE_URL"
+          [ -z "$(trim "$EXPO_PUBLIC_SUPABASE_ANON_KEY")" ] && missing="$missing EXPO_PUBLIC_SUPABASE_ANON_KEY"
+          [ -z "$(trim "$EXPO_PUBLIC_AI_SERVER_URL")" ] && missing="$missing EXPO_PUBLIC_AI_SERVER_URL"
           if [ -n "$missing" ]; then
             echo "::error::Mock mode is off but these repository variables are not set:$missing"
             exit 1
@@ -66,14 +64,18 @@ jobs:
       - name: Check (typecheck, lint, secrets, tests)
         run: npm run check
 
+      - name: Configure Pages
+        id: pages
+        uses: actions/configure-pages@v5
+
       - name: Export web build for Pages
+        # base_path is /<repo name> for a project site and empty for a custom domain (root).
+        env:
+          EXPO_BASE_URL: ${{ steps.pages.outputs.base_path }}
         run: npm run export:web:pages
 
       - name: Check build output for service-role keys
         run: npm run check:secrets:dist
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
@@ -84,6 +86,9 @@ jobs:
     name: Deploy to GitHub Pages
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
