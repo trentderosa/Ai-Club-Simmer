@@ -243,6 +243,25 @@ export class TestDatabase {
       REVOKE ALL ON xp_award_attempts FROM PUBLIC, anon, authenticated;
       GRANT ALL ON xp_award_attempts TO service_role;
 
+      -- 20261120150000_cook_anything_generation_limits.sql: re-assert after broad GRANTs
+      REVOKE ALL ON cook_anything_generation_hits FROM PUBLIC, anon, authenticated;
+      GRANT ALL ON cook_anything_generation_hits TO service_role;
+      REVOKE EXECUTE ON FUNCTION public.try_cook_anything_generation(UUID, INTEGER, INTEGER, TIMESTAMPTZ)
+          FROM PUBLIC, anon, authenticated;
+      GRANT EXECUTE ON FUNCTION public.try_cook_anything_generation(UUID, INTEGER, INTEGER, TIMESTAMPTZ)
+          TO service_role;
+      DO $cook_limit_seq$
+      DECLARE
+          seq text;
+      BEGIN
+          seq := pg_get_serial_sequence('public.cook_anything_generation_hits', 'id');
+          IF seq IS NOT NULL THEN
+              EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM PUBLIC, anon, authenticated', seq);
+              EXECUTE format('GRANT USAGE, SELECT ON SEQUENCE %s TO service_role', seq);
+          END IF;
+      END
+      $cook_limit_seq$;
+
       -- 20261116000000_mastery_sessions.sql: re-assert after broad GRANTs
       REVOKE ALL ON mastery_sessions FROM PUBLIC, anon, authenticated;
       GRANT SELECT, INSERT, UPDATE ON mastery_sessions TO service_role;
@@ -264,6 +283,7 @@ export class TestDatabase {
   }
 
   async cleanupTestData(): Promise<void> {
+    await this.pool.query('DELETE FROM cook_anything_generation_hits');
     await this.pool.query('DELETE FROM xp_award_attempts');
     await this.pool.query('DELETE FROM generated_recipe_xp_events');
     await this.pool.query('DELETE FROM generated_recipe_check_ins');

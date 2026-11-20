@@ -156,8 +156,18 @@ frozen `xp_value`. A later save of the same dish cannot raise those counts. A fu
 clamped recipe has `xp_value` 177, below roast chicken (181). The daily cap
 (default 200) still applies when today's slot + free-form XP would exceed it.
 
-The per-user generation limiter is in-memory per process: it resets on restart, is not
-shared across instances, and does not prune old user keys. That is enough for the demo.
+The per-user generation count is stored in `cook_anything_generation_hits`
+(migration `20261120150000_cook_anything_generation_limits.sql`, applied after merge).
+A restart or a second process sees the same window. Each allowed uncached generation
+is one row; a hit exactly one window old no longer counts, and that user's expired
+rows are removed on the next attempt. The table is service-role only (RLS on, no
+client policies). The server calls `try_cook_anything_generation` and aborts it after
+the usual Supabase REST timeout. If that call fails, the route returns `502` and does
+not generate, so a database miss cannot open unlimited Ollama calls. Cached dishes
+skip the limiter. Without `SUPABASE_URL` and the service-role key (dev only;
+production refuses to start that way), or when stub auth is on, the limiter stays in
+memory and still resets on restart. The limits themselves are unchanged (default 5
+uncached generations per hour).
 
 `POST /api/check-ins` with `generated_recipe_id` awards XP via `award_generated_recipe_xp`
 (service role only). It uses the same slot formula, 50% repeats keyed on the normalized

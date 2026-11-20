@@ -1,8 +1,20 @@
 /**
- * In-memory per-user limiter for uncached cook-anything generations.
+ * Per-user limiter for uncached cook-anything generations.
  * Cached reuse does not call this.
+ *
+ * GenerationRateLimiter is the dev fallback when Supabase is not configured.
+ * It lives in this process only. Production uses SupabaseGenerationRateLimiter,
+ * which stores hits in cook_anything_generation_hits.
  */
-export class GenerationRateLimiter {
+export interface CookAnythingGenerationLimiter {
+  /**
+   * @param now epoch milliseconds. The in-memory limiter uses it as the clock.
+   * The database limiter forwards it when provided and otherwise uses the database clock.
+   */
+  allow(userId: string, now?: number): Promise<boolean>;
+}
+
+export class GenerationRateLimiter implements CookAnythingGenerationLimiter {
   private readonly hits = new Map<string, number[]>();
 
   constructor(
@@ -10,15 +22,15 @@ export class GenerationRateLimiter {
     private readonly max: number
   ) {}
 
-  allow(userId: string, now = Date.now()): boolean {
+  allow(userId: string, now = Date.now()): Promise<boolean> {
     const cutoff = now - this.windowMs;
     const times = (this.hits.get(userId) ?? []).filter((t) => t > cutoff);
     if (times.length >= this.max) {
       this.hits.set(userId, times);
-      return false;
+      return Promise.resolve(false);
     }
     times.push(now);
     this.hits.set(userId, times);
-    return true;
+    return Promise.resolve(true);
   }
 }
