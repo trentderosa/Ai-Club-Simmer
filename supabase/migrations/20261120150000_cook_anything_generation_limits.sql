@@ -66,7 +66,7 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
     -- Same bounds as COOK_ANYTHING_RATE_LIMIT in ai-server (1s–24h, 1–100).
-    IF p_window_ms < 1 OR p_window_ms > 86400000 OR p_max < 1 OR p_max > 100 THEN
+    IF p_window_ms < 1000 OR p_window_ms > 86400000 OR p_max < 1 OR p_max > 100 THEN
         RAISE EXCEPTION 'try_cook_anything_generation window or max out of range'
             USING ERRCODE = '22023';
     END IF;

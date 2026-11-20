@@ -287,6 +287,41 @@ describe('POST /api/recipes/cook-anything', () => {
     expect(blocked.body.code).toBe('GENERATION_RATE_LIMITED');
   });
 
+  it('joins a second request for the same dish while the rate limit is still resolving', async () => {
+    let resolveAllow: (allowed: boolean) => void = () => {};
+    const allow = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveAllow = resolve;
+        })
+    );
+    const limiter: CookAnythingGenerationLimiter = { allow };
+    const ollama = mockOllama(validRecipe);
+    const { app } = createApp(ollama, mockSupabase(), new InMemoryGeneratedRecipeRepository(), {
+      generationLimiter: limiter,
+    });
+    const post = (): request.Test =>
+      request(app)
+        .post('/api/recipes/cook-anything')
+        .set('Authorization', 'Bearer token')
+        .send({ dish: 'Pad Thai' });
+
+    const both = Promise.all([post(), post()]);
+    for (let i = 0; i < 20 && allow.mock.calls.length < 1; i += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(allow).toHaveBeenCalledTimes(1);
+    resolveAllow(true);
+    const [first, second] = await both;
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(first.body.generated_recipe_id).toBe(second.body.generated_recipe_id);
+    expect(first.body.cached).toBe(false);
+    expect(second.body.cached).toBe(false);
+    expect(ollama.generate).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses a new recipe when the rate-limit store fails and still serves a saved dish', async () => {
     const repo = new InMemoryGeneratedRecipeRepository();
     const ollama = mockOllama(validRecipe);
@@ -297,7 +332,7 @@ describe('POST /api/recipes/cook-anything', () => {
       .post('/api/recipes/cook-anything')
       .set('Authorization', 'Bearer token')
       .send({ dish: 'Pad Thai' });
-    expect(denied.status).toBe(502);
+    expect(denied.status).toBe(503);
     expect(denied.body).toEqual({
       error: 'New recipes are temporarily unavailable. Try a dish you already saved, or try again later.',
       code: 'GENERATION_RATE_LIMIT_UNAVAILABLE',

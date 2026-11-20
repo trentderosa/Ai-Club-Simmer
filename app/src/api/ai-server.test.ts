@@ -63,6 +63,11 @@ describe('parseResponse: recipe', () => {
     [429, { error: 'Too many requests' }, 'rate_limited'],
     [500, { error: 'Recipe generation failed. Please try again.', attempts: 3 }, 'generation_failed'],
     [503, { error: 'Authentication service temporarily unavailable' }, 'unavailable'],
+    [
+      503,
+      { error: 'New recipes are temporarily unavailable.', code: 'GENERATION_RATE_LIMIT_UNAVAILABLE' },
+      'server',
+    ],
   ] as const)('maps HTTP %i to %s', async (status, body, kind) => {
     expect(await kindOf(parseResponse(res(status, body), RecipeResponseSchema, 'recipe'))).toBe(kind);
   });

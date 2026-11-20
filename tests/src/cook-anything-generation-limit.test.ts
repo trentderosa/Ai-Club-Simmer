@@ -125,6 +125,7 @@ describe('cook anything generation rate limit', () => {
 
   it('rejects a window or max outside the configured bounds and writes nothing', async () => {
     await expect(allow(user.id, 0, 1, t0)).rejects.toThrow(/out of range/);
+    await expect(allow(user.id, 999, 1, t0)).rejects.toThrow(/out of range/);
     await expect(allow(user.id, 86_400_001, 1, t0)).rejects.toThrow(/out of range/);
     await expect(allow(user.id, 1000, 0, t0)).rejects.toThrow(/out of range/);
     await expect(allow(user.id, 1000, 101, t0)).rejects.toThrow(/out of range/);
