@@ -45,6 +45,66 @@ describe('generateCookAnythingRecipe', () => {
     expect(generate).toHaveBeenCalledTimes(3);
   });
 
+  it('retries when the first attempt rinses raw chicken and saves the clean second attempt', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const rinsing: Recipe = {
+        ...validRecipe,
+        steps: [{ instruction: 'Rinse the chicken under cold water.', isSafetyStep: false }],
+      };
+      const clean: Recipe = {
+        ...validRecipe,
+        steps: [{ instruction: 'Pat the chicken dry with paper towels.', isSafetyStep: false }],
+      };
+      const generate = vi
+        .fn()
+        .mockResolvedValueOnce(JSON.stringify(rinsing))
+        .mockResolvedValueOnce(JSON.stringify(clean));
+      const pending = generateCookAnythingRecipe({ generate }, 'Roast chicken', user);
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.recipe.steps[0].instruction).toBe('Pat the chicken dry with paper towels.');
+        expect(result.recipe.steps[0].isSafetyStep).toBe(true);
+        expect(JSON.stringify(result.recipe)).not.toContain('Rinse the chicken under cold water');
+      }
+      expect(generate).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith('Recipe attempt rejected', {
+        reason: 'unsafe_raw_protein_rinse',
+        attempt: 1,
+      });
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the flagged rinse when every cook-anything attempt still rinses', async () => {
+    vi.useFakeTimers();
+    try {
+      const rinsing: Recipe = {
+        ...validRecipe,
+        steps: [{ instruction: 'Rinse the chicken under cold water.', isSafetyStep: false }],
+      };
+      const generate = vi.fn().mockResolvedValue(JSON.stringify(rinsing));
+      const pending = generateCookAnythingRecipe({ generate }, 'Roast chicken', user);
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.recipe.steps[0].instruction).toBe('Rinse the chicken under cold water.');
+        expect(result.recipe.steps[0].isSafetyStep).toBe(true);
+      }
+      expect(generate).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('cleans model quirks before returning (title prefix, ingredient spaces, technique labels)', async () => {
     const dirty: Recipe = {
       ...validRecipe,

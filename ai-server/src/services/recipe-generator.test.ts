@@ -12,6 +12,7 @@ import {
 import type { OllamaClient } from './ollama-client.js';
 import { RecipeSchema, type Recipe } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
+import { HIDDEN_STEP_INSTRUCTION, maskRecipeForMastery } from '../mastery/mask.js';
 
 const mockSlot: PathSlot = {
   id: 1,
@@ -96,6 +97,93 @@ describe('generateRecipe', () => {
       expect(result.recipe.steps).toHaveLength(4);
     }
     expect(client.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a raw-protein rinse and saves the later clean attempt', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const rinsing: Recipe = {
+        ...validRecipeResponse,
+        steps: [{ instruction: 'Rinse the chicken under cold water.', isSafetyStep: false }],
+      };
+      const client = createMockOllamaClient([
+        JSON.stringify(rinsing),
+        JSON.stringify(validRecipeResponse),
+      ]);
+      const pending = generateRecipe(client, mockSlot, mockUserProfile);
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.recipe.steps.map((step) => step.instruction)).toEqual(
+          validRecipeResponse.steps.map((step) => step.instruction)
+        );
+        expect(JSON.stringify(result.recipe)).not.toContain('Rinse the chicken under cold water');
+      }
+      expect(client.generate).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith('Recipe attempt rejected', {
+        reason: 'unsafe_raw_protein_rinse',
+        attempt: 1,
+      });
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the flagged rinse when every attempt still tells the cook to rinse', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const rinsing: Recipe = {
+        ...validRecipeResponse,
+        steps: [{ instruction: 'Rinse the chicken under cold water.', isSafetyStep: false }],
+      };
+      const client = createMockOllamaClient([
+        JSON.stringify(rinsing),
+        JSON.stringify(rinsing),
+        JSON.stringify(rinsing),
+      ]);
+      const pending = generateRecipe(client, mockSlot, mockUserProfile);
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.recipe.steps[0].instruction).toBe('Rinse the chicken under cold water.');
+        expect(result.recipe.steps[0].isSafetyStep).toBe(true);
+      }
+      expect(client.generate).toHaveBeenCalledTimes(3);
+      expect(warn).toHaveBeenCalledWith('Recipe attempt rejected', {
+        reason: 'unsafe_raw_protein_rinse',
+        attempt: 3,
+      });
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not retry pat dry, do not rinse, or rinsing rice', async () => {
+    const safe: Recipe = {
+      ...validRecipeResponse,
+      steps: [
+        { instruction: 'Pat the chicken dry with paper towels.', isSafetyStep: false },
+        { instruction: 'Do not rinse the chicken.', isSafetyStep: false },
+        { instruction: 'Rinse the rice in a strainer until the water runs clear.', isSafetyStep: false },
+      ],
+    };
+    const client = createMockOllamaClient([JSON.stringify(safe)]);
+    const result = await generateRecipe(client, mockSlot, mockUserProfile);
+    expect(result.success).toBe(true);
+    expect(client.generate).toHaveBeenCalledTimes(1);
+    if (result.success) {
+      expect(result.recipe.steps[0].isSafetyStep).toBe(true);
+      expect(result.recipe.steps[1].isSafetyStep).toBe(true);
+      expect(result.recipe.steps[2].isSafetyStep).toBe(false);
+    }
   });
 
   it('retries on invalid JSON and succeeds on second attempt', async () => {
@@ -549,6 +637,116 @@ describe('ensureSafetyFlags - additional keywords', () => {
   });
 });
 
+describe('ensureSafetyFlags - raw protein rinse and poultry doneness', () => {
+  function flag(instruction: string): Recipe['steps'][number] {
+    const recipe: Recipe = {
+      title: 'Test',
+      ingredients: [{ name: 'chicken', amount: '1 lb' }],
+      timeEstimateMinutes: 30,
+      steps: [{ instruction, isSafetyStep: false }],
+    };
+    return ensureSafetyFlags(recipe).steps[0];
+  }
+
+  it.each([
+    'Rinse the chicken under cold water',
+    'rinse the chicken',
+    'Wash the raw poultry in the sink',
+    'Rinse the bird',
+    'Rinse the meat',
+    'Give the chicken a rinse',
+    'Do not rinse the chicken, then rinse the bird under the tap.',
+    "Don't rinse the chicken",
+    'Do not rinse the chicken.',
+    'Pat the chicken dry with paper towels.',
+    'Pat the chicken dry, then wash your hands and the board.',
+  ])('flags %s and does not rewrite it', (instruction) => {
+    const step = flag(instruction);
+    expect(step.isSafetyStep).toBe(true);
+    expect(step.instruction).toBe(instruction);
+  });
+
+  it.each([
+    'Rinse the rice in a strainer until the water runs clear.',
+    'Rinse the beans.',
+    'Wash the lettuce.',
+    'The thigh should reach 165°F.',
+    'Flip, add the butter, and cook 5 minutes more, until it reads 165°F inside.',
+    'Rest 15 minutes before you carve, so the juices settle.',
+    'Season the chicken with salt and pepper.',
+    'The chicken is raw. Do not rinse the rice.',
+    'Pat the lettuce dry.',
+  ])('does not flag %s', (instruction) => {
+    const step = flag(instruction);
+    expect(step.isSafetyStep).toBe(false);
+    expect(step.instruction).toBe(instruction);
+  });
+
+  it('does not let pat dry or do not rinse clear a dangerous rinse in the same step', () => {
+    const instruction = 'Pat the chicken dry, then rinse the chicken under cold water.';
+    const step = flag(instruction);
+    expect(step.isSafetyStep).toBe(true);
+    expect(step.instruction).toBe(instruction);
+  });
+
+  it('still flags the dangerous rinse when another step is the safe sentence', () => {
+    const recipe = ensureSafetyFlags({
+      title: 'Roast chicken',
+      ingredients: [{ name: 'chicken', amount: '1' }],
+      timeEstimateMinutes: 60,
+      steps: [
+        { instruction: 'Do not rinse the chicken.', isSafetyStep: false },
+        { instruction: 'Rinse the chicken under cold water.', isSafetyStep: false },
+        { instruction: 'Rinse the rice in a strainer until the water runs clear.', isSafetyStep: false },
+      ],
+    });
+    expect(recipe.steps.map((step) => step.isSafetyStep)).toEqual([true, true, false]);
+    expect(recipe.steps[1].instruction).toBe('Rinse the chicken under cold water.');
+  });
+
+  it.each([
+    'Cook the chicken until the juices run clear.',
+    'Cook until the juices run clear.',
+    'Cook until it is no longer pink.',
+    'Cook the chicken for 6 minutes per side.',
+  ])('flags a poultry doneness step with no temperature and leaves the words (%s)', (instruction) => {
+    const step = flag(instruction);
+    expect(step.isSafetyStep).toBe(true);
+    expect(step.instruction).toBe(instruction);
+    expect(step.instruction).not.toMatch(/165/);
+  });
+
+  it('keeps the safe handling lines and the dangerous rinse visible on slot 10', () => {
+    const recipe = ensureSafetyFlags({
+      title: 'Roast chicken',
+      ingredients: [{ name: 'chicken', amount: '1' }],
+      timeEstimateMinutes: 60,
+      steps: [
+        { instruction: 'Heat the oven to 425°F.', isSafetyStep: false },
+        { instruction: 'Pat the chicken dry with paper towels.', isSafetyStep: false },
+        { instruction: 'Do not rinse the chicken.', isSafetyStep: false },
+        { instruction: 'Rinse the chicken under cold water.', isSafetyStep: false },
+        { instruction: 'Cook the chicken until the juices run clear.', isSafetyStep: false },
+        { instruction: 'Season with salt and pepper.', isSafetyStep: false },
+        { instruction: 'Rest on a board for 15 minutes.', isSafetyStep: false },
+      ],
+    });
+    const masked = maskRecipeForMastery(recipe);
+
+    expect(masked.steps[1].instruction).toBe('Pat the chicken dry with paper towels.');
+    expect(masked.steps[1].isSafetyStep).toBe(true);
+    expect(masked.steps[1].isHidden).toBeUndefined();
+    expect(masked.steps[2].instruction).toBe('Do not rinse the chicken.');
+    expect(masked.steps[2].isSafetyStep).toBe(true);
+    expect(masked.steps[3].instruction).toBe('Rinse the chicken under cold water.');
+    expect(masked.steps[3].isSafetyStep).toBe(true);
+    expect(masked.steps[4].instruction).toBe('Cook the chicken until the juices run clear.');
+    expect(masked.steps[4].isSafetyStep).toBe(true);
+    expect(masked.steps[5].instruction).toBe(HIDDEN_STEP_INSTRUCTION);
+    expect(masked.steps[6].instruction).toBe(HIDDEN_STEP_INSTRUCTION);
+  });
+});
+
 describe('sanitizeUserText', () => {
   it('strips newlines from text', () => {
     const input = 'Line 1\nLine 2\r\nLine 3';
@@ -731,6 +929,21 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
     expect(client.generate).toHaveBeenCalledTimes(3);
   });
 
+  it('does not save a slot 10 rinse that also misses the hideable-step floor', async () => {
+    const rinsing = recipeWith([
+      step('Rinse the chicken under cold water.'),
+      step('Season the chicken with salt and pepper.'),
+      step('Gather the ingredients on the counter.'),
+    ]);
+    const client = createMockOllamaClient([rinsing, rinsing, rinsing]);
+    const result = await run(client, finalSlot);
+    expect(result.success).toBe(false);
+    expect(client.generate).toHaveBeenCalledTimes(3);
+    if (!result.success) {
+      expect(result.error.attempts).toBe(3);
+    }
+  });
+
   it('does not apply to non-final slots', async () => {
     const client = createMockOllamaClient([allKeywordSteps]);
     const result = await run(client, mockSlot);
@@ -796,6 +1009,10 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
     }
     expect(prompt).toContain('MUST be flagged as a safety step');
     expect(prompt).toContain('never hidden');
+    for (const phrase of ['pat dry', 'do not rinse', 'poultry doneness', 'no temperature']) {
+      expect(prompt).toContain(phrase);
+    }
+    expect(prompt).toContain('do not count toward that number');
   });
 
   it('adds the hidden-step hint to the prompt only for the final slot', () => {
