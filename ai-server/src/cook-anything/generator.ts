@@ -1,10 +1,11 @@
 import { ZodError } from 'zod';
-import { getRecipeJsonSchema } from '../schemas/recipe.js';
+import { getRecipeJsonSchema, type Recipe } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 import {
   cleanRecipe,
   ensureSafetyFlags,
   INVALID_JSON_REASON,
+  recipeHasAffirmativeProteinRinse,
   type RecipeGenerationResponse,
 } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
@@ -21,7 +22,9 @@ function sleep(ms: number): Promise<void> {
 
 /**
  * Generate a cook-anything recipe through the same Ollama + Zod path as
- * path slots. Invalid output is retried (3 attempts total) and never saved.
+ * path slots. Invalid output is retried (3 attempts total). An affirmative
+ * raw-protein rinse is rejected the same way; if every attempt still rinses,
+ * the flagged recipe is the fallback.
  */
 export async function generateCookAnythingRecipe(
   client: OllamaClient,
@@ -31,6 +34,7 @@ export async function generateCookAnythingRecipe(
   const prompt = buildCookAnythingPrompt(dishQuery, user);
   const jsonSchema = getRecipeJsonSchema();
   let lastError: Error | ZodError | null = null;
+  let lastUnsafeRecipe: Recipe | null = null;
 
   for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
     if (attempt > 1) {
@@ -50,10 +54,21 @@ export async function generateCookAnythingRecipe(
         lastError = validationResult.error;
         continue;
       }
-      return { success: true, recipe: ensureSafetyFlags(cleanRecipe(validationResult.data, FreeformRecipeSchema)) };
+      const recipe = ensureSafetyFlags(cleanRecipe(validationResult.data, FreeformRecipeSchema));
+      if (recipeHasAffirmativeProteinRinse(recipe)) {
+        console.warn('Recipe attempt rejected', { reason: 'unsafe_raw_protein_rinse', attempt });
+        lastUnsafeRecipe = recipe;
+        lastError = new Error('unsafe_raw_protein_rinse');
+        continue;
+      }
+      return { success: true, recipe };
     } catch (error) {
       lastError = error as Error;
     }
+  }
+
+  if (lastUnsafeRecipe) {
+    return { success: true, recipe: lastUnsafeRecipe };
   }
 
   const errorMessage =

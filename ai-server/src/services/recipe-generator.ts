@@ -232,7 +232,7 @@ Based on this feedback, include a short "coachNote" at the top of the recipe tha
   // Final slot (mastery challenge): non-safety steps are hidden, so the recipe
   // needs enough of them. Safety flagging stays strict (rule 4 still applies).
   const masteryConstraint = slot.isFinal
-    ? `\n${dietaryConstraint ? 8 : 7}. This is the final mastery recipe. Write at least ${MASTERY_MIN_STEPS} steps, and make at least ${MASTERY_MIN_HIDDEN_STEPS} of them real steps that do NOT involve heat, knives, raw meat, hot oil, peeling, grating, draining, pan work, or roasting, such as gathering and measuring ingredients, seasoning, mixing, and resting. Each of those steps must be a full instruction of at least 5 words; one-line steps like "Serve." or "Enjoy!" do not count. Any step that involves heat, knives, raw meat, hot oil, peeling, grating, draining, pan work, or roasting MUST be flagged as a safety step (isSafetyStep: true) and is never hidden.`
+    ? `\n${dietaryConstraint ? 8 : 7}. This is the final mastery recipe. Write at least ${MASTERY_MIN_STEPS} steps, and make at least ${MASTERY_MIN_HIDDEN_STEPS} of them real steps that do NOT involve heat, knives, raw meat, hot oil, peeling, grating, draining, pan work, or roasting, such as gathering and measuring ingredients, seasoning, mixing, and resting. Pat-dry, do-not-rinse, and poultry doneness steps do not count toward that number. Each of those steps must be a full instruction of at least 5 words; one-line steps like "Serve." or "Enjoy!" do not count. Any step that involves heat, knives, raw meat, hot oil, peeling, grating, draining, pan work, or roasting, or that says to pat dry, says do not rinse, or is a poultry doneness step with no temperature, MUST be flagged as a safety step (isSafetyStep: true) and is never hidden.`
     : '';
 
   return `You are a helpful cooking instructor creating a recipe for the Simmer cooking app.
@@ -328,6 +328,11 @@ function hasAffirmativeProteinRinse(instruction: string): boolean {
     if (!RAW_PROTEIN_RE.test(sentence)) return false;
     return rinseOrWashSpans(sentence).some((span) => !span.negated);
   });
+}
+
+/** True when a step tells the cook to rinse or wash chicken, poultry, meat, or bird. */
+export function recipeHasAffirmativeProteinRinse(recipe: Pick<Recipe, 'steps'>): boolean {
+  return recipe.steps.some((step) => hasAffirmativeProteinRinse(step.instruction));
 }
 
 /**
@@ -477,6 +482,9 @@ export async function generateRecipe(
   const jsonSchema = getRecipeJsonSchema();
 
   let lastError: Error | ZodError | null = null;
+  // Flagged recipe from an attempt that told the cook to rinse raw meat.
+  // Used only when every attempt fails, and only if slot 10 still has enough hideable steps.
+  let lastUnsafeRecipe: Recipe | null = null;
 
   // Retry loop: attempt up to MAX_RETRIES + 1 times (initial + 2 retries = 3 total)
   for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
@@ -522,6 +530,18 @@ export async function generateRecipe(
       // Cleanup runs first so the hideable-step count sees the final recipe.
       const recipeWithSafetyFlags = ensureSafetyFlags(cleanRecipe(validationResult.data));
 
+      // An affirmative rinse is a failed attempt. The flag stays on the recipe so
+      // that, if every attempt still rinses, the saved fallback is marked and
+      // slot 10 cannot hide it. A later clean attempt replaces it.
+      if (recipeHasAffirmativeProteinRinse(recipeWithSafetyFlags)) {
+        console.warn('Recipe attempt rejected', { reason: 'unsafe_raw_protein_rinse', attempt });
+        const meetsHideableFloor =
+          !slot.isFinal || countedHiddenStepCount(recipeWithSafetyFlags) >= MASTERY_MIN_HIDDEN_STEPS;
+        if (meetsHideableFloor) lastUnsafeRecipe = recipeWithSafetyFlags;
+        lastError = new Error('unsafe_raw_protein_rinse');
+        continue;
+      }
+
       // Step 4 (final slot only): the mastery challenge hides non-safety steps,
       // so count them after safety flagging. Too few counts as a failed attempt.
       if (slot.isFinal) {
@@ -560,6 +580,14 @@ export async function generateRecipe(
       });
       // Continue to retry
     }
+  }
+
+  // Every attempt failed. A flagged rinse is saved only when nothing cleaner arrived.
+  if (
+    lastUnsafeRecipe &&
+    (!slot.isFinal || countedHiddenStepCount(lastUnsafeRecipe) >= MASTERY_MIN_HIDDEN_STEPS)
+  ) {
+    return { success: true, recipe: lastUnsafeRecipe };
   }
 
   // All attempts exhausted - return typed error with context

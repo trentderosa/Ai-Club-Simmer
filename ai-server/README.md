@@ -127,7 +127,8 @@ items dropped, items cut to 100 chars, at most 50 items), so messy equipment nev
 ## Mastery challenge (slot 10)
 
 The final slot's recipe is always returned masked (`src/mastery/mask.ts`): every non-safety
-step gets placeholder text and `isHidden: true`. The saved recipe is unchanged. Hidden step
+step gets placeholder text and `isHidden: true`. The safety flagger keeps raw-protein rinse,
+pat-dry, and poultry doneness steps visible. The saved recipe is unchanged. Hidden step
 text comes only from `src/routes/mastery.ts` (mounted when Supabase and a JWT verifier are
 configured; the startup log shows `Mastery route: ENABLED`):
 
@@ -150,7 +151,7 @@ collapsed whitespace, punctuation stripped). A saved row in `user_generated_reci
 that user and normalized name is returned as `cached: true` and does not count against the
 per-user generation rate limit (`COOK_ANYTHING_RATE_LIMIT_*`, default 5 uncached
 generations per hour). Otherwise the server generates through the existing Ollama recipe
-path, applies the same food-safety prompt rule (no rinsing raw poultry or meat) and the same recipe cleanup as path recipes, looks up videos the same way as a path slot, looks up a Wikimedia Commons dish photo (`src/services/dish-photo.ts`; CC0 / public domain / CC BY / CC BY-SA only; a found photo is cached in `dish_photos` and stored as `photo_json`; a genuine miss is cached for 7 days) and dish videos (`dish_videos`), clamps the XP *counts* (not the
+path, applies the same food-safety prompt rule (no rinsing raw poultry or meat), the same safety flagger (an affirmative raw-protein rinse is retried, and if every attempt still rinses that step stays flagged and visible, as do pat-dry and poultry doneness steps), and the same recipe cleanup as path recipes, looks up videos the same way as a path slot, looks up a Wikimedia Commons dish photo (`src/services/dish-photo.ts`; CC0 / public domain / CC BY / CC BY-SA only; a found photo is cached in `dish_photos` and stored as `photo_json`; a genuine miss is cached for 7 days) and dish videos (`dish_videos`), clamps the XP *counts* (not the
 saved recipe body) to `FREEFORM_COUNT_BOUNDS` (1–10 / 1–12 / 1–45), and stores the
 frozen `xp_value`. A later save of the same dish cannot raise those counts. A fully
 clamped recipe has `xp_value` 177, below roast chicken (181). The daily cap

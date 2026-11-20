@@ -99,6 +99,93 @@ describe('generateRecipe', () => {
     expect(client.generate).toHaveBeenCalledTimes(1);
   });
 
+  it('retries a raw-protein rinse and saves the later clean attempt', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const rinsing: Recipe = {
+        ...validRecipeResponse,
+        steps: [{ instruction: 'Rinse the chicken under cold water.', isSafetyStep: false }],
+      };
+      const client = createMockOllamaClient([
+        JSON.stringify(rinsing),
+        JSON.stringify(validRecipeResponse),
+      ]);
+      const pending = generateRecipe(client, mockSlot, mockUserProfile);
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.recipe.steps.map((step) => step.instruction)).toEqual(
+          validRecipeResponse.steps.map((step) => step.instruction)
+        );
+        expect(JSON.stringify(result.recipe)).not.toContain('Rinse the chicken under cold water');
+      }
+      expect(client.generate).toHaveBeenCalledTimes(2);
+      expect(warn).toHaveBeenCalledWith('Recipe attempt rejected', {
+        reason: 'unsafe_raw_protein_rinse',
+        attempt: 1,
+      });
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the flagged rinse when every attempt still tells the cook to rinse', async () => {
+    vi.useFakeTimers();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const rinsing: Recipe = {
+        ...validRecipeResponse,
+        steps: [{ instruction: 'Rinse the chicken under cold water.', isSafetyStep: false }],
+      };
+      const client = createMockOllamaClient([
+        JSON.stringify(rinsing),
+        JSON.stringify(rinsing),
+        JSON.stringify(rinsing),
+      ]);
+      const pending = generateRecipe(client, mockSlot, mockUserProfile);
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(result.success).toBe(true);
+      if (result.success) {
+        expect(result.recipe.steps[0].instruction).toBe('Rinse the chicken under cold water.');
+        expect(result.recipe.steps[0].isSafetyStep).toBe(true);
+      }
+      expect(client.generate).toHaveBeenCalledTimes(3);
+      expect(warn).toHaveBeenCalledWith('Recipe attempt rejected', {
+        reason: 'unsafe_raw_protein_rinse',
+        attempt: 3,
+      });
+    } finally {
+      warn.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not retry pat dry, do not rinse, or rinsing rice', async () => {
+    const safe: Recipe = {
+      ...validRecipeResponse,
+      steps: [
+        { instruction: 'Pat the chicken dry with paper towels.', isSafetyStep: false },
+        { instruction: 'Do not rinse the chicken.', isSafetyStep: false },
+        { instruction: 'Rinse the rice in a strainer until the water runs clear.', isSafetyStep: false },
+      ],
+    };
+    const client = createMockOllamaClient([JSON.stringify(safe)]);
+    const result = await generateRecipe(client, mockSlot, mockUserProfile);
+    expect(result.success).toBe(true);
+    expect(client.generate).toHaveBeenCalledTimes(1);
+    if (result.success) {
+      expect(result.recipe.steps[0].isSafetyStep).toBe(true);
+      expect(result.recipe.steps[1].isSafetyStep).toBe(true);
+      expect(result.recipe.steps[2].isSafetyStep).toBe(false);
+    }
+  });
+
   it('retries on invalid JSON and succeeds on second attempt', async () => {
     const client = createMockOllamaClient([
       'not valid json {{{{',
@@ -842,6 +929,21 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
     expect(client.generate).toHaveBeenCalledTimes(3);
   });
 
+  it('does not save a slot 10 rinse that also misses the hideable-step floor', async () => {
+    const rinsing = recipeWith([
+      step('Rinse the chicken under cold water.'),
+      step('Season the chicken with salt and pepper.'),
+      step('Gather the ingredients on the counter.'),
+    ]);
+    const client = createMockOllamaClient([rinsing, rinsing, rinsing]);
+    const result = await run(client, finalSlot);
+    expect(result.success).toBe(false);
+    expect(client.generate).toHaveBeenCalledTimes(3);
+    if (!result.success) {
+      expect(result.error.attempts).toBe(3);
+    }
+  });
+
   it('does not apply to non-final slots', async () => {
     const client = createMockOllamaClient([allKeywordSteps]);
     const result = await run(client, mockSlot);
@@ -907,6 +1009,10 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
     }
     expect(prompt).toContain('MUST be flagged as a safety step');
     expect(prompt).toContain('never hidden');
+    for (const phrase of ['pat dry', 'do not rinse', 'poultry doneness', 'no temperature']) {
+      expect(prompt).toContain(phrase);
+    }
+    expect(prompt).toContain('do not count toward that number');
   });
 
   it('adds the hidden-step hint to the prompt only for the final slot', () => {
