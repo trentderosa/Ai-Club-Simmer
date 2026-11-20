@@ -272,28 +272,124 @@ const SAFETY_KEYWORD_PATTERNS = SAFETY_KEYWORDS.map(
   (keyword) => new RegExp(`\\b${keyword}`, 'i')
 );
 
+// Rinse/wash is not a bare keyword: "rinse the rice" and "rinse the beans" stay unmarked.
+// The match is the action together with chicken, poultry, meat, or bird (and the
+// poultry names a model uses for the same meat: turkey, duck, hen, thigh).
+const RAW_PROTEIN_RE = /\b(?:chickens?|poultry|meats?|birds?|turkeys?|ducks?|hens?|thighs?)\b/i;
+const RINSE_OR_WASH_SOURCE = String.raw`\b(?:rins(?:e|es|ed|ing)|wash(?:es|ed|ing)?)\b`;
+const NEGATION_RE = /\b(?:do not|don['’]?t|dont|never|avoid)\b/i;
+const PAT_RE = /\bpat(?:s|ted|ting)?\b/i;
+const DRY_RE = /\bdry\b/i;
+// A negated rinse of rice or produce is not the poultry handling line.
+const NON_PROTEIN_RINSE_RE =
+  /\b(?:rice|beans?|lentils?|grains?|quinoa|farro|barley|vegetables?|lettuce|greens?|herbs?|fruit|berries|pasta|noodles?)\b/i;
+
+const POULTRY_DONENESS_RE = /\b(?:chickens?|poultry|turkeys?|ducks?|birds?|thighs?|hens?)\b/i;
+const TEMPERATURE_RE =
+  /[°˚º]\s*[fc]\b|\b\d{2,3}\s*[fc]\b|\bdegrees?\b|\b(?:fahrenheit|celsius)\b/i;
+const JUICES_CLEAR_RE = /\bjuices?\b/i;
+const CLEAR_WORD_RE = /\bclear\b/i;
+const PINK_DONENESS_RE =
+  /\b(?:no longer|not|isn['’]?t|is not)\s+pink\b|\bpink\s+(?:inside|in the (?:middle|center|centre))\b/i;
+const PER_SIDE_RE = /\bper\s+side\b/i;
+const COOKED_THROUGH_RE = /\bcooked\s+through\b/i;
+const UNTIL_DONE_RE = /\buntil\b(?:\s+\w+){0,4}\s+(?:done|cooked)\b/i;
+const COOK_RE = /\b(?:cook|cooking)\b/i;
+const MINUTES_RE = /\bminutes?\b/i;
+
+function sentencesOf(instruction: string): string[] {
+  const parts = instruction
+    .split(/[.!?;\n]+/)
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0);
+  return parts.length > 0 ? parts : [instruction];
+}
+
+function rinseOrWashSpans(sentence: string): { negated: boolean }[] {
+  const re = new RegExp(RINSE_OR_WASH_SOURCE, 'gi');
+  const spans: { negated: boolean }[] = [];
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(sentence)) !== null) {
+    // Negation applies to this clause only, so "do not rinse, then rinse the bird"
+    // still counts the second instruction as dangerous.
+    const before = sentence.slice(0, match.index);
+    const clauseStart = Math.max(before.lastIndexOf(','), before.lastIndexOf(':'));
+    spans.push({ negated: NEGATION_RE.test(before.slice(clauseStart + 1)) });
+  }
+  return spans;
+}
+
+/**
+ * An instruction to rinse or wash chicken, poultry, meat, or bird.
+ * "Pat dry" or "do not rinse" in the same step does not cancel this.
+ */
+function hasAffirmativeProteinRinse(instruction: string): boolean {
+  return sentencesOf(instruction).some((sentence) => {
+    if (!RAW_PROTEIN_RE.test(sentence)) return false;
+    return rinseOrWashSpans(sentence).some((span) => !span.negated);
+  });
+}
+
+/**
+ * "Pat dry" or "do not rinse" for that protein. Slot 10 hides every step
+ * that is not marked safety, so leaving this unmarked hides the only
+ * instruction that tells the cook not to rinse. This never clears a
+ * dangerous flag; the caller ORs the two.
+ */
+function hasProtectiveProteinHandling(instruction: string): boolean {
+  if (!RAW_PROTEIN_RE.test(instruction)) return false;
+  if (PAT_RE.test(instruction) && DRY_RE.test(instruction)) return true;
+  return sentencesOf(instruction).some((sentence) => {
+    if (!rinseOrWashSpans(sentence).some((span) => span.negated)) return false;
+    if (RAW_PROTEIN_RE.test(sentence)) return true;
+    return !NON_PROTEIN_RINSE_RE.test(sentence);
+  });
+}
+
+/**
+ * A poultry doneness step with no temperature (juices, pink, or a clock).
+ * Marks the step only. Does not insert 165°F, reject the recipe, or change
+ * the slot 10 hideable-step minimum.
+ */
+function isPoultryDonenessWithoutTemperature(instruction: string): boolean {
+  if (TEMPERATURE_RE.test(instruction)) return false;
+  if (JUICES_CLEAR_RE.test(instruction) && CLEAR_WORD_RE.test(instruction)) return true;
+  if (PINK_DONENESS_RE.test(instruction)) return true;
+  if (!POULTRY_DONENESS_RE.test(instruction)) return false;
+  if (PER_SIDE_RE.test(instruction)) return true;
+  if (COOKED_THROUGH_RE.test(instruction)) return true;
+  if (UNTIL_DONE_RE.test(instruction)) return true;
+  return COOK_RE.test(instruction) && MINUTES_RE.test(instruction);
+}
+
 /**
  * Post-processes a validated recipe to ensure all safety steps are flagged.
  *
  * Even though we ask the LLM to flag safety steps, small models sometimes miss them.
- * This function scans each step's instruction for safety keywords and sets
- * isSafetyStep=true if any are found. Existing true flags are preserved.
+ * This function scans each step's instruction and sets isSafetyStep=true when it
+ * finds a safety keyword, a rinse or wash of raw chicken, poultry, meat, or bird,
+ * or a poultry doneness step with no temperature. Existing true flags are preserved.
+ * Instruction text is not rewritten.
+ *
+ * A safe sentence ("pat dry", "do not rinse") is marked too, so slot 10 cannot
+ * hide the only safe instruction. It is not a reason to leave a dangerous
+ * instruction unmarked.
  *
  * Uses word-boundary matching to avoid false positives like "pan" in "Spanish".
- *
- * This ensures we never return a recipe with unflagged dangerous steps.
  */
 function ensureSafetyFlags(recipe: Recipe): Recipe {
   return {
     ...recipe,
     steps: recipe.steps.map((step) => {
-      const hasSafetyKeyword = SAFETY_KEYWORD_PATTERNS.some((pattern) =>
-        pattern.test(step.instruction)
-      );
+      const dangerous =
+        SAFETY_KEYWORD_PATTERNS.some((pattern) => pattern.test(step.instruction)) ||
+        hasAffirmativeProteinRinse(step.instruction) ||
+        isPoultryDonenessWithoutTemperature(step.instruction);
+      const protective = hasProtectiveProteinHandling(step.instruction);
 
       return {
         ...step,
-        isSafetyStep: step.isSafetyStep || hasSafetyKeyword,
+        isSafetyStep: step.isSafetyStep || dangerous || protective,
       };
     }),
   };
