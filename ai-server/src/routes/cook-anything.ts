@@ -9,7 +9,10 @@ import type { GeneratedRecipeRepository } from '../repositories/generated-recipe
 import { DishValidationError, validateDishQuery } from '../cook-anything/dish-name.js';
 import { clampRecipeCounts, computeFreeformXp } from '../cook-anything/clamp.js';
 import { COOK_ANYTHING_MAX_DISH_LENGTH } from '../cook-anything/constants.js';
-import { GenerationRateLimiter } from '../cook-anything/rate-limit.js';
+import {
+  GenerationRateLimiter,
+  type CookAnythingGenerationLimiter,
+} from '../cook-anything/rate-limit.js';
 import { generateCookAnythingRecipe } from '../cook-anything/generator.js';
 import { sanitizeRecipeVideos, youtubeWatchUrl } from '../cook-anything/youtube-url.js';
 
@@ -25,10 +28,14 @@ export interface CookAnythingRouterDeps {
 export interface CookAnythingRouterOptions {
   rateLimit?: { windowMs: number; maxRequests: number };
   generationRateLimit?: { windowMs: number; maxGenerations: number };
+  /** When set, this limiter is used instead of an in-memory one built from generationRateLimit. */
+  generationLimiter?: CookAnythingGenerationLimiter;
   maxDishLength?: number;
 }
 
 type GenerationWorkError = { error: { type: string; message: string; attempts: number } };
+
+type GenerationLimitBlock = { limit: 'rate_limited' } | { limit: 'unavailable' };
 
 export function createCookAnythingRouter(
   deps: CookAnythingRouterDeps,
@@ -36,11 +43,16 @@ export function createCookAnythingRouter(
 ): Router {
   const router = Router();
   const maxDishLength = options.maxDishLength ?? COOK_ANYTHING_MAX_DISH_LENGTH;
-  const generationLimiter = new GenerationRateLimiter(
-    options.generationRateLimit?.windowMs ?? 3_600_000,
-    options.generationRateLimit?.maxGenerations ?? 5
-  );
-  const inFlight = new Map<string, Promise<CookAnythingHttpResponse | GenerationWorkError>>();
+  const generationLimiter: CookAnythingGenerationLimiter =
+    options.generationLimiter ??
+    new GenerationRateLimiter(
+      options.generationRateLimit?.windowMs ?? 3_600_000,
+      options.generationRateLimit?.maxGenerations ?? 5
+    );
+  const inFlight = new Map<
+    string,
+    Promise<CookAnythingHttpResponse | GenerationWorkError | GenerationLimitBlock>
+  >();
 
   const ipLimiter = rateLimit({
     windowMs: options.rateLimit?.windowMs ?? 60_000,
@@ -172,9 +184,24 @@ export function createCookAnythingRouter(
 
   type GenerationWorkResult =
     | CookAnythingHttpResponse
-    | { error: { type: string; message: string; attempts: number } };
+    | GenerationWorkError
+    | GenerationLimitBlock;
 
   function sendGenerationResult(res: Response, result: GenerationWorkResult): void {
+    if ('limit' in result) {
+      if (result.limit === 'rate_limited') {
+        res.status(429).json({
+          error: 'Too many new recipes for now. Try a dish you’ve already cooked, or wait and try again.',
+          code: 'GENERATION_RATE_LIMITED',
+        });
+        return;
+      }
+      res.status(503).json({
+        error: 'New recipes are temporarily unavailable. Try a dish you already saved, or try again later.',
+        code: 'GENERATION_RATE_LIMIT_UNAVAILABLE',
+      });
+      return;
+    }
     if ('error' in result && result.error) {
       res.status(500).json({
         error: 'Recipe generation failed. Please try again.',
@@ -259,15 +286,23 @@ export function createCookAnythingRouter(
         return;
       }
 
-      if (!generationLimiter.allow(userId)) {
-        res.status(429).json({
-          error: 'Too many new recipes for now. Try a dish you’ve already cooked, or wait and try again.',
-          code: 'GENERATION_RATE_LIMITED',
-        });
-        return;
-      }
-
+      // Register before any await. allow() is a round trip, and a second
+      // request for this dish must join this promise instead of spending
+      // another generation and starting another model call.
       const work = (async (): Promise<GenerationWorkResult> => {
+        let allowed: boolean;
+        try {
+          allowed = await generationLimiter.allow(userId);
+        } catch (error) {
+          console.error('cook_anything_rate_limit_failed', {
+            error: error instanceof Error ? error.message : String(error),
+          });
+          return { limit: 'unavailable' };
+        }
+        if (!allowed) {
+          return { limit: 'rate_limited' };
+        }
+
         const result = await generateCookAnythingRecipe(
           deps.ollamaClient,
           dishQuery,

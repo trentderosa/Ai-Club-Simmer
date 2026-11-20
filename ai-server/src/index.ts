@@ -49,6 +49,11 @@ import {
 import { SupabaseGeneratedCheckInRepository } from './repositories/supabase-generated-check-in-repository.js';
 import { SupabaseGeneratedXpAwarder } from './services/generated-xp-awarder.js';
 import { createCookAnythingRouter } from './routes/cook-anything.js';
+import {
+  GenerationRateLimiter,
+  type CookAnythingGenerationLimiter,
+} from './cook-anything/rate-limit.js';
+import { SupabaseGenerationRateLimiter } from './cook-anything/supabase-rate-limit.js';
 import { mountHealthRoutes } from './health.js';
 import { startReconcileScheduler } from './jobs/reconcile-scheduler.js';
 import type { GeneratedRecipeRepository } from './repositories/generated-recipe-repository.js';
@@ -82,6 +87,8 @@ interface ServiceConfig {
   generatedRecipes: GeneratedRecipeRepository;
   /** F8 server-side mastery sessions. Needs Supabase (no in-memory version). */
   masteryRepository: MasteryRepository | null;
+  /** Persistent when generated recipes are. In-memory only in dev without Supabase. */
+  generationLimiter: CookAnythingGenerationLimiter;
 }
 
 /**
@@ -128,6 +135,15 @@ function createDishVideoFinder(): DishVideoFinder | null {
   );
 }
 
+function createCookAnythingGenerationLimiter(persist: boolean): CookAnythingGenerationLimiter {
+  const { windowMs, maxGenerations } = config.cookAnything.generationRateLimit;
+  const { url, serviceRoleKey } = config.supabase;
+  if (persist && url && serviceRoleKey) {
+    return new SupabaseGenerationRateLimiter({ url, serviceRoleKey, windowMs, maxGenerations });
+  }
+  return new GenerationRateLimiter(windowMs, maxGenerations);
+}
+
 function createPhotoFinder(): DishPhotoFinder {
   const { url, serviceRoleKey } = config.supabase;
   const cache =
@@ -161,6 +177,7 @@ function createServicesFromConfig(): ServiceConfig {
       photoFinder: createPhotoFinder(),
       generatedRecipes: new InMemoryGeneratedRecipeRepository(),
       masteryRepository: null,
+      generationLimiter: createCookAnythingGenerationLimiter(false),
     };
   }
 
@@ -177,6 +194,7 @@ function createServicesFromConfig(): ServiceConfig {
       photoFinder: createPhotoFinder(),
       generatedRecipes: new InMemoryGeneratedRecipeRepository(),
       masteryRepository: null,
+      generationLimiter: createCookAnythingGenerationLimiter(false),
     };
   }
 
@@ -251,6 +269,7 @@ function createServicesFromConfig(): ServiceConfig {
     photoFinder: createPhotoFinder(),
     generatedRecipes,
     masteryRepository: url && serviceRoleKey ? new SupabaseMasteryRepository({ url, serviceRoleKey }) : null,
+    generationLimiter: createCookAnythingGenerationLimiter(true),
   };
 }
 
@@ -283,7 +302,7 @@ const cookAnythingRouter = createCookAnythingRouter(
   },
   {
     rateLimit: config.rateLimit,
-    generationRateLimit: config.cookAnything.generationRateLimit,
+    generationLimiter: services.generationLimiter,
     maxDishLength: config.cookAnything.maxDishLength,
   }
 );
@@ -352,6 +371,11 @@ app.listen(config.port, config.host, () => {
   console.info(`Technique videos: ${services.videoFinder ? 'ENABLED' : 'disabled'}`);
   console.info(`Dish videos: ${services.dishVideoFinder ? 'ENABLED' : 'disabled'}`);
   console.info('Dish photos: ENABLED');
+  console.info(
+    `Cook anything generation limit: ${
+      services.generationLimiter instanceof SupabaseGenerationRateLimiter ? 'database' : 'in-memory (dev)'
+    }`
+  );
   console.info(`Stub auth: ${isStubAuthAllowed() ? 'ENABLED (dev only)' : 'disabled'}`);
   console.info(
     reconcileScheduler.enabled

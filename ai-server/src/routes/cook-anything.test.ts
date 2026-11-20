@@ -16,6 +16,7 @@ import {
 import { DishVideoFinder, InMemoryDishVideoCache, type DishVideoSearchClient } from '../services/dish-video-finder.js';
 import { computeFreeformXp } from '../cook-anything/clamp.js';
 import { FREEFORM_COUNT_BOUNDS } from '../cook-anything/constants.js';
+import { GenerationRateLimiter, type CookAnythingGenerationLimiter } from '../cook-anything/rate-limit.js';
 
 const userId = '550e8400-e29b-41d4-a716-446655440000';
 
@@ -87,7 +88,10 @@ function createApp(
   ollama: OllamaClient,
   supabase: SupabaseService,
   repo = new InMemoryGeneratedRecipeRepository(),
-  options?: { generationRateLimit?: { windowMs: number; maxGenerations: number } },
+  options?: {
+    generationRateLimit?: { windowMs: number; maxGenerations: number };
+    generationLimiter?: CookAnythingGenerationLimiter;
+  },
   photoFinder?: DishPhotoFinder | null,
   dishVideoFinder?: DishVideoFinder | null
 ): { app: express.Express; repo: InMemoryGeneratedRecipeRepository } {
@@ -234,8 +238,10 @@ describe('POST /api/recipes/cook-anything', () => {
 
   it('rate-limits uncached generations per user, but not cache hits', async () => {
     const ollama = mockOllama(validRecipe);
+    const limiter = new GenerationRateLimiter(60_000, 1);
+    const allow = vi.spyOn(limiter, 'allow');
     const { app } = createApp(ollama, mockSupabase(), new InMemoryGeneratedRecipeRepository(), {
-      generationRateLimit: { windowMs: 60_000, maxGenerations: 1 },
+      generationLimiter: limiter,
     });
     const first = await request(app)
       .post('/api/recipes/cook-anything')
@@ -254,6 +260,103 @@ describe('POST /api/recipes/cook-anything', () => {
       .send({ dish: 'ramen' });
     expect(other.status).toBe(429);
     expect(other.body.code).toBe('GENERATION_RATE_LIMITED');
+    expect(allow).toHaveBeenCalledTimes(2);
+    expect(ollama.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares one generation cap across routers that use the same limiter', async () => {
+    const limiter = new GenerationRateLimiter(60_000, 1);
+    const ollama = mockOllama(validRecipe);
+    const supabase = mockSupabase();
+    const first = createApp(ollama, supabase, new InMemoryGeneratedRecipeRepository(), {
+      generationLimiter: limiter,
+    });
+    const second = createApp(ollama, supabase, new InMemoryGeneratedRecipeRepository(), {
+      generationLimiter: limiter,
+    });
+    const ok = await request(first.app)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'Pad Thai' });
+    expect(ok.status).toBe(200);
+    const blocked = await request(second.app)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'Ramen' });
+    expect(blocked.status).toBe(429);
+    expect(blocked.body.code).toBe('GENERATION_RATE_LIMITED');
+  });
+
+  it('joins a second request for the same dish while the rate limit is still resolving', async () => {
+    let resolveAllow: (allowed: boolean) => void = () => {};
+    const allow = vi.fn(
+      () =>
+        new Promise<boolean>((resolve) => {
+          resolveAllow = resolve;
+        })
+    );
+    const limiter: CookAnythingGenerationLimiter = { allow };
+    const ollama = mockOllama(validRecipe);
+    const { app } = createApp(ollama, mockSupabase(), new InMemoryGeneratedRecipeRepository(), {
+      generationLimiter: limiter,
+    });
+    const post = (): request.Test =>
+      request(app)
+        .post('/api/recipes/cook-anything')
+        .set('Authorization', 'Bearer token')
+        .send({ dish: 'Pad Thai' });
+
+    const both = Promise.all([post(), post()]);
+    for (let i = 0; i < 20 && allow.mock.calls.length < 1; i += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(allow).toHaveBeenCalledTimes(1);
+    resolveAllow(true);
+    const [first, second] = await both;
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(first.body.generated_recipe_id).toBe(second.body.generated_recipe_id);
+    expect(first.body.cached).toBe(false);
+    expect(second.body.cached).toBe(false);
+    expect(ollama.generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a new recipe when the rate-limit store fails and still serves a saved dish', async () => {
+    const repo = new InMemoryGeneratedRecipeRepository();
+    const ollama = mockOllama(validRecipe);
+    const allow = vi.fn().mockRejectedValue(new Error('rpc failed: relation does not exist'));
+    const limiter: CookAnythingGenerationLimiter = { allow };
+    const { app } = createApp(ollama, mockSupabase(), repo, { generationLimiter: limiter });
+    const denied = await request(app)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'Pad Thai' });
+    expect(denied.status).toBe(503);
+    expect(denied.body).toEqual({
+      error: 'New recipes are temporarily unavailable. Try a dish you already saved, or try again later.',
+      code: 'GENERATION_RATE_LIMIT_UNAVAILABLE',
+    });
+    expect(JSON.stringify(denied.body)).not.toContain('relation does not exist');
+    expect(ollama.generate).not.toHaveBeenCalled();
+
+    await repo.save({
+      userId,
+      dishQuery: 'Pad Thai',
+      normalizedDishName: 'pad thai',
+      recipe: validRecipe,
+      stepCount: 5,
+      ingredientCount: 6,
+      timeEstimateMinutes: 20,
+      xpValue: 84,
+    });
+    const cached = await request(app)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'pad thai' });
+    expect(cached.status).toBe(200);
+    expect(cached.body.cached).toBe(true);
+    expect(allow).toHaveBeenCalledTimes(1);
   });
 
   it('returns 404 when onboarding is not complete', async () => {

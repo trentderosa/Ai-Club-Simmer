@@ -19,7 +19,10 @@ export type FreeformCountBounds = typeof FREEFORM_COUNT_BOUNDS;
 /** Max length of the trimmed dish query (also enforced server-side). */
 export const COOK_ANYTHING_MAX_DISH_LENGTH = 80;
 
-/** Per-user cap on uncached cook-anything generations (Ollama + YouTube). */
+/**
+ * Per-user cap on uncached cook-anything generations (Ollama + YouTube).
+ * try_cook_anything_generation rejects windows and caps outside these bounds.
+ */
 export const COOK_ANYTHING_RATE_LIMIT = {
   windowMs: { default: 3_600_000, min: 1_000, max: 86_400_000 },
   maxGenerations: { default: 5, min: 1, max: 100 },

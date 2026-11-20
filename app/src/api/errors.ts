@@ -12,7 +12,7 @@ export type ApiErrorKind =
   | 'invalid_recipe' // 400 INVALID_RECIPE
   | 'validation' // 400 VALIDATION_ERROR / other 400s
   | 'mastery_session_used' // 409 MASTERY_SESSION_USED: that cook is already checked in
-  | 'unavailable' // 503 auth service down
+  | 'unavailable' // 503 auth service down (not GENERATION_RATE_LIMIT_UNAVAILABLE)
   | 'server' // other 5xx
   | 'network' // fetch failed or timed out
   | 'bad_response' // response didn't match the contract
@@ -54,6 +54,7 @@ export function kindForHttpError(
   if (status === 400 && code === 'INVALID_RECIPE') return 'invalid_recipe';
   if (status === 409 && code === 'MASTERY_SESSION_USED') return 'mastery_session_used';
   if (status === 400 || (status === 409 && code === 'IDEMPOTENCY_CONFLICT')) return 'validation';
+  if (status === 503 && code === 'GENERATION_RATE_LIMIT_UNAVAILABLE') return 'server';
   if (status === 503) return 'unavailable';
   if (status === 500 && route === 'recipe') return 'generation_failed';
   return 'server';
