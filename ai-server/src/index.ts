@@ -69,12 +69,13 @@ import type { GeneratedRecipeRepository } from './repositories/generated-recipe-
 loadEnvFile();
 
 // A bad setting prints one `Config error:` line and exits 1, with no stack.
+// The exit runs after stderr flushes; the awaited call never resolves meanwhile.
 const configErrorIo = {
   exit: (code: number): never => process.exit(code),
   stderr: process.stderr,
 };
 
-const config = runWithConfigErrors(() => loadConfig(), configErrorIo);
+const config = await runWithConfigErrors(() => loadConfig(), configErrorIo);
 
 const app = express();
 app.disable('x-powered-by');
@@ -298,7 +299,7 @@ function createServicesFromConfig(): ServiceConfig {
   };
 }
 
-const services = runWithConfigErrors(() => createServicesFromConfig(), configErrorIo);
+const services = await runWithConfigErrors(() => createServicesFromConfig(), configErrorIo);
 
 const recipeRouter = createRecipeRouter(
   {
@@ -400,7 +401,7 @@ mountHealthRoutes(app, {
 mountErrorHandlers(app);
 
 // Retry failed XP awards on a timer (same job as npm run reconcile:xp).
-const reconcileScheduler = runWithConfigErrors(
+const reconcileScheduler = await runWithConfigErrors(
   () => startReconcileScheduler(process.env, { stubAuth: isStubAuthAllowed() }),
   configErrorIo
 );

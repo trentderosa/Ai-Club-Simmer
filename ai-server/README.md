@@ -350,4 +350,4 @@ On SIGTERM or SIGINT the server stops the XP reconcile timer and stops accepting
 
 ## Bad config
 
-A bad or missing setting stops startup with one line on stderr, `Config error: <message>`, and exit code 1, with no stack trace. The message names the variable and the allowed range, never a value.
+An invalid value for the bounded numeric settings, `ALLOWED_ORIGINS`, or the reconcile settings, or a missing production setting, stops startup with one line on stderr, `Config error: <message>`, and exit code 1, with no stack trace. The message names the variable and the allowed range, never a value. Other startup errors are not converted and print normally.

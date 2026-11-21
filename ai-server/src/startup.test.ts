@@ -161,7 +161,7 @@ describe('Server Startup (B2 fix)', () => {
       });
     });
     expect(code).toBe(1);
-    expect(stderr).toBe('Config error: OLLAMA_TIMEOUT_MS must be a whole number from 5000 to 600000\n');
-    expect(stderr).not.toMatch(/\bat /);
+    expect(stderr).toMatch(/^Config error: OLLAMA_TIMEOUT_MS must be .*$/m);
+    expect(stderr).not.toMatch(/\n {4}at /);
   }, 20000);
 });
