@@ -55,6 +55,38 @@ origin to `ALLOWED_ORIGINS` so the Pages app can call this server. Setting the
 variable replaces the defaults, so include any dev origins you still want.
 The Pages origin is not in the default list.
 
+## Phone-reachable demo
+
+A phone running the GitHub Pages app cannot call `127.0.0.1` on the laptop. Run a tunnel on that laptop. It connects to the server on loopback and gives the phone an https URL. Put real values only in `ai-server/.env`. Copy the example only when that file is not already there, so you do not replace keys that are already filled in:
+
+```bash
+cd ai-server
+[ -f .env ] || cp .env.example .env
+npm ci
+npm run build
+NODE_ENV=production HOST=127.0.0.1 TRUST_PROXY=true npm start
+```
+
+`npm start` loads `.env`. Do not put `SUPABASE_SERVICE_ROLE_KEY`, or any other secret, on the command line. Shell variables that are already set win over `.env`. `SUPABASE_JWT_SECRET` can stand in for `SUPABASE_JWKS_URI` on an HS256 project. This project's tokens are ES256, so use the JWKS URL.
+
+| Variable | In `.env` |
+| --- | --- |
+| `SUPABASE_URL` | Project URL. Required when `NODE_ENV=production`. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. Server only. Required in production. Never on the command line. |
+| `SUPABASE_JWKS_URI` or `SUPABASE_JWT_SECRET` | One of these. Required in production. Prefer the JWKS URL. |
+| `OLLAMA_BASE_URL` | Default `http://localhost:11434`. |
+| `OLLAMA_MODEL` | Default `llama3.2`. Must match a pulled model. |
+| `HOST` | `127.0.0.1` for the tunnel (the command above). `0.0.0.0` is only for phones on the same Wi-Fi, with no tunnel. |
+| `TRUST_PROXY` | Exactly `true` for the tunnel. Express then trusts `X-Forwarded-For` only when the direct peer is loopback. A LAN client cannot spoof `req.ip`, so `HOST=0.0.0.0` is safe with this setting. |
+| `ALLOWED_ORIGINS` | Include `https://trentderosa.github.io` (scheme and host only; `/Ai-Club-Simmer` is not part of the origin). Setting `ALLOWED_ORIGINS` replaces the localhost defaults, so list any dev origins you still want. The Pages origin is not in the default list. |
+| `PORT` | Default `3001`. |
+
+Point the tunnel at loopback, for example `cloudflared tunnel --url http://127.0.0.1:3001` or `ngrok http 3001`, and set the app's `EXPO_PUBLIC_AI_SERVER_URL` to that https URL. Auth is unchanged: production still requires the Supabase settings above, stub auth stays off, and the unauthenticated preview route stays off.
+
+Cook anything's persistent per-user limit needs migration `20261120150000_cook_anything_generation_limits.sql` already applied by a person. This server does not apply migrations. Do not apply that file from here. Until it is applied, an uncached Cook anything generation fails closed (`503`, `GENERATION_RATE_LIMIT_UNAVAILABLE`) and does not call Ollama. Saved dishes still load. Timeouts, caches, and rate limits stay as they are, including the default 5 uncached generations per hour, the per-IP request limits, and the Ollama, YouTube, dish-photo, and XP timeouts.
+
+`curl http://127.0.0.1:3001/health` should return `{"status":"ok",...}`. The startup log should show `Check-in route: ENABLED`.
+
 ## Production config
 
 Set these in the server's environment (never in the repo, chat, or logs):
@@ -71,7 +103,7 @@ Set these in the server's environment (never in the repo, chat, or logs):
 | `DISH_PHOTO_LOOKUP_TIMEOUT_MS` | Optional. Timeout for one Wikimedia Commons dish-photo lookup (default `2500` ms, range `500`–`10000`). A timeout or failure returns `photo: null`. No API key. |
 | `VIDEO_LOOKUP_BUDGET_MS` | Optional. Time budget for all of one recipe's searches together (default `8000` ms, range `100`–`60000`). An invalid value stops startup |
 
-With `NODE_ENV=production`, the server exits at startup and names any missing variable.
+With `NODE_ENV=production`, the server exits at startup and names any missing variable. `TRUST_PROXY=true` trusts `X-Forwarded-For` only from a loopback peer, for both the tunnel (`HOST=127.0.0.1`) and same-Wi-Fi (`HOST=0.0.0.0`). See [Phone-reachable demo](#phone-reachable-demo).
 
 `ENABLE_PREVIEW_ROUTE=true` mounts the unauthenticated `POST /api/recipes/generate-preview` route in development only. Production ignores that flag, leaves the route off, and logs a startup warning if the flag is set.
 

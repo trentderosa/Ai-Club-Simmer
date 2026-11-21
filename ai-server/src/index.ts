@@ -1,6 +1,7 @@
 import express from 'express';
 import { loadEnvFile } from './load-env.js';
 import { assertProductionConfig, loadConfig } from './config.js';
+import { applyTrustProxy } from './trust-proxy.js';
 import { createCorsMiddleware } from './middleware/cors.js';
 import { createOllamaClient } from './services/ollama-client.js';
 import {
@@ -64,12 +65,11 @@ const config = loadConfig();
 
 const app = express();
 
-// Trust proxy for correct client IP behind reverse proxies (nginx, cloudflare tunnel, etc.)
-// This ensures rate limiting uses the real client IP, not the proxy's IP.
-// Set TRUST_PROXY=true when deploying behind a reverse proxy.
-if (process.env.TRUST_PROXY === 'true') {
-  app.set('trust proxy', 1);
-}
+// TRUST_PROXY=true trusts X-Forwarded-For only from a loopback peer, which is
+// the tunnel process on this laptop. A direct LAN client is not that peer, so
+// it cannot spoof req.ip. HOST=127.0.0.1 is the tunnel demo. HOST=0.0.0.0 is
+// same-Wi-Fi and stays safe with this setting.
+applyTrustProxy(app, process.env.TRUST_PROXY);
 
 // CORS first so browser preflight (OPTIONS) never hits auth or rate limits.
 app.use(createCorsMiddleware(config.allowedOrigins));
