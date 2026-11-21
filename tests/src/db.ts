@@ -250,7 +250,6 @@ export class TestDatabase {
           FROM PUBLIC, anon, authenticated;
       GRANT EXECUTE ON FUNCTION public.try_cook_anything_generation(UUID, INTEGER, INTEGER, TIMESTAMPTZ)
           TO service_role;
-
       DO $cook_limit_seq$
       DECLARE
           seq text;
