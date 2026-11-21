@@ -32,6 +32,11 @@ export interface PathRecipeServiceDeps {
   supabase: SupabaseService;
   /** F4 technique videos. Without it (no YOUTUBE_API_KEY) recipes have no videos. */
   videoFinder?: VideoFinder | null;
+  /** Test hooks only. Production leaves this unset (no-ops). */
+  hooks?: {
+    /** Called after a joiner removes an ended entry, before it checks for or starts a rerun. */
+    beforeRerun?: () => void;
+  };
 }
 
 export interface PathRecipeService {
@@ -61,6 +66,23 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
     string,
     { promise: Promise<PathGenerationResult | PathGenerationError>; background: boolean }
   >();
+
+  /**
+   * Why a joiner of an ended generation should run its own, or null to share
+   * the result. Preempted always reruns. Busy and retrySkipped rerun only when
+   * the joined generation was a background one (its own limits caused them).
+   * A model failure (validation, generation) is never rerun.
+   */
+  function joinerRerunReason(
+    result: PathGenerationResult | PathGenerationError,
+    background: boolean
+  ): string | null {
+    if (result.success) return null;
+    if (result.error.type === 'preempted') return 'preempted';
+    if (background && result.error.type === 'busy') return 'busy';
+    if (background && result.error.retrySkipped) return 'retry_skipped';
+    return null;
+  }
 
   async function generateAndSave(
     userId: string,
@@ -140,15 +162,11 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
       // budget. A genuine failure after all attempts is returned as is, and a
       // foreground entry's result (even busy) is shared. A background caller
       // just stops.
-      let reason: string | null = null;
-      if (!shared.success && !generationOptions.immediateOnly) {
-        if (shared.error.type === 'preempted') reason = 'preempted';
-        else if (inFlight.background && shared.error.type === 'busy') reason = 'busy';
-        else if (inFlight.background && shared.error.retrySkipped) reason = 'retry_skipped';
-      }
+      const reason = generationOptions.immediateOnly ? null : joinerRerunReason(shared, inFlight.background);
       if (!reason) return shared;
       console.warn('recipe_joined_generation_rerun', { slot_id: slot.id, reason });
       if (inFlightGenerations.get(key) === inFlight) inFlightGenerations.delete(key);
+      deps.hooks?.beforeRerun?.();
       const budget = deps.generationBudget && {
         ...deps.generationBudget,
         budgetMs: deps.generationBudget.budgetMs - ((deps.generationBudget.now ?? Date.now)() - startedAt),
@@ -173,13 +191,16 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
     if (existing) {
       // A new prewarm registered while this foreground joiner was stranded.
       // Never replace a running prewarm (two model calls at once): wait for it.
-      // If it does not produce a recipe, rerun once, here, with what is left.
+      // If it ends for its own limits (preempted, busy, retry skipped), rerun
+      // once, here, with what is left. A model failure is returned as is.
       const waitStartedAt = (deps.generationBudget?.now ?? Date.now)();
       const prewarm = existing;
       const shared = await prewarm.promise;
-      if (shared.success) return shared;
-      console.warn('recipe_joined_generation_rerun', { slot_id: slot.id, reason: 'new_prewarm_failed' });
+      const reason = joinerRerunReason(shared, true);
+      if (!reason) return shared;
+      console.warn('recipe_joined_generation_rerun', { slot_id: slot.id, reason });
       if (inFlightGenerations.get(key) === prewarm) inFlightGenerations.delete(key);
+      deps.hooks?.beforeRerun?.();
       // Another stranded joiner may have started the rerun already: share it.
       existing = inFlightGenerations.get(key);
       if (existing && !existing.background) return existing.promise;

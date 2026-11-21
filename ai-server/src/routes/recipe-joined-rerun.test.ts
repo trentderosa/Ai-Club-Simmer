@@ -5,7 +5,7 @@ import { createRecipeRouter } from './recipe.js';
 import { createPathRecipeService } from '../services/path-recipe-service.js';
 import type { OllamaBudget } from '../services/ollama-budget.js';
 import type { SupabaseService } from '../services/supabase.js';
-import { OllamaBusyError } from '../services/ollama-gate.js';
+import { OllamaBusyError, OllamaPreemptedError } from '../services/ollama-gate.js';
 import type { Recipe } from '../schemas/recipe.js';
 
 const recipe: Recipe = {
@@ -33,7 +33,7 @@ const rinseRecipe: Recipe = {
 const profile = { id: 'u1', experienceLevel: 'never_cooked' as const, budget: 'low' as const, equipment: ['pan'] };
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-function setup(slotId = 2, generationBudget?: OllamaBudget) {
+function setup(slotId = 2, generationBudget?: OllamaBudget, hooks?: { beforeRerun?: () => void }) {
   const slot = { id: slotId, dishName: 'Eggs', techniqueFocus: 'Heat', isFinal: slotId === 10 };
   const pending: Array<{ resolve: (t: string) => void; reject: (e: Error) => void }> = [];
   const ollamaClient = {
@@ -51,7 +51,7 @@ function setup(slotId = 2, generationBudget?: OllamaBudget) {
     saveVideos: vi.fn().mockResolvedValue(undefined),
     saveRecipe: vi.fn().mockImplementation((_u: string, _s: number, r: Recipe) => Promise.resolve(r)),
   } as unknown as SupabaseService;
-  const pathRecipes = createPathRecipeService({ ollamaClient, supabase, generationBudget });
+  const pathRecipes = createPathRecipeService({ ollamaClient, supabase, generationBudget, hooks });
   const app = express();
   app.use(express.json());
   app.use('/api/recipes', createRecipeRouter({ ollamaClient, supabase, pathRecipes, generationBudget }));
@@ -236,22 +236,16 @@ describe('recipe route joining a background generation', () => {
   }, 10000);
 
   it('stranded joiners wait for a new prewarm and rerun once, sharing that rerun', async () => {
-    const clock = 0;
     let armed = false;
     let newPrewarm: Promise<unknown> | undefined;
     const hook = { t: undefined as unknown as ReturnType<typeof setup> };
-    const t = setup(2, {
-      budgetMs: 100000,
-      ollamaTimeoutMs: 1000,
-      queueTimeoutMs: 1000,
-      now: () => {
-        if (armed) {
-          // Runs inside the joiner, after the first prewarm is gone and before its run():
-          // a new prewarm registers in that gap.
-          armed = false;
-          newPrewarm = hook.t.pathRecipes.generate('u1', hook.t.slot, profile, { immediateOnly: true });
-        }
-        return clock;
+    const t = setup(2, { budgetMs: 100000, ollamaTimeoutMs: 1000, queueTimeoutMs: 1000 }, {
+      beforeRerun: () => {
+        // Runs inside the joiner, after the first prewarm is gone and before its run():
+        // a new prewarm registers in that gap.
+        if (!armed) return;
+        armed = false;
+        newPrewarm = hook.t.pathRecipes.generate('u1', hook.t.slot, profile, { immediateOnly: true });
       },
     });
     hook.t = t;
@@ -264,6 +258,8 @@ describe('recipe route joining a background generation', () => {
     t.pending[0].reject(new OllamaBusyError('queue_timeout'));
     await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(2));
     await t.settle();
+    expect(newPrewarm).toBeDefined();
+    expect(t.ollamaClient.generate.mock.calls[1][2]?.background).toBe(true);
     // No third model call yet: the joiners wait for the new prewarm, not replace it.
     expect(t.ollamaClient.generate).toHaveBeenCalledTimes(2);
     t.pending[1].reject(new OllamaBusyError('queue_timeout'));
@@ -276,6 +272,86 @@ describe('recipe route joining a background generation', () => {
     expect(ra.status).toBe(200);
     expect(rb.status).toBe(200);
     expect(t.ollamaClient.generate).toHaveBeenCalledTimes(3);
+    expect(t.supabase.saveRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('a stranded joiner whose newer prewarm fails validation after 3 attempts gets that failure, no rerun', async () => {
+    let armed = false;
+    let newPrewarm: Promise<unknown> | undefined;
+    const hook = { t: undefined as unknown as ReturnType<typeof setup> };
+    const t = setup(2, undefined, {
+      beforeRerun: () => {
+        if (!armed) return;
+        armed = false;
+        newPrewarm = hook.t.pathRecipes.generate('u1', hook.t.slot, profile, { immediateOnly: true });
+      },
+    });
+    hook.t = t;
+    const first = t.pathRecipes.generate('u1', t.slot, profile, { immediateOnly: true });
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(1));
+    const responsePromise = t.post();
+    await t.settle();
+    armed = true;
+    t.pending[0].reject(new OllamaBusyError('queue_timeout'));
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(2));
+    expect(newPrewarm).toBeDefined();
+    // Valid JSON that fails the recipe schema, on every attempt of the newer prewarm.
+    t.pending[1].resolve('{}');
+    for (let i = 2; i < 4; i++) {
+      await vi.waitFor(() => expect(t.pending.length).toBe(i + 1), { timeout: 3000 });
+      t.pending[i].resolve('{}');
+    }
+    const [response, , bg] = await Promise.all([responsePromise, first, newPrewarm]);
+
+    expect(bg).toMatchObject({ success: false, error: { type: 'validation_failed', attempts: 3 } });
+    expect(response.status).toBe(500);
+    expect(response.body.attempts).toBe(3);
+    expect(t.ollamaClient.generate).toHaveBeenCalledTimes(4);
+    expect(t.supabase.saveRecipe).not.toHaveBeenCalled();
+    // Only the first rerun decision (the busy first prewarm) was logged.
+    expect(warn.mock.calls.filter((c) => c[0] === 'recipe_joined_generation_rerun')).toHaveLength(1);
+  }, 10000);
+
+  it('a third prewarm registering before the joiner resumes: the foreground replaces it and is not deleted by its finally', async () => {
+    let calls = 0;
+    const hook = { t: undefined as unknown as ReturnType<typeof setup> };
+    const t = setup(2, undefined, {
+      beforeRerun: () => {
+        // Call 1: the joiner leaves the first prewarm (registers the second).
+        // Call 2: the joiner leaves the second (registers a third).
+        calls += 1;
+        if (calls <= 2) {
+          void hook.t.pathRecipes.generate('u1', hook.t.slot, profile, { immediateOnly: true });
+        }
+      },
+    });
+    hook.t = t;
+    const first = t.pathRecipes.generate('u1', t.slot, profile, { immediateOnly: true });
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(1));
+    const responsePromise = t.post();
+    await t.settle();
+    t.pending[0].reject(new OllamaBusyError('queue_timeout'));
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(2));
+    await t.settle();
+    t.pending[1].reject(new OllamaBusyError('queue_timeout'));
+    // Third prewarm (call 3) and the joiner's foreground (call 4).
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(4));
+    expect(t.ollamaClient.generate.mock.calls[2][2]?.background).toBe(true);
+    expect(t.ollamaClient.generate.mock.calls[3][2]?.background).toBeUndefined();
+    // The gate would preempt the prewarm for the real request.
+    t.pending[2].reject(new OllamaPreemptedError());
+    await t.settle();
+    // The preempted prewarm's finally must not delete the foreground entry:
+    // a late request still joins it instead of starting a fifth call.
+    const late = t.post();
+    await t.settle();
+    expect(t.ollamaClient.generate).toHaveBeenCalledTimes(4);
+    t.pending[3].resolve(JSON.stringify(recipe));
+    const [response, lateResponse] = await Promise.all([responsePromise, late, first]);
+
+    expect(response.status).toBe(200);
+    expect(lateResponse.status).toBe(200);
+    expect(response.body.recipe.title).toBe('Eggs');
     expect(t.supabase.saveRecipe).toHaveBeenCalledTimes(1);
   });
 });
