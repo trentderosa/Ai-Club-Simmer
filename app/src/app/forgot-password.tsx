@@ -11,7 +11,7 @@ import { Field } from '../components/choice';
 import { gutter, Rule, Screen } from '../components/layout';
 import { T } from '../components/text';
 import { errorCopy } from '../domain/error-messages';
-import { PASSWORD_RESET_PRACTICE_COPY, PASSWORD_RESET_SENT_COPY } from '../domain/password-reset';
+import { isPasswordResetEmail, PASSWORD_RESET_PRACTICE_COPY, PASSWORD_RESET_SENT_COPY } from '../domain/password-reset';
 import { useSession } from '../state/session';
 import { color, font, space } from '../theme/tokens';
 
@@ -23,7 +23,7 @@ export default function ForgotPassword() {
   const [sent, setSent] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  const emailOk = /.+@.+\..+/.test(email.trim());
+  const emailOk = isPasswordResetEmail(email);
 
   async function submit() {
     setBusy(true);

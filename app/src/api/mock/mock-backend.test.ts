@@ -364,6 +364,7 @@ describe('mock mastery account and check-in payload', () => {
     expect(await b.getSession()).toBeNull();
     expect(b.passwordRecoveryPending()).toBe(false);
     await expect(b.requestPasswordReset('not-an-email')).rejects.toMatchObject({ kind: 'validation' });
+    await expect(b.requestPasswordReset('a@b')).rejects.toMatchObject({ kind: 'validation' });
     await expect(b.updatePassword('secret1')).rejects.toMatchObject({ kind: 'unauthorized' });
   });
 

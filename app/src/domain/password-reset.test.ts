@@ -1,11 +1,16 @@
+import { ApiError } from '../api/errors';
+import { errorCopy } from './error-messages';
 import {
+  PASSWORD_RESET_EMAIL_LIMIT_COPY,
   PASSWORD_RESET_PRACTICE_COPY,
   PASSWORD_RESET_SENT_COPY,
   authCallbackUrlWithoutSecrets,
   authRedirectTo,
+  isPasswordResetEmail,
   mapAuthChange,
   parseRecoveryLink,
   readRecoveryOwner,
+  recoverySessionMatchesLink,
   resolveWebBasePath,
   writeRecoveryOwner,
   type RecoveryOwnerStore,
@@ -113,6 +118,8 @@ describe('recovery callback', () => {
   it('treats an error on the link as a failure, not a session to update', () => {
     expect(parseRecoveryLink('http://localhost:8081/reset-password#error=access_denied&error_code=otp_expired')).toEqual({ kind: 'error' });
     expect(parseRecoveryLink('https://trentderosa.github.io/Ai-Club-Simmer/#error=access_denied&type=recovery')).toEqual({ kind: 'error' });
+    // Dev and standalone builds put the route in the host. Pages and Expo Go use a path.
+    expect(parseRecoveryLink('simmer://reset-password#error=access_denied&error_code=otp_expired')).toEqual({ kind: 'error' });
   });
 
   it('ignores a bare type, a plain visit, and other auth types', () => {
@@ -175,5 +182,30 @@ describe('password reset copy', () => {
     expect(PASSWORD_RESET_PRACTICE_COPY).toMatch(/Practice mode/);
     expect(PASSWORD_RESET_PRACTICE_COPY).toMatch(/no email is sent/);
     expect(PASSWORD_RESET_PRACTICE_COPY).not.toMatch(/real inbox was sent|email was sent to/i);
+  });
+
+  it('tells a reset-email limit to wait an hour', () => {
+    expect(PASSWORD_RESET_EMAIL_LIMIT_COPY).toMatch(/Too many emails were sent/);
+    expect(PASSWORD_RESET_EMAIL_LIMIT_COPY).toMatch(/in an hour/);
+    const copy = errorCopy(new ApiError('rate_limited', 'raw', 429, 'email_rate_limited'));
+    expect(copy.body).toBe(PASSWORD_RESET_EMAIL_LIMIT_COPY);
+    expect(errorCopy(new ApiError('rate_limited', 'Too many requests', 429)).body).toMatch(/Wait a minute/);
+  });
+});
+
+describe('password reset email check', () => {
+  it('matches the forgot-password screen and mock mode', () => {
+    expect(isPasswordResetEmail('person@simmer.test')).toBe(true);
+    expect(isPasswordResetEmail('  person@simmer.test  ')).toBe(true);
+    expect(isPasswordResetEmail('a@b')).toBe(false);
+    expect(isPasswordResetEmail('not-an-email')).toBe(false);
+  });
+
+  it('accepts a web session only when its access token is the link token', () => {
+    const link = parseRecoveryLink('http://localhost:8081/reset-password#access_token=from-the-link&refresh_token=r&type=recovery');
+    expect(recoverySessionMatchesLink(link, 'from-the-link')).toBe(true);
+    expect(recoverySessionMatchesLink(link, 'already-signed-in')).toBe(false);
+    expect(recoverySessionMatchesLink({ kind: 'code', code: 'abc' }, 'abc')).toBe(false);
+    expect(recoverySessionMatchesLink({ kind: 'error' }, 'from-the-link')).toBe(false);
   });
 });
