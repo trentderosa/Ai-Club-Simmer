@@ -16,6 +16,11 @@ export interface CheckInRouterOptions {
     windowMs: number;
     maxRequests: number;
   };
+  /** Per-IP limit (before auth). */
+  ipRateLimit?: {
+    windowMs: number;
+    maxRequests: number;
+  };
 }
 
 export function createCheckInRouter(
@@ -26,6 +31,18 @@ export function createCheckInRouter(
 
   // B3 fix: Auth middleware runs FIRST and sets req.userId
   const authenticate = createAuthMiddleware(deps.jwtVerifier);
+
+  // Per-IP, BEFORE auth, so unauthenticated floods and token-verification
+  // calls are bounded too. Behind a reverse proxy set TRUST_PROXY=true so
+  // req.ip is the real client. Looser than the per-user cap because many
+  // students can share one NAT or tunnel IP.
+  const ipLimiter = rateLimit({
+    windowMs: options.ipRateLimit?.windowMs ?? 60000,
+    max: options.ipRateLimit?.maxRequests ?? 60,
+    message: { error: 'Too many requests, please try again later' },
+    standardHeaders: true,
+    legacyHeaders: false,
+  });
 
   // S1/B3 fix: Per-user rate limiter runs AFTER auth, using the authenticated userId
   const userLimiter = rateLimit({
@@ -80,7 +97,7 @@ export function createCheckInRouter(
    */
   // B3 fix: authenticate runs BEFORE userLimiter
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  router.post('/', authenticate, userLimiter, async (req: Request, res: Response): Promise<void> => {
+  router.post('/', ipLimiter, authenticate, userLimiter, async (req: Request, res: Response): Promise<void> => {
     try {
       // N15: Guard against middleware reordering instead of using non-null assertion
       if (!req.userId) {

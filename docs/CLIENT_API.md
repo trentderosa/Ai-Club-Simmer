@@ -5,6 +5,8 @@ What the app calls for each MVP screen. There are two backends:
 - **Supabase** (`supabase-js` with the **anon key** and the user's session): auth, the onboarding profile, and read-only RPCs for the plan, badges and recipe book.
 - **AI server** (`fetch` with `Authorization: Bearer <supabase access token>`): recipe generation, videos, and check-ins (which award XP and badges).
 
+Server errors are JSON. Besides the per-route codes below, a body that is not valid JSON returns `400` with `code: "INVALID_JSON"`, a body over 100kb returns `413` with `code: "PAYLOAD_TOO_LARGE"`, an unknown route returns `404 { error: "Not found" }`, and an unexpected failure returns `500 { error: "Internal server error" }` with no detail. A `429` from check-ins or mastery can now also come from a per-IP limit (60 per minute); treat it like any other `429`.
+
 The app never holds the service-role key or the YouTube key, and it never calls `award_slot_xp` or `award_generated_recipe_xp`.
 
 | Screen | Call |

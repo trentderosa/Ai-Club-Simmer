@@ -3,6 +3,7 @@ import { loadEnvFile } from './load-env.js';
 import { assertProductionConfig, loadConfig } from './config.js';
 import { applyTrustProxy } from './trust-proxy.js';
 import { createCorsMiddleware } from './middleware/cors.js';
+import { mountErrorHandlers } from './middleware/error-handler.js';
 import { createOllamaClient } from './services/ollama-client.js';
 import {
   createSupabaseService,
@@ -68,6 +69,7 @@ loadEnvFile();
 const config = loadConfig();
 
 const app = express();
+app.disable('x-powered-by');
 
 // TRUST_PROXY=true trusts X-Forwarded-For only from a loopback peer, which is
 // the tunnel process on this laptop. A direct LAN client is not that peer, so
@@ -375,10 +377,13 @@ mountHealthRoutes(app, {
   youtubeApiKey: config.youtube.apiKey,
 });
 
+// After every router and health route: JSON 404 and the final error handler.
+mountErrorHandlers(app);
+
 // Retry failed XP awards on a timer (same job as npm run reconcile:xp).
 const reconcileScheduler = startReconcileScheduler(process.env, { stubAuth: isStubAuthAllowed() });
 
-app.listen(config.port, config.host, () => {
+const server = app.listen(config.port, config.host, () => {
   console.info(`Simmer AI Server running on http://${config.host}:${config.port}`);
   console.info(`Ollama endpoint: ${config.ollama.baseUrl}`);
   console.info(`Model: ${config.ollama.model}`);
@@ -408,3 +413,20 @@ app.listen(config.port, config.host, () => {
   );
   console.info(`CORS origins: ${config.allowedOrigins.join(', ')}`);
 });
+
+// Graceful shutdown: stop the scheduler, stop accepting connections, and force
+// exit if keep-alive connections linger. Registered here, never in tests
+// (this module is not imported by them).
+const SHUTDOWN_FORCE_EXIT_MS = 10_000;
+let shuttingDown = false;
+function shutdown(signal: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.info(`${signal} received, shutting down`);
+  if (reconcileScheduler.enabled) reconcileScheduler.stop();
+  const forceTimer = setTimeout(() => process.exit(1), SHUTDOWN_FORCE_EXIT_MS);
+  forceTimer.unref();
+  server.close(() => process.exit(0));
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

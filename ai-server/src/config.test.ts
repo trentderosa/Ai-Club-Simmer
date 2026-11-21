@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { assertProductionConfig, loadConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -197,5 +197,48 @@ describe('loadDishPhotoConfig', () => {
         'DISH_PHOTO_LOOKUP_TIMEOUT_MS must be a whole number from 500 to 10000'
       );
     }
+  });
+});
+
+describe('loadConfig Ollama and rate-limit bounds', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('keeps the defaults when unset', () => {
+    for (const name of ['OLLAMA_MAX_TOKENS', 'OLLAMA_TIMEOUT_MS', 'RATE_LIMIT_WINDOW_MS', 'RATE_LIMIT_MAX_REQUESTS']) {
+      vi.stubEnv(name, '');
+    }
+    const config = loadConfig();
+    expect(config.ollama.maxTokens).toBe(1500);
+    expect(config.ollama.timeoutMs).toBe(60000);
+    expect(config.rateLimit).toEqual({ windowMs: 60000, maxRequests: 10 });
+  });
+
+  it('accepts in-range values and the range edges', () => {
+    vi.stubEnv('OLLAMA_MAX_TOKENS', '256');
+    vi.stubEnv('OLLAMA_TIMEOUT_MS', '600000');
+    vi.stubEnv('RATE_LIMIT_WINDOW_MS', '1000');
+    vi.stubEnv('RATE_LIMIT_MAX_REQUESTS', '1000');
+    const config = loadConfig();
+    expect(config.ollama).toMatchObject({ maxTokens: 256, timeoutMs: 600000 });
+    expect(config.rateLimit).toEqual({ windowMs: 1000, maxRequests: 1000 });
+  });
+
+  it.each([
+    ['OLLAMA_MAX_TOKENS', 'abc'],
+    ['OLLAMA_MAX_TOKENS', '255'],
+    ['OLLAMA_MAX_TOKENS', '8193'],
+    ['OLLAMA_TIMEOUT_MS', '4999'],
+    ['OLLAMA_TIMEOUT_MS', '600001'],
+    ['RATE_LIMIT_WINDOW_MS', '999'],
+    ['RATE_LIMIT_WINDOW_MS', '3600001'],
+    ['RATE_LIMIT_MAX_REQUESTS', '0'],
+    ['RATE_LIMIT_MAX_REQUESTS', '1001'],
+    ['RATE_LIMIT_MAX_REQUESTS', '-5'],
+    ['RATE_LIMIT_MAX_REQUESTS', '1.5'],
+  ])('throws naming %s for %s', (name, value) => {
+    vi.stubEnv(name, value);
+    expect(() => loadConfig()).toThrow(new RegExp(`^${name} must be a whole number from`));
   });
 });
