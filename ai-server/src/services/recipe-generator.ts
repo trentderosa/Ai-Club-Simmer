@@ -322,13 +322,59 @@ function rinseOrWashSpans(sentence: string): { negated: boolean }[] {
 /**
  * An instruction to rinse or wash chicken, poultry, meat, or bird.
  * "Pat dry" or "do not rinse" in the same text does not cancel this.
- * Recipe generation and the check-in coach note share this check.
+ * Recipe steps use this sentence check. A check-in coach note uses
+ * coachNoteTextRinsesRawProtein, which looks at the rinse clause only.
  * "Rinse the rice" stays clear because rice is not one of those proteins.
  */
 export function hasAffirmativeProteinRinse(instruction: string): boolean {
   return sentencesOf(instruction).some((sentence) => {
     if (!RAW_PROTEIN_RE.test(sentence)) return false;
     return rinseOrWashSpans(sentence).some((span) => !span.negated);
+  });
+}
+
+// Coach notes also reject these red-meat names. Fish and shrimp stay out.
+const COACH_NOTE_PROTEIN_RE =
+  /\b(?:chickens?|poultry|meats?|birds?|turkeys?|ducks?|hens?|thighs?|pork|beef|lamb|steaks?|chops?)\b/i;
+// A later "then" or "after" is a new clause, so the rinse object stops there.
+const RINSE_CLAUSE_BOUNDARY_SOURCE = String.raw`[,:]|\b(?:then|after|before|once|when|while)\b`;
+
+function rinseClause(sentence: string, verbStart: number, verbEnd: number): string {
+  const boundary = new RegExp(RINSE_CLAUSE_BOUNDARY_SOURCE, 'gi');
+  let start = 0;
+  let end = sentence.length;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(sentence)) !== null) {
+    const matchEnd = match.index + match[0].length;
+    if (matchEnd <= verbStart) {
+      start = matchEnd;
+    } else if (match.index >= verbEnd) {
+      end = match.index;
+      break;
+    }
+  }
+  return sentence.slice(start, end);
+}
+
+/**
+ * Check-in coach note only. A rinse or wash counts when its own clause names
+ * chicken, poultry, meat, bird, pork, beef, lamb, steak, or chops.
+ * Hands, a board, a surface, or a utensil in that clause do not count, and
+ * neither do rice, fish, or shrimp. "Rinse the rice, then sear the chicken"
+ * stays because the rinse object is the rice.
+ */
+export function coachNoteTextRinsesRawProtein(text: string): boolean {
+  return sentencesOf(text).some((sentence) => {
+    const re = new RegExp(RINSE_OR_WASH_SOURCE, 'gi');
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(sentence)) !== null) {
+      const before = sentence.slice(0, match.index);
+      const clauseStart = Math.max(before.lastIndexOf(','), before.lastIndexOf(':'));
+      if (NEGATION_RE.test(before.slice(clauseStart + 1))) continue;
+      const clause = rinseClause(sentence, match.index, match.index + match[0].length);
+      if (COACH_NOTE_PROTEIN_RE.test(clause)) return true;
+    }
+    return false;
   });
 }
 

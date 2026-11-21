@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { OllamaClient } from './ollama-client.js';
 import { CoachNoteSchema, type CoachNote } from '../types/check-in.js';
-import { FOOD_SAFETY_RULE, hasAffirmativeProteinRinse, sanitizeUserText } from './recipe-generator.js';
+import { FOOD_SAFETY_RULE, coachNoteTextRinsesRawProtein, sanitizeUserText } from './recipe-generator.js';
 
 const MAX_RETRIES = 2;
 
@@ -120,11 +120,13 @@ export interface CoachNoteGenerator {
 
 /**
  * True when the note or its focus line tells the cook to rinse or wash
- * chicken, poultry, meat, or bird. Same check as a recipe step.
+ * raw chicken, poultry, meat, pork, beef, lamb, steak, or chops.
+ * A rinse whose object is hands, a board, a surface, a utensil, rice,
+ * fish, or shrimp does not count.
  */
 export function coachNoteRinsesRawProtein(note: CoachNote): boolean {
-  if (hasAffirmativeProteinRinse(note.note)) return true;
-  return note.focus_area !== undefined && hasAffirmativeProteinRinse(note.focus_area);
+  if (coachNoteTextRinsesRawProtein(note.note)) return true;
+  return note.focus_area !== undefined && coachNoteTextRinsesRawProtein(note.focus_area);
 }
 
 /**

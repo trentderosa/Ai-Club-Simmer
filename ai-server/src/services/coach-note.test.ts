@@ -255,7 +255,14 @@ describe('coach note raw-protein rinse', () => {
     'Give the chicken a rinse',
     'Do not rinse the chicken, then rinse the bird under the tap.',
     'Pat the chicken dry, then rinse the chicken under cold water.',
-    'Pat the chicken dry, then wash your hands and the board.',
+    'Rinse the pork',
+    'Wash the beef under cold water',
+    'Rinse the lamb',
+    'Rinse the steak',
+    'Rinse the chops',
+    'Give the steak a rinse',
+    'Rinse the rice and the chicken',
+    'Wash your hands, then rinse the chicken',
   ])('rejects %s', (text) => {
     expect(coachNoteRinsesRawProtein(note(text))).toBe(true);
   });
@@ -265,8 +272,17 @@ describe('coach note raw-protein rinse', () => {
     "Don't rinse the chicken",
     'Pat the chicken dry with paper towels.',
     'Rinse the rice in a strainer until the water runs clear.',
+    'Rinse the rice, then sear the chicken.',
+    'Rinse the rice then sear the steak.',
     'Wash the lettuce.',
     'Wash your hands and the board.',
+    'Wash your hands after handling raw chicken',
+    'Pat the chicken dry, then wash your hands and the board.',
+    'Rinse the counter after the raw chicken.',
+    'Wash your knife after handling the pork.',
+    'Rinse the fish.',
+    'Wash the shrimp.',
+    'Rinse the fish, then sear the chicken.',
     'The chicken is raw. Do not rinse the rice.',
     'Nice work on the timing.',
   ])('keeps %s', (text) => {
@@ -275,6 +291,22 @@ describe('coach note raw-protein rinse', () => {
 
   it('rejects a safe note whose focus line rinses raw protein', () => {
     expect(coachNoteRinsesRawProtein(note('Nice work on the timing.', 'rinse chicken'))).toBe(true);
+    expect(coachNoteRinsesRawProtein(note('Nice work on the timing.', 'rinse pork'))).toBe(true);
+  });
+
+  it('keeps a note that only says to wash hands after raw chicken', async () => {
+    const ollama = createMockOllamaClient();
+    vi.mocked(ollama.generate).mockResolvedValue(
+      JSON.stringify({
+        note: 'Wash your hands after handling raw chicken.',
+        focus_area: 'wash hands',
+      })
+    );
+
+    const result = await createCoachNoteGenerator(ollama).generate('ok', null, null);
+
+    expect(result.note).toBe('Wash your hands after handling raw chicken.');
+    expect(vi.mocked(ollama.generate)).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a focus line about rinsing rice', () => {
