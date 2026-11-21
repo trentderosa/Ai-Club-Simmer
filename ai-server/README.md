@@ -83,7 +83,7 @@ NODE_ENV=production HOST=127.0.0.1 TRUST_PROXY=true npm start
 | `OLLAMA_BASE_URL` | Default `http://localhost:11434`. |
 | `OLLAMA_MODEL` | Default `llama3.2`. Must match a pulled model. |
 | `OLLAMA_MAX_CONCURRENT` | Model calls at once, one shared queue for every Ollama call. Default `1`, range 1 to 8. |
-| `OLLAMA_MAX_QUEUE` | Calls allowed to wait. Default `3`, range 0 to 100. A full queue returns `503 GENERATION_BUSY` with `Retry-After`. |
+| `OLLAMA_MAX_QUEUE` | Calls allowed to wait. Default `3`, range 0 to 100. A full queue returns `503 GENERATION_BUSY` with `Retry-After`, except that a real request can still preempt a running prewarm, even with `0`. |
 | `OLLAMA_QUEUE_TIMEOUT_MS` | Longest one model call waits for a slot. Default `60000`, range 1000 to 600000. Each retry waits again; `OLLAMA_REQUEST_BUDGET_MS` caps the total. |
 | `OLLAMA_REQUEST_BUDGET_MS` | Most time one recipe request may spend queueing and running in total, retries included. Default `170000`, range 10000 to 600000. Keep it under the app's 193 s recipe timeout. Must be larger than `OLLAMA_TIMEOUT_MS`; startup warns if it isn't. |
 | `OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS` | Longest a coach note waits before the fallback note is used. Default `15000`, range 1000 to 600000. |

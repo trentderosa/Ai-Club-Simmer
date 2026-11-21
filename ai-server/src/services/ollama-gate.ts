@@ -34,13 +34,22 @@ export class OllamaPreemptedError extends Error {
 }
 
 export interface OllamaGate extends OllamaClient {
-  /** True when every slot is busy and the queue is full: a new call would be refused. */
+  /**
+   * True when a foreground call would be refused: every slot is busy with a
+   * foreground call and the queue is full. Running background calls do not count,
+   * because a foreground call can preempt one.
+   */
   isSaturated(): boolean;
   /** True when nothing is running and nothing is waiting. */
   isIdle(): boolean;
 }
 
 interface Waiter {
+  /**
+   * Set when this waiter cancelled a background call. Its hand-off is already
+   * reserved, so it does not count against maxQueue.
+   */
+  reserved: boolean;
   grant: () => void;
   timer: ReturnType<typeof setTimeout>;
 }
@@ -56,6 +65,11 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
   const queue: Waiter[] = [];
   // Running background calls that have not been told to stop, oldest first.
   const preemptible: Array<{ controller: AbortController; preempted: boolean }> = [];
+
+  /** Waiters that count against maxQueue (those not waiting on a preempted call). */
+  function queuedCount(): number {
+    return queue.filter((waiter) => !waiter.reserved).length;
+  }
 
   function busy(reason: OllamaBusyReason): OllamaBusyError {
     console.warn('ollama_busy', { reason, running, queued: queue.length });
@@ -87,7 +101,10 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
       running += 1;
       return Promise.resolve();
     }
-    if (queue.length >= config.maxQueue) {
+    // A foreground call can take over a running background call's slot, so a full
+    // queue (or maxQueue 0) does not refuse it while one is running.
+    const canPreempt = !background && preemptible.length > 0;
+    if (!canPreempt && queuedCount() >= config.maxQueue) {
       return Promise.reject(busy('queue_full'));
     }
     // Zero (or less) means never wait: no free slot is an immediate busy answer.
@@ -96,6 +113,7 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
     }
     return new Promise<void>((resolve, reject) => {
       const waiter: Waiter = {
+        reserved: false,
         grant: resolve,
         timer: setTimeout(() => {
           const index = queue.indexOf(waiter);
@@ -106,7 +124,12 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
       queue.push(waiter);
       // A real request that must wait takes the slot of a running prewarm.
       // Each waiter cancels at most one call, so one prewarm is never cancelled twice.
-      if (!background) preemptOneBackground();
+      // The queue stays FIFO: the freed slot goes to the oldest waiter, which may be an
+      // earlier foreground call; this one then waits for the next release.
+      if (canPreempt) {
+        waiter.reserved = true;
+        preemptOneBackground();
+      }
     });
   }
 
@@ -138,7 +161,10 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
         release();
       }
     },
-    isSaturated: () => running >= config.maxConcurrent && queue.length >= config.maxQueue,
+    isSaturated: () =>
+      running >= config.maxConcurrent &&
+      preemptible.length === 0 &&
+      queuedCount() >= config.maxQueue,
     isIdle: () => running === 0 && queue.length === 0,
   };
 }

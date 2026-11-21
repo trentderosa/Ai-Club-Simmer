@@ -31,12 +31,22 @@ type FetchFn = typeof fetch;
 function combineSignals(signals: AbortSignal[]): AbortSignal {
   if (typeof AbortSignal.any === 'function') return AbortSignal.any(signals);
   const controller = new AbortController();
+  const listeners: Array<[AbortSignal, () => void]> = [];
+  const cleanup = (): void => {
+    for (const [signal, listener] of listeners) signal.removeEventListener('abort', listener);
+  };
   for (const signal of signals) {
     if (signal.aborted) {
       controller.abort(signal.reason);
+      cleanup();
       break;
     }
-    signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true });
+    const listener = (): void => {
+      controller.abort(signal.reason);
+      cleanup();
+    };
+    listeners.push([signal, listener]);
+    signal.addEventListener('abort', listener, { once: true });
   }
   return controller.signal;
 }

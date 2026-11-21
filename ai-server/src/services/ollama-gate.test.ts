@@ -340,6 +340,53 @@ describe('createOllamaGate preemption of background calls', () => {
     expect(starts).toEqual(['bg', 'fg1']);
   });
 
+  it('with maxQueue 0, a foreground call preempts a running background call and runs', async () => {
+    const { client, starts } = abortableClient();
+    const gate = createOllamaGate(client, { ...config, maxQueue: 0 });
+    const backgroundResult = gate
+      .generate('bg', {}, { background: true, queueTimeoutMs: 0 })
+      .catch((e: unknown) => e);
+    await flush();
+    expect(gate.isSaturated()).toBe(false);
+    void gate.generate('fg', {});
+    await flush();
+    expect(starts).toEqual(['bg', 'fg']);
+    expect(await backgroundResult).toBeInstanceOf(OllamaPreemptedError);
+  });
+
+  it('with maxQueue 0, a foreground call behind a running foreground call is still queue_full', async () => {
+    const { client } = abortableClient();
+    const gate = createOllamaGate(client, { ...config, maxQueue: 0 });
+    void gate.generate('fg1', {});
+    await flush();
+    expect(gate.isSaturated()).toBe(true);
+    await expect(gate.generate('fg2', {})).rejects.toMatchObject({ reason: 'queue_full' });
+  });
+
+  it('a full queue does not stop a foreground call from preempting, and one prewarm is cancelled once', async () => {
+    const { client, starts } = abortableClient();
+    const gate = createOllamaGate(client, { ...config, maxQueue: 1 });
+    void gate.generate('bg', {}, { background: true, queueTimeoutMs: 0 }).catch(() => undefined);
+    await flush();
+    void gate.generate('fg1', {});
+    await flush();
+    expect(starts).toEqual(['bg', 'fg1']);
+    // fg1 now runs and the queue is empty, so a second foreground call queues normally.
+    void gate.generate('fg2', {});
+    await flush();
+    expect(gate.isSaturated()).toBe(true);
+    await expect(gate.generate('fg3', {})).rejects.toMatchObject({ reason: 'queue_full' });
+  });
+
+  it('isSaturated is false while only background calls run', async () => {
+    const { client } = abortableClient();
+    const gate = createOllamaGate(client, { ...config, maxQueue: 0 });
+    void gate.generate('bg', {}, { background: true, queueTimeoutMs: 0 }).catch(() => undefined);
+    await flush();
+    expect(gate.isSaturated()).toBe(false);
+    expect(gate.isIdle()).toBe(false);
+  });
+
   it('surfaces a non-preempted background failure unchanged', async () => {
     const { client } = controllableClient();
     const failing: OllamaClient = { generate: () => Promise.reject(new Error('model down')) };

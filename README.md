@@ -136,7 +136,7 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `OLLAMA_MAX_TOKENS` | Max generation tokens (default `1500`) |
 | `OLLAMA_TIMEOUT_MS` | Ollama timeout in ms (default `60000`). The clock starts when a call gets a model slot, not while it waits in the queue. |
 | `OLLAMA_MAX_CONCURRENT` | Model calls running at once, shared by path recipes, Cook anything and coach notes (default `1`, range 1 to 8) |
-| `OLLAMA_MAX_QUEUE` | Calls allowed to wait for a slot (default `3`, range 0 to 100). A full queue answers `503 GENERATION_BUSY`. |
+| `OLLAMA_MAX_QUEUE` | Calls allowed to wait for a slot (default `3`, range 0 to 100). A full queue answers `503 GENERATION_BUSY`, except that a real request can still preempt a running prewarm, even with `0`. |
 | `OLLAMA_QUEUE_TIMEOUT_MS` | Longest one model call waits for a slot, in ms (default `60000`, range 1000 to 600000). Each retry waits again; `OLLAMA_REQUEST_BUDGET_MS` caps the total. |
 | `OLLAMA_REQUEST_BUDGET_MS` | Most time one recipe request may spend queueing and running in total, retries included, in ms (default `170000`, range 10000 to 600000). Keep it under the app's 193 s recipe timeout, which also covers video lookup. Must be larger than `OLLAMA_TIMEOUT_MS`; startup warns if it isn't. |
 | `OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS` | Longest a check-in coach note waits for a slot before using the fallback note (default `15000`, range 1000 to 600000) |
