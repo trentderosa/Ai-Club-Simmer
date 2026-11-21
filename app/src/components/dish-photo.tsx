@@ -22,6 +22,7 @@ export function DishPhotoFill({
   showCredit = true,
   creditAt = 'bottom',
   creditStyle,
+  onFallback,
 }: {
   photo: DishPhoto | null | undefined;
   linkCredit?: boolean;
@@ -29,9 +30,13 @@ export function DishPhotoFill({
   showCredit?: boolean;
   creditAt?: 'top' | 'bottom';
   creditStyle?: StyleProp<ViewStyle>;
+  /** Fired when the remote image fails and the cutting board is shown instead. */
+  onFallback?: () => void;
 }) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const hero = imageFailed ? heroPhotoForGenerated(null) : heroPhotoForGenerated(photo);
+  const sourceKey = photo?.url ?? '';
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const imageFailed = failedSource === sourceKey;
+  const hero = heroPhotoForGenerated(imageFailed ? null : photo);
   const openSource = linkCredit && hero.sourceUrl
     ? () => {
         void Linking.openURL(hero.sourceUrl as string);
@@ -44,7 +49,11 @@ export function DishPhotoFill({
         style={StyleSheet.absoluteFill}
         contentFit="cover"
         accessibilityIgnoresInvertColors
-        onError={() => setImageFailed(true)}
+        onError={() => {
+          if (failedSource === sourceKey) return;
+          setFailedSource(sourceKey);
+          onFallback?.();
+        }}
       />
       {showCredit ? (
         openSource ? (

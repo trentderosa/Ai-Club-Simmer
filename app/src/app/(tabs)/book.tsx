@@ -215,8 +215,11 @@ function FeaturedEntry({ entry, photo, technique, onOpen }: { entry: RecipeBookE
 }
 
 function BookRow({ entry, photo, technique, onOpen }: { entry: RecipeBookEntry; photo: Parameters<typeof DishPhotoFill>[0]['photo']; technique?: string; onOpen: () => void }) {
-  // The 72px thumb can't hold a credit. CC BY photos still need the line where the image is shown, so it sits under the byline. The detail screen keeps its own credit.
-  const credit = heroPhotoForGenerated(photo).credit;
+  // The 72px thumb can't hold a credit. CC BY photos still need the line where the image is shown, so it sits under the byline. If that image fails, the thumb and this line both switch to the cutting-board credit.
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const url = photo?.url ?? null;
+  const imageFailed = url !== null && failedUrl === url;
+  const credit = heroPhotoForGenerated(imageFailed ? null : photo).credit;
   return (
     <Pressable
       onPress={onOpen}
@@ -232,12 +235,12 @@ function BookRow({ entry, photo, technique, onOpen }: { entry: RecipeBookEntry; 
         <T variant="caption" style={styles.rowByline}>
           {byline(entry, technique)}
         </T>
-        <T variant="caption" color="ink3" style={styles.rowCredit}>
+        <T variant="caption" color="ink3" style={styles.rowCredit} numberOfLines={1}>
           {credit}
         </T>
       </View>
       <View style={styles.thumb}>
-        <DishPhotoFill photo={photo} showCredit={false} />
+        <DishPhotoFill photo={photo} showCredit={false} onFallback={() => setFailedUrl(url)} />
       </View>
     </Pressable>
   );
