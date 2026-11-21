@@ -290,15 +290,15 @@ describe('mock mastery account and check-in payload', () => {
   it('masks the hidden steps of the final recipe (like the live server)', async () => {
     const b = await masteryUser();
     const { recipe } = await b.generateRecipe(10, 't');
-    expect(recipe.steps.map((s) => s.isHidden ?? false)).toEqual([false, false, true, true, false, true]);
-    expect(recipe.steps[2].instruction).not.toBe(RECIPES[10].steps[2].instruction);
+    expect(recipe.steps.map((s) => s.isHidden ?? false)).toEqual([false, false, false, true, true, false, true, false]);
+    expect(recipe.steps[3].instruction).not.toBe(RECIPES[10].steps[3].instruction);
     expect(recipe.steps[0]).toEqual(RECIPES[10].steps[0]);
   });
 
   it('awards the mastery badge only when the session has zero reveals', async () => {
     const zero = await masteryUser();
     const session = await zero.startMastery(10, 't');
-    expect(session.hidden_step_indices).toEqual([2, 3, 5]);
+    expect(session.hidden_step_indices).toEqual([3, 4, 6]);
     const perfect = await zero.submitCheckIn(
       { user_recipe_id: mockUserRecipeId(10), slot_id: 10, rating: 'ok', mastery_session_id: session.session_id },
       't',
@@ -329,7 +329,7 @@ describe('mock mastery account and check-in payload', () => {
   it('completes slot 10 with 1+ reveals or no session, without the mastery badge', async () => {
     const revealed = await masteryUser();
     const session = await revealed.startMastery(10, 't');
-    await revealed.revealMasteryStep(session.session_id, 2, 't');
+    await revealed.revealMasteryStep(session.session_id, 4, 't');
     const withReveals = await revealed.submitCheckIn(
       { user_recipe_id: mockUserRecipeId(10), slot_id: 10, rating: 'ok', mastery_session_id: session.session_id },
       't',
@@ -353,7 +353,7 @@ describe('mock mastery account and check-in payload', () => {
     await expect(
       b.submitCheckIn({ user_recipe_id: mockUserRecipeId(10), slot_id: 10, rating: 'ok', mastery_session_id: session.session_id }, 't'),
     ).rejects.toMatchObject({ kind: 'mastery_session_used', status: 409 });
-    await expect(b.revealMasteryStep(session.session_id, 2, 't')).rejects.toMatchObject({ code: 'MASTERY_SESSION_USED' });
+    await expect(b.revealMasteryStep(session.session_id, 4, 't')).rejects.toMatchObject({ code: 'MASTERY_SESSION_USED' });
     const next = await b.startMastery(10, 't');
     expect(next.session_id).not.toBe(session.session_id);
   });
