@@ -1,6 +1,6 @@
 import express from 'express';
 import { loadEnvFile } from './load-env.js';
-import { assertProductionConfig, loadConfig } from './config.js';
+import { assertProductionConfig, loadConfig, ollamaTimingWarnings } from './config.js';
 import { applyTrustProxy } from './trust-proxy.js';
 import { createCorsMiddleware } from './middleware/cors.js';
 import { createOllamaClient } from './services/ollama-client.js';
@@ -84,6 +84,7 @@ app.use(express.json());
 
 // Every Ollama call goes through one shared queue (OLLAMA_MAX_CONCURRENT etc.).
 const ollamaClient = createOllamaGate(createOllamaClient(config.ollama), config.ollamaGate);
+for (const w of ollamaTimingWarnings(config.ollama.timeoutMs, config.ollamaGate.requestBudgetMs, config.ollamaGate.coachNoteBudgetMs)) console.warn(w);
 
 // Caps queue time plus Ollama time for one recipe request, retries included.
 const recipeBudget = {

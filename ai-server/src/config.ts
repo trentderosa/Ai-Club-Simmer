@@ -406,6 +406,34 @@ export const OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS = { default: 15000, min: 1000, m
 export const OLLAMA_REQUEST_BUDGET_MS = { default: 170000, min: 10000, max: 600000 } as const;
 export const OLLAMA_COACH_NOTE_BUDGET_MS = { default: 120000, min: 5000, max: 600000 } as const;
 
+/**
+ * Warnings for Ollama timeout and budget settings that cannot work together.
+ * Pure: the values are durations in ms, not secrets, so they are named in the text.
+ */
+export function ollamaTimingWarnings(
+  ollamaTimeoutMs: number,
+  requestBudgetMs: number,
+  coachNoteBudgetMs: number
+): string[] {
+  if (!Number.isFinite(ollamaTimeoutMs) || ollamaTimeoutMs <= 0) {
+    return [
+      `OLLAMA_TIMEOUT_MS is ${ollamaTimeoutMs}, not a finite positive number; model calls may not time out as expected`,
+    ];
+  }
+  const warnings: string[] = [];
+  if (!(requestBudgetMs > ollamaTimeoutMs)) {
+    warnings.push(
+      `OLLAMA_REQUEST_BUDGET_MS (${requestBudgetMs}) is not greater than OLLAMA_TIMEOUT_MS (${ollamaTimeoutMs}); every recipe request will answer 503 GENERATION_BUSY without calling the model`
+    );
+  }
+  if (!(coachNoteBudgetMs > ollamaTimeoutMs)) {
+    warnings.push(
+      `OLLAMA_COACH_NOTE_BUDGET_MS (${coachNoteBudgetMs}) is not greater than OLLAMA_TIMEOUT_MS (${ollamaTimeoutMs}); every coach note will use the fallback note`
+    );
+  }
+  return warnings;
+}
+
 export function loadOllamaGateConfig(env: Env = process.env): Config['ollamaGate'] {
   return {
     maxConcurrent: parseBoundedIntEnv(
