@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
+import { assertProductionConfig, assertProductionTunnelHost, DEFAULT_ALLOWED_ORIGINS, isLoopbackBindHost, loadCookAnythingConfig, loadDishPhotoConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv, PRODUCTION_LOOPBACK_TUNNEL_MESSAGE } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -31,6 +31,63 @@ describe('assertProductionConfig', () => {
     expect(message).toContain('SUPABASE_SERVICE_ROLE_KEY');
     expect(message).not.toContain('SUPABASE_URL,');
     expect(message).not.toContain(full.jwtSecret);
+  });
+});
+
+describe('assertProductionTunnelHost', () => {
+  it('refuses production when HOST is loopback and TRUST_PROXY is true', () => {
+    const env = {
+      NODE_ENV: 'production',
+      TRUST_PROXY: 'true',
+      SUPABASE_SERVICE_ROLE_KEY: 'placeholder-service-role',
+    };
+    for (const host of ['127.0.0.1', 'localhost', '::1', '[::1]', '127.0.0.2', '127.1', ' 127.0.0.1 ']) {
+      expect(() => assertProductionTunnelHost(env, host)).toThrow(PRODUCTION_LOOPBACK_TUNNEL_MESSAGE);
+    }
+    let message = '';
+    try {
+      assertProductionTunnelHost(env, '127.0.0.1');
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('HOST=0.0.0.0');
+    expect(message).not.toContain('placeholder-service-role');
+  });
+
+  it('allows a non-loopback HOST with TRUST_PROXY in production', () => {
+    const env = { NODE_ENV: 'production', TRUST_PROXY: 'true' };
+    expect(() => assertProductionTunnelHost(env, '0.0.0.0')).not.toThrow();
+    expect(() => assertProductionTunnelHost(env, '::')).not.toThrow();
+    expect(() => assertProductionTunnelHost(env, '192.168.1.20')).not.toThrow();
+  });
+
+  it('allows loopback when TRUST_PROXY is unset, including in production', () => {
+    expect(() => assertProductionTunnelHost({ NODE_ENV: 'production' }, '127.0.0.1')).not.toThrow();
+    expect(() =>
+      assertProductionTunnelHost({ NODE_ENV: 'production', TRUST_PROXY: 'false' }, 'localhost')
+    ).not.toThrow();
+    expect(() => assertProductionTunnelHost({ NODE_ENV: 'test', TRUST_PROXY: 'true' }, '127.0.0.1')).not.toThrow();
+    expect(() => assertProductionTunnelHost({ TRUST_PROXY: 'true' }, '127.0.0.1')).not.toThrow();
+  });
+});
+
+describe('isLoopbackBindHost', () => {
+  it('recognizes loopback binds and leaves other addresses alone', () => {
+    for (const host of [
+      '127.0.0.1',
+      '127.1',
+      '127.0.1',
+      'localhost',
+      '::1',
+      '[::1]',
+      '::ffff:127.0.0.1',
+      '[::ffff:127.0.0.1]',
+    ]) {
+      expect(isLoopbackBindHost(host)).toBe(true);
+    }
+    for (const host of ['0.0.0.0', '::', '192.168.1.20', '10.0.0.2', '', 'example.com']) {
+      expect(isLoopbackBindHost(host)).toBe(false);
+    }
   });
 });
 

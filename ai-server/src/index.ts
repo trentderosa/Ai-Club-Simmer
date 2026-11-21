@@ -1,6 +1,6 @@
 import express from 'express';
 import { loadEnvFile } from './load-env.js';
-import { assertProductionConfig, loadConfig } from './config.js';
+import { assertProductionConfig, assertProductionTunnelHost, loadConfig } from './config.js';
 import { createCorsMiddleware } from './middleware/cors.js';
 import { createOllamaClient } from './services/ollama-client.js';
 import {
@@ -64,9 +64,10 @@ const config = loadConfig();
 
 const app = express();
 
-// Trust proxy for correct client IP behind reverse proxies (nginx, cloudflare tunnel, etc.)
-// This ensures rate limiting uses the real client IP, not the proxy's IP.
-// Set TRUST_PROXY=true when deploying behind a reverse proxy.
+// Trust one hop (Cloudflare Tunnel, ngrok, or another reverse proxy) so per-IP
+// rate limits see the client address, not the tunnel's. The value must be the
+// string true. In production, TRUST_PROXY=true with a loopback HOST is refused
+// below, before listen.
 if (process.env.TRUST_PROXY === 'true') {
   app.set('trust proxy', 1);
 }
@@ -164,6 +165,7 @@ function createServicesFromConfig(): ServiceConfig {
   // Fail fast at startup with a clear message (names only, never values).
   if (isProduction) {
     assertProductionConfig(config.supabase);
+    assertProductionTunnelHost(process.env, config.host);
   }
 
   if (isStubAuthAllowed()) {

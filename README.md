@@ -59,6 +59,8 @@ npm run dev            # tsx watch, default http://127.0.0.1:3001; loads .env if
 
 `GET /health` stays a fast, unauthenticated process check and returns `{"status":"ok"}`. `GET /health/deep` is also unauthenticated. It checks that the configured Ollama model is listed and that a one-row `path_slots` read with the service role succeeds. A missing `YOUTUBE_API_KEY` is reported as `skipped` and the overall status is `degraded` with HTTP 200; Ollama or Supabase failing is still HTTP 503. It does not call the YouTube API. Each dependency check times out after 2 seconds. The last report is reused for 5 seconds, and concurrent requests share one in-flight check. The JSON uses short status and reason codes only: no keys, URLs, or error text. Add `https://trentderosa.github.io` (no path) to `ALLOWED_ORIGINS` so the GitHub Pages app can call this server. Setting `ALLOWED_ORIGINS` replaces the localhost defaults, so list those too.
 
+A phone-reachable demo boots with `NODE_ENV=production`, `HOST=0.0.0.0`, `TRUST_PROXY=true`, `SUPABASE_URL`, the service-role key, `SUPABASE_JWKS_URI` (or `SUPABASE_JWT_SECRET`), and Ollama (`OLLAMA_BASE_URL`, `OLLAMA_MODEL`). `ALLOWED_ORIGINS` must include `https://trentderosa.github.io`, and setting it replaces the localhost defaults. Production exits if `HOST` is loopback while `TRUST_PROXY=true`. Someone must already have applied migration `20261120150000_cook_anything_generation_limits.sql`; the server does not apply it. The exact command is in [ai-server/README.md](ai-server/README.md#phone-reachable-demo).
+
 ```bash
 npm test               # vitest
 npm run lint
