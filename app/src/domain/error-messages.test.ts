@@ -94,6 +94,35 @@ describe('errorCopy outage messages', () => {
   });
 });
 
+describe('errorCopy: GENERATION_BUSY', () => {
+  const busy = (seconds?: number) => new ApiError('busy', 'The kitchen is busy right now.', 503, 'GENERATION_BUSY', seconds);
+
+  it.each([
+    [undefined, 'The kitchen is busy right now. Try again in a minute.'],
+    [1, 'The kitchen is busy right now. Try again in about 1 second.'],
+    [30, 'The kitchen is busy right now. Try again in about 30 seconds.'],
+    [59, 'The kitchen is busy right now. Try again in about 59 seconds.'],
+    [60, 'The kitchen is busy right now. Try again in about 1 minute.'],
+    [89, 'The kitchen is busy right now. Try again in about 1 minute.'],
+    [90, 'The kitchen is busy right now. Try again in about 2 minutes.'],
+    [120, 'The kitchen is busy right now. Try again in about 2 minutes.'],
+    [300, 'The kitchen is busy right now. Try again in about 5 minutes.'],
+  ])('with %s seconds says: %s', (seconds, body) => {
+    expect(errorCopy(busy(seconds))).toEqual({ title: 'The kitchen is busy', body, action: 'retry' });
+  });
+
+  it('counts as an AI server outage', () => {
+    expect(isAiServerOutage(busy(30))).toBe(true);
+  });
+
+  it('keeps a 503 without the code as the kitchen and an auth 503 as sign-in', () => {
+    expect(errorCopy(new ApiError('unavailable', 'Request failed (503).', 503)).title).toBe('The kitchen is unavailable');
+    expect(errorCopy(new ApiError('unavailable', 'Login could not be checked.', 503, 'AUTH_UNAVAILABLE')).title).toBe(
+      'Sign-in service is down',
+    );
+  });
+});
+
 describe('isAiServerOutage', () => {
   it('matches unreachable, timeout, 429, and 503 only', () => {
     expect(isAiServerOutage(new ApiError('network', 'down'))).toBe(true);
