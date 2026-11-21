@@ -3,7 +3,8 @@
  * zig-zag. Done = ink dot with a check, current = tomato ring, locked =
  * dashed. The final slot (mastery challenge) is a rounded diamond.
  */
-import { Pressable, StyleSheet, View, useWindowDimensions } from 'react-native';
+import { useState } from 'react';
+import { Pressable, StyleSheet, View } from 'react-native';
 import Svg, { Path as SvgPath } from 'react-native-svg';
 
 import type { PlanSlot } from '../api';
@@ -27,8 +28,7 @@ const centerX = (i: number) => offsetFor(i) + GAP + DOT / 2;
 const centerY = (i: number) => TOP + ROW / 2 + i * ROW;
 
 export function PathList({ slots, onOpen }: { slots: PlanSlot[]; onOpen: (slot: PlanSlot) => void }) {
-  const { width } = useWindowDimensions();
-  const svgWidth = Math.min(width, 480) - space.gutter * 2;
+  const [width, setWidth] = useState(0);
   const segments = slots.slice(0, -1).map((s, i) => {
     const [x1, y1, x2, y2] = [centerX(i), centerY(i), centerX(i + 1), centerY(i + 1)];
     const my = (y1 + y2) / 2;
@@ -46,11 +46,20 @@ export function PathList({ slots, onOpen }: { slots: PlanSlot[]; onOpen: (slot: 
     );
   });
 
+  const height = TOP + slots.length * ROW + 8;
   return (
-    <View style={styles.wrap}>
-      <Svg width={svgWidth} height={TOP + slots.length * ROW + 8} style={StyleSheet.absoluteFill} pointerEvents="none">
-        {segments}
-      </Svg>
+    <View
+      style={styles.wrap}
+      onLayout={(e) => {
+        const next = Math.round(e.nativeEvent.layout.width);
+        setWidth((prev) => (prev === next ? prev : next));
+      }}
+    >
+      {width > 0 ? (
+        <Svg width={width} height={height} style={StyleSheet.absoluteFill} pointerEvents="none">
+          {segments}
+        </Svg>
+      ) : null}
       {slots.map((s, i) => (
         <PathNode key={s.slot_id} slot={s} offset={offsetFor(i)} onPress={() => onOpen(s)} />
       ))}

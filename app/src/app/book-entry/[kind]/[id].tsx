@@ -13,7 +13,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { ApiError, type BookTarget, type CheckInHistoryEntry, type DishPhoto, type Recipe, type Video, type Videos } from '../../../api';
 import { Button, IconButton } from '../../../components/button';
 import { DishPhotoFill } from '../../../components/dish-photo';
-import { SectionHead } from '../../../components/layout';
+import { pageColumn, SectionHead } from '../../../components/layout';
 import { EmptyState, ErrorState, LoadingState } from '../../../components/states';
 import { T } from '../../../components/text';
 import { VideoRow } from '../../../components/video';
@@ -44,11 +44,13 @@ export default function BookEntryScreen() {
 function NotFound() {
   const router = useRouter();
   return (
-    <SafeAreaView style={styles.fill}>
-      <View style={styles.bar}>
-        <IconButton icon="back" label="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/book'))} />
-      </View>
+      <SafeAreaView style={styles.fill}>
+        <View style={[styles.fill, pageColumn]}>
+        <View style={styles.bar}>
+          <IconButton icon="back" label="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/book'))} />
+        </View>
       <EmptyState title="Recipe not found" body="That recipe isn’t in your book." action={{ label: 'Back to my book', onPress: () => router.replace('/book') }} />
+        </View>
     </SafeAreaView>
   );
 }
@@ -161,10 +163,12 @@ function EntryView({
   if (state.status !== 'ready' || !recipe) {
     return (
       <SafeAreaView style={styles.fill}>
+        <View style={[styles.fill, pageColumn]}>
         <View style={styles.bar}>
           <IconButton icon="back" label="Back" onPress={back} />
         </View>
         {state.status === 'error' ? <ErrorState error={state.error} onAction={onError} /> : <LoadingState title={title} />}
+        </View>
       </SafeAreaView>
     );
   }
@@ -172,7 +176,7 @@ function EntryView({
   const placeholder = backend.label !== 'live';
   return (
     <View style={styles.fill}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
+      <ScrollView contentContainerStyle={[pageColumn, styles.scroll]}>
         <View style={styles.hero}>
           <DishPhotoFill key={photo?.url ?? 'none'} photo={photo} linkCredit />
           <View style={[styles.float, { top: insets.top + 4 }]}>
@@ -210,8 +214,10 @@ function EntryView({
         <DishVideoSection videos={dishVideos ?? []} placeholder={placeholder} />
       </ScrollView>
 
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) + 12 }]}>
-        <Button label="Cook again" onPress={onCookAgain} style={{ flex: 1 }} />
+      <View style={[styles.footerBar, { paddingBottom: Math.max(insets.bottom, space.s3) + space.s3 }]}>
+        <View style={[pageColumn, styles.footer]}>
+          <Button label="Cook again" onPress={onCookAgain} style={styles.footerBtn} />
+        </View>
       </View>
     </View>
   );
@@ -304,7 +310,7 @@ function Ingredients({ recipe }: { recipe: Recipe }) {
       {hidden > 0 ? (
         <Pressable accessibilityRole="button" onPress={() => setAll(true)} style={styles.ing}>
           <View style={styles.amount} />
-          <T color="ink3">+ {hidden} more</T>
+          <T variant="bodySemi" color="ink2">+ {hidden} more</T>
         </Pressable>
       ) : null}
     </View>
@@ -365,23 +371,26 @@ function VideoSection({ recipe, videos, placeholder }: { recipe: Recipe; videos:
 
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: color.paper },
-  bar: { height: 52, justifyContent: 'center', paddingLeft: 12 },
-  hero: { height: 330, backgroundColor: color.paperDeep, overflow: 'hidden' },
-  float: { position: 'absolute', left: 12 },
-  titleBlock: { paddingTop: 22, paddingHorizontal: space.gutter },
-  title: { marginTop: 10, fontSize: 34, lineHeight: 38 },
-  facts: { flexDirection: 'row', marginTop: 18, marginHorizontal: space.gutter, borderTopWidth: 1, borderTopColor: color.ink, borderBottomWidth: 1, borderBottomColor: color.rule },
-  fact: { flex: 1, paddingVertical: 11 },
-  factDivider: { borderLeftWidth: 1, borderLeftColor: color.rule, paddingLeft: 14 },
-  factValue: { fontFamily: font.display, fontSize: 20, lineHeight: 26 },
-  note: { marginTop: 20, marginHorizontal: space.gutter, paddingVertical: 14, paddingHorizontal: 16, backgroundColor: color.butterWash, borderRadius: radius.sm },
-  noteText: { fontFamily: font.displayRegular, fontSize: 16, lineHeight: 23, marginTop: 4 },
-  sec: { marginTop: 30, marginHorizontal: space.gutter },
-  ing: { flexDirection: 'row', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: color.ruleSoft },
-  amount: { width: 108, paddingRight: 10 },
-  stepNum: { width: 34 },
-  cookRow: { paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: color.ruleSoft },
-  cookHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  cookNote: { marginTop: 4 },
-  footer: { paddingHorizontal: space.gutter, paddingTop: 12, backgroundColor: color.paper, borderTopWidth: 1, borderTopColor: color.rule, flexDirection: 'row' },
+  scroll: { paddingBottom: 128 },
+  bar: { height: 56, justifyContent: 'center', paddingHorizontal: space.s3 },
+  hero: { height: 280, backgroundColor: color.paperDeep, overflow: 'hidden' },
+  float: { position: 'absolute', left: space.s3 },
+  titleBlock: { paddingTop: space.s5, paddingHorizontal: space.gutter },
+  title: { marginTop: space.s2, fontSize: 34, lineHeight: 40 },
+  facts: { flexDirection: 'row', marginTop: space.s5, marginHorizontal: space.gutter, borderTopWidth: 1, borderTopColor: color.ink, borderBottomWidth: 1, borderBottomColor: color.rule },
+  fact: { flex: 1, alignItems: 'center', paddingVertical: space.s3, paddingHorizontal: space.s1 },
+  factDivider: { borderLeftWidth: 1, borderLeftColor: color.rule },
+  factValue: { fontFamily: font.display, fontSize: 22, lineHeight: 28, textAlign: 'center', fontVariant: ['tabular-nums'] },
+  note: { marginTop: space.s5, marginHorizontal: space.gutter, paddingVertical: space.s4, paddingHorizontal: space.s4, backgroundColor: color.butterWash, borderRadius: radius.sm },
+  noteText: { fontFamily: font.displayRegular, fontSize: 16, lineHeight: 23, marginTop: space.s1 },
+  sec: { marginTop: space.s8, marginHorizontal: space.gutter },
+  ing: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: space.s3, minHeight: 48, borderBottomWidth: 1, borderBottomColor: color.ruleSoft },
+  amount: { width: 112, paddingRight: space.s3 },
+  stepNum: { width: 36, paddingRight: space.s2 },
+  cookRow: { paddingVertical: space.s3, borderBottomWidth: 1, borderBottomColor: color.ruleSoft },
+  cookHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', gap: space.s3 },
+  cookNote: { marginTop: space.s1 },
+  footerBar: { backgroundColor: color.paper, borderTopWidth: 1, borderTopColor: color.rule },
+  footer: { flexDirection: 'row', paddingHorizontal: space.gutter, paddingTop: space.s3 },
+  footerBtn: { flex: 1 },
 });

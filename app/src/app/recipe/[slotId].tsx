@@ -11,7 +11,7 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Recipe, Video, Videos } from '../../api';
 import { Button, IconButton } from '../../components/button';
 import { DishPhotoFill } from '../../components/dish-photo';
-import { SectionHead } from '../../components/layout';
+import { pageColumn, SectionHead } from '../../components/layout';
 import { ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
 import { VideoRow } from '../../components/video';
@@ -36,6 +36,7 @@ export default function RecipeScreen() {
   if (data.status !== 'ready') {
     return (
       <SafeAreaView style={styles.fill}>
+        <View style={[styles.fill, pageColumn]}>
         <View style={styles.bar}>
           <IconButton icon="back" label="Back" onPress={back} />
         </View>
@@ -48,6 +49,7 @@ export default function RecipeScreen() {
             slowBody="Still going. The local model is slow on the first try; after this, the recipe loads instantly."
           />
         )}
+        </View>
       </SafeAreaView>
     );
   }
@@ -57,7 +59,7 @@ export default function RecipeScreen() {
 
   return (
     <View style={styles.fill}>
-      <ScrollView contentContainerStyle={{ paddingBottom: 120 }}>
+      <ScrollView contentContainerStyle={[pageColumn, styles.scroll]}>
         <View style={styles.hero}>
           <DishPhotoFill photo={photo} linkCredit />
           <View style={[styles.float, { top: insets.top + 4 }]}>
@@ -102,12 +104,14 @@ export default function RecipeScreen() {
         <DishVideoSection videos={dishVideos} placeholder={backend.label !== 'live'} />
       </ScrollView>
 
-      <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, 12) + 12 }]}>
-        <Button
-          label={slot.status === 'done' ? 'Cook it again' : 'Start cooking'}
-          onPress={() => router.push({ pathname: '/cook/[slotId]', params: { slotId: String(slotId) } })}
-          style={{ flex: 1 }}
-        />
+      <View style={[styles.footerBar, { paddingBottom: Math.max(insets.bottom, space.s3) + space.s3 }]}>
+        <View style={[pageColumn, styles.footer]}>
+          <Button
+            label={slot.status === 'done' ? 'Cook it again' : 'Start cooking'}
+            onPress={() => router.push({ pathname: '/cook/[slotId]', params: { slotId: String(slotId) } })}
+            style={styles.footerBtn}
+          />
+        </View>
       </View>
     </View>
   );
@@ -142,7 +146,7 @@ function Ingredients({ recipe }: { recipe: Recipe }) {
       {hidden > 0 ? (
         <Pressable accessibilityRole="button" onPress={() => setAll(true)} style={styles.ing}>
           <View style={styles.amount} />
-          <T color="ink3">+ {hidden} more</T>
+          <T variant="bodySemi" color="ink2">+ {hidden} more</T>
         </Pressable>
       ) : null}
     </View>
@@ -182,19 +186,22 @@ function VideoSection({ recipe, videos, placeholder }: { recipe: Recipe; videos:
 
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: color.paper },
-  bar: { height: 52, justifyContent: 'center', paddingLeft: 12 },
-  hero: { height: 330, backgroundColor: color.paperDeep, overflow: 'hidden' },
-  float: { position: 'absolute', left: 12 },
-  titleBlock: { paddingTop: 22, paddingHorizontal: space.gutter },
-  title: { marginTop: 10, fontSize: 34, lineHeight: 38 },
-  facts: { flexDirection: 'row', marginTop: 18, marginHorizontal: space.gutter, borderTopWidth: 1, borderTopColor: color.ink, borderBottomWidth: 1, borderBottomColor: color.rule },
-  fact: { flex: 1, paddingVertical: 11 },
-  factDivider: { borderLeftWidth: 1, borderLeftColor: color.rule, paddingLeft: 14 },
-  factValue: { fontFamily: font.display, fontSize: 20, lineHeight: 26 },
-  note: { marginTop: 20, marginHorizontal: space.gutter, paddingVertical: 14, paddingHorizontal: 16, backgroundColor: color.butterWash, borderRadius: radius.sm },
-  noteText: { fontFamily: font.displayRegular, fontSize: 16, lineHeight: 23, marginTop: 4 },
-  sec: { marginTop: 30, marginHorizontal: space.gutter },
-  ing: { flexDirection: 'row', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: color.ruleSoft },
-  amount: { width: 108, paddingRight: 10 },
-  footer: { paddingHorizontal: space.gutter, paddingTop: 12, backgroundColor: color.paper, borderTopWidth: 1, borderTopColor: color.rule, flexDirection: 'row' },
+  scroll: { paddingBottom: 128 },
+  bar: { height: 56, justifyContent: 'center', paddingHorizontal: space.s3 },
+  hero: { height: 280, backgroundColor: color.paperDeep, overflow: 'hidden' },
+  float: { position: 'absolute', left: space.s3 },
+  titleBlock: { paddingTop: space.s5, paddingHorizontal: space.gutter },
+  title: { marginTop: space.s2, fontSize: 34, lineHeight: 40 },
+  facts: { flexDirection: 'row', marginTop: space.s5, marginHorizontal: space.gutter, borderTopWidth: 1, borderTopColor: color.ink, borderBottomWidth: 1, borderBottomColor: color.rule },
+  fact: { flex: 1, alignItems: 'center', paddingVertical: space.s3 },
+  factDivider: { borderLeftWidth: 1, borderLeftColor: color.rule },
+  factValue: { fontFamily: font.display, fontSize: 22, lineHeight: 28, textAlign: 'center', fontVariant: ['tabular-nums'] },
+  note: { marginTop: space.s5, marginHorizontal: space.gutter, paddingVertical: space.s4, paddingHorizontal: space.s4, backgroundColor: color.butterWash, borderRadius: radius.sm },
+  noteText: { fontFamily: font.displayRegular, fontSize: 16, lineHeight: 23, marginTop: space.s1 },
+  sec: { marginTop: space.s8, marginHorizontal: space.gutter },
+  ing: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: space.s3, minHeight: 48, borderBottomWidth: 1, borderBottomColor: color.ruleSoft },
+  amount: { width: 112, paddingRight: space.s3 },
+  footerBar: { backgroundColor: color.paper, borderTopWidth: 1, borderTopColor: color.rule },
+  footer: { flexDirection: 'row', paddingHorizontal: space.gutter, paddingTop: space.s3 },
+  footerBtn: { flex: 1 },
 });

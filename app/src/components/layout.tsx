@@ -9,6 +9,18 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { color, space } from '../theme/tokens';
 import { T } from './text';
 
+/**
+ * Reading column for the cook loop. Phone widths use the full screen; wider
+ * windows center this column so type, cards, and the tab bar stay aligned.
+ */
+export const PAGE_MAX = 520;
+
+export const pageColumn = {
+  width: '100%' as const,
+  maxWidth: PAGE_MAX,
+  alignSelf: 'center' as const,
+};
+
 export function Screen({
   children,
   footer,
@@ -29,14 +41,16 @@ export function Screen({
   return (
     <SafeAreaView edges={edges} style={[styles.fill, { backgroundColor: background }]}>
       {scroll ? (
-        <ScrollView style={styles.fill} contentContainerStyle={[styles.content, contentStyle]} keyboardShouldPersistTaps="handled">
+        <ScrollView style={styles.fill} contentContainerStyle={[styles.content, pageColumn, contentStyle]} keyboardShouldPersistTaps="handled">
           {children}
         </ScrollView>
       ) : (
-        <View style={[styles.fill, contentStyle]}>{children}</View>
+        <View style={[styles.fill, pageColumn, contentStyle]}>{children}</View>
       )}
       {footer ? (
-        <View style={[styles.footer, { backgroundColor: background, paddingBottom: Math.max(insets.bottom, 12) + 12 }]}>{footer}</View>
+        <View style={[styles.footerBar, { backgroundColor: background, paddingBottom: Math.max(insets.bottom, space.s3) + space.s3 }]}>
+          <View style={[styles.footer, pageColumn]}>{footer}</View>
+        </View>
       ) : null}
     </SafeAreaView>
   );
@@ -73,10 +87,14 @@ export function Rule({ strong, dashed, style }: { strong?: boolean; dashed?: boo
 export function SectionHead({ title, aside }: { title: string; aside?: ReactNode }) {
   return (
     <View style={styles.sh}>
-      <T variant="h2" accessibilityRole="header">
+      <T variant="h2" accessibilityRole="header" style={styles.shTitle}>
         {title}
       </T>
-      {typeof aside === 'string' ? <T variant="caption">{aside}</T> : aside}
+      {typeof aside === 'string' ? (
+        <T variant="caption">{aside}</T>
+      ) : (
+        aside
+      )}
     </View>
   );
 }
@@ -85,11 +103,13 @@ export const gutter = { paddingHorizontal: space.gutter } as const;
 
 const styles = StyleSheet.create({
   fill: { flex: 1 },
-  content: { paddingBottom: space.s8 },
-  footer: { paddingHorizontal: space.gutter, paddingTop: 12, borderTopWidth: 1, borderTopColor: color.rule, flexDirection: 'row', gap: 12 },
-  topbar: { height: 52, flexDirection: 'row', alignItems: 'center', paddingLeft: 12, paddingRight: 16 },
+  content: { paddingBottom: space.s8, flexGrow: 1 },
+  footerBar: { borderTopWidth: 1, borderTopColor: color.rule },
+  footer: { paddingHorizontal: space.gutter, paddingTop: space.s3, flexDirection: 'row', gap: space.s3 },
+  topbar: { height: 56, flexDirection: 'row', alignItems: 'center', paddingHorizontal: space.s3 },
   side: { width: 48, alignItems: 'flex-start' },
   sideRight: { alignItems: 'flex-end' },
   title: { flex: 1, textAlign: 'center' },
-  sh: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: color.ink },
+  sh: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: space.s3, paddingBottom: space.s3, borderBottomWidth: 1, borderBottomColor: color.ink },
+  shTitle: { flexShrink: 1 },
 });

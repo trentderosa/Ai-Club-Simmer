@@ -142,7 +142,7 @@ XP is shown honestly: `awarded` shows `+N` (and explains repeats and the weekly 
 ## Design notes
 
 - Fonts: Fraunces (300, 400, 400 italic, 500, 600) and Source Sans 3 (400, 600, 700) from `@expo-google-fonts`, each a static file per weight. The mockup's Fraunces 450 for cook-mode steps uses 400, the nearest static cut.
-- Photos are CC0 from Wikimedia Commons (`assets/photos/CREDITS.md`) and stand in for dishes; recipes don't have their own photos.
+- Photos are CC0 from Wikimedia Commons (`assets/photos/CREDITS.md`) and stand in for dishes; recipes don't have their own photos. A Commons credit line stays on recipe heroes and the recipe book's featured photo. List thumbnails leave it off.
 - Video thumbnails come from `i.ytimg.com`. Tapping opens an allowlisted YouTube URL with React Native `Linking` (`https://www.youtube.com`, `https://youtube.com`, `https://m.youtube.com`, `https://youtu.be`). In mock mode the ids are fake, so a local placeholder image is shown, the row is disabled, and nothing opens (no crash, no error toast).
 - The path's zig-zag offsets are a little narrower than the mockup's so long dish names fit with the static Fraunces cut.
 

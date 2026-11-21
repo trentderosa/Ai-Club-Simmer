@@ -75,7 +75,7 @@ export function IconButton({ icon, onPress, label, tint = color.ink, filled }: {
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
-      hitSlop={6}
+      hitSlop={4}
       style={({ pressed }) => [iconStyles.btn, filled && iconStyles.filled, pressed && { opacity: 0.7 }]}
     >
       <Icon name={icon} color={tint} />
@@ -84,6 +84,6 @@ export function IconButton({ icon, onPress, label, tint = color.ink, filled }: {
 }
 
 const iconStyles = StyleSheet.create({
-  btn: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
+  btn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   filled: { backgroundColor: 'rgba(247,242,232,0.94)' },
 });

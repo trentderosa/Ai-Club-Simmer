@@ -12,7 +12,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { PlanSlot, RecipeBookEntry } from '../../api';
 import { DishPhotoFill } from '../../components/dish-photo';
 import { Icon } from '../../components/icon';
-import { gutter } from '../../components/layout';
+import { gutter, pageColumn } from '../../components/layout';
 import { EmptyState, ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
 import {
@@ -78,7 +78,7 @@ export default function RecipeBook() {
     <SafeAreaView edges={['top']} style={styles.fill}>
       <ScrollView
         style={styles.fill}
-        contentContainerStyle={{ paddingBottom: space.s10, flexGrow: 1 }}
+        contentContainerStyle={[pageColumn, styles.scroll]}
         keyboardShouldPersistTaps="handled"
         refreshControl={<RefreshControl refreshing={data.status === 'loading' && data.data !== null} onRefresh={reload} tintColor={color.tomato} />}
       >
@@ -86,11 +86,11 @@ export default function RecipeBook() {
           <T variant="overline" color="ink3">
             Your recipe book
           </T>
-          <T variant="display" style={{ marginTop: 6 }} accessibilityRole="header">
+          <T variant="display" style={styles.greeting} accessibilityRole="header">
             {data.data ? recipeBookHeadline(data.data.book.length) : 'Your dishes.'}
           </T>
           {data.data && data.data.book.length > 0 ? (
-            <T variant="small" style={{ marginTop: 10 }}>
+            <T variant="small" style={styles.note}>
               {REPEAT_XP_NOTE}
             </T>
           ) : null}
@@ -167,7 +167,7 @@ function BookBody({
       ))}
       {!querying && upcoming.length > 0 ? (
         <>
-          <View style={[gutter, { marginTop: 28 }]}>
+          <View style={[gutter, styles.upcomingHead]}>
             <T variant="overline" color="ink">
               Still to come
             </T>
@@ -176,7 +176,7 @@ function BookBody({
             <View key={slot.slot_id} style={styles.future} accessibilityLabel={`Still to come: recipe ${slot.slot_order}, ${slot.dish_name}${slot.is_final ? ', mastery challenge' : ''}`}>
               <T style={styles.futureNum}>{slot.slot_order}</T>
               <T style={styles.futureName}>{slot.dish_name}</T>
-              <T variant="caption">{slot.is_final ? 'Mastery' : ''}</T>
+              {slot.is_final ? <T variant="caption">Mastery</T> : null}
             </View>
           ))}
         </>
@@ -197,16 +197,18 @@ function FeaturedEntry({ entry, photo, technique, onOpen }: { entry: RecipeBookE
       <View style={styles.featurePhoto}>
         <DishPhotoFill photo={photo} />
       </View>
-      <View style={styles.featureMeta}>
-        <BookLabel entry={entry} />
-        {added ? <T variant="caption">{added}</T> : null}
+      <View style={styles.featureBody}>
+        <View style={styles.featureMeta}>
+          <BookLabel entry={entry} />
+          {added ? <T variant="caption">{added}</T> : null}
+        </View>
+        <T variant="h2" style={styles.featureTitle}>
+          {entry.recipe_title}
+        </T>
+        <T variant="byline" style={styles.featureByline}>
+          {byline(entry, technique)}
+        </T>
       </View>
-      <T variant="h2" style={{ marginTop: 4 }}>
-        {entry.recipe_title}
-      </T>
-      <T variant="byline" style={{ marginTop: 6 }}>
-        {byline(entry, technique)}
-      </T>
     </Pressable>
   );
 }
@@ -219,17 +221,17 @@ function BookRow({ entry, photo, technique, onOpen }: { entry: RecipeBookEntry; 
       accessibilityLabel={`${entry.recipe_title}. ${formatBookLabel(entry.label, entry.times_cooked)}. Repeat for 50% XP.`}
       style={({ pressed }) => [styles.row, pressed && { opacity: 0.85 }]}
     >
-      <View style={{ flex: 1, paddingRight: 12 }}>
+      <View style={styles.rowText}>
         <BookLabel entry={entry} />
-        <T variant="h3" style={{ marginTop: 4 }}>
+        <T variant="h3" style={styles.rowTitle}>
           {entry.recipe_title}
         </T>
-        <T variant="caption" style={{ marginTop: 3 }}>
+        <T variant="caption" style={styles.rowByline}>
           {byline(entry, technique)}
         </T>
       </View>
       <View style={styles.thumb}>
-        <DishPhotoFill photo={photo} creditStyle={styles.thumbCredit} />
+        <DishPhotoFill photo={photo} showCredit={false} />
       </View>
     </Pressable>
   );
@@ -262,29 +264,46 @@ function byline(entry: RecipeBookEntry, technique?: string): string {
 
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: color.paper },
-  head: { paddingTop: 6 },
+  scroll: { paddingBottom: space.s10, flexGrow: 1 },
+  head: { paddingTop: space.s3 },
+  greeting: { marginTop: space.s2 },
+  note: { marginTop: space.s3 },
   search: {
-    marginTop: 16,
+    marginTop: space.s4,
     marginHorizontal: space.gutter,
     height: 48,
     borderRadius: radius.md,
     backgroundColor: color.paperDeep,
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 14,
-    gap: 8,
+    paddingHorizontal: space.s4,
+    gap: space.s2,
   },
   searchInput: { flex: 1, fontFamily: font.body, fontSize: 16, lineHeight: 22, color: color.ink, paddingVertical: 0 },
-  feature: { marginTop: 18, marginHorizontal: space.gutter },
-  featurePhoto: { height: 240, borderRadius: radius.md, overflow: 'hidden', backgroundColor: color.paperDeep },
-  featureMeta: { marginTop: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' },
-  listRule: { height: 1, backgroundColor: color.ink, marginTop: 18 },
-  row: { marginHorizontal: space.gutter, flexDirection: 'row', alignItems: 'center', paddingVertical: 16, borderBottomWidth: 1, borderBottomColor: color.rule },
-  thumb: { width: 76, height: 76, borderRadius: radius.sm, overflow: 'hidden', backgroundColor: color.paperDeep },
-  thumbCredit: { right: 2, bottom: 2, maxWidth: '100%' },
-  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  tag: { marginLeft: 6, paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.sm, borderWidth: 1, borderColor: color.rule },
-  future: { marginHorizontal: space.gutter, flexDirection: 'row', alignItems: 'baseline', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: color.rule, borderStyle: 'dashed' },
-  futureNum: { width: 34, fontFamily: font.display, fontSize: 16, lineHeight: 22, color: color.ink3 },
+  feature: {
+    marginTop: space.s5,
+    marginHorizontal: space.gutter,
+    backgroundColor: color.sheet,
+    borderWidth: 1,
+    borderColor: color.rule,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+  },
+  featurePhoto: { height: 200, backgroundColor: color.paperDeep },
+  featureBody: { paddingHorizontal: space.s4, paddingTop: space.s3, paddingBottom: space.s4 },
+  featureMeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: space.s2 },
+  featureTitle: { marginTop: space.s2 },
+  featureByline: { marginTop: space.s2 },
+  listRule: { height: 1, backgroundColor: color.ink, marginTop: space.s5, marginHorizontal: space.gutter },
+  row: { marginHorizontal: space.gutter, flexDirection: 'row', alignItems: 'center', gap: space.s3, paddingVertical: space.s3, minHeight: 96, borderBottomWidth: 1, borderBottomColor: color.rule },
+  rowText: { flex: 1 },
+  rowTitle: { marginTop: space.s1 },
+  rowByline: { marginTop: space.s1 },
+  thumb: { width: 72, height: 72, borderRadius: radius.sm, overflow: 'hidden', backgroundColor: color.paperDeep },
+  labelRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: space.s1 },
+  tag: { marginLeft: space.s1, paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.sm, borderWidth: 1, borderColor: color.rule },
+  upcomingHead: { marginTop: space.s8, paddingBottom: space.s2, borderBottomWidth: 1, borderBottomColor: color.ink },
+  future: { marginHorizontal: space.gutter, flexDirection: 'row', alignItems: 'center', gap: space.s2, minHeight: 48, paddingVertical: space.s3, borderBottomWidth: 1, borderBottomColor: color.rule },
+  futureNum: { width: 28, fontFamily: font.display, fontSize: 16, lineHeight: 22, color: color.ink3, fontVariant: ['tabular-nums'] },
   futureName: { flex: 1, fontFamily: font.body, fontSize: 16, lineHeight: 22, color: color.ink3 },
 });

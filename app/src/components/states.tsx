@@ -61,9 +61,9 @@ export function ErrorState({
   );
 }
 
-export function EmptyState({ title, body, action }: { title: string; body: string; action?: { label: string; onPress: () => void } }) {
+export function EmptyState({ title, body, action, compact }: { title: string; body: string; action?: { label: string; onPress: () => void }; compact?: boolean }) {
   return (
-    <View style={styles.wrap}>
+    <View style={[styles.wrap, compact && styles.compact]}>
       <Icon name="pot" color={color.butter} size={28} />
       <T variant="h2" style={styles.title}>
         {title}
@@ -77,7 +77,8 @@ export function EmptyState({ title, body, action }: { title: string; body: strin
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, minHeight: 320, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space.gutter + 8, paddingVertical: space.s10 },
+  wrap: { flex: 1, minHeight: 320, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space.gutter, paddingVertical: space.s8 },
+  compact: { minHeight: 0, flexGrow: 0, paddingVertical: space.s6 },
   title: { marginTop: space.s4, textAlign: 'center' },
   body: { marginTop: space.s2, textAlign: 'center', maxWidth: 320 },
   btn: { marginTop: space.s6, alignSelf: 'stretch' },

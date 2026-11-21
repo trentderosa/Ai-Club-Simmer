@@ -5,8 +5,9 @@
  */
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { color } from '../theme/tokens';
+import { color, radius, space } from '../theme/tokens';
 import { Icon, type IconName } from './icon';
+import { pageColumn } from './layout';
 import { T } from './text';
 
 const ICONS: Record<string, IconName> = {
@@ -31,44 +32,50 @@ export interface AppTabBarProps {
 
 export function AppTabBar({ state, descriptors, emitter, navigateToTab, insets }: AppTabBarProps) {
   return (
-    <View accessibilityRole="tablist" style={[styles.bar, { paddingBottom: Math.max(insets.bottom, 8) }]}>
-      {state.routes.map((route, index) => {
-        const focused = state.index === index;
-        const { options } = descriptors[route.key];
-        const label = typeof options.tabBarLabel === 'string' ? options.tabBarLabel : (options.title ?? route.name);
-        const icon = ICONS[route.name] ?? 'path';
-        const onPress = () => {
-          const event = emitter.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
-          if (!focused && !event.defaultPrevented) navigateToTab(route.key);
-        };
-        return (
-          <Pressable
-            key={route.key}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: focused }}
-            accessibilityLabel={label}
-            onPress={onPress}
-            style={({ pressed }) => [styles.item, pressed && { opacity: 0.7 }]}
-          >
-            <Icon name={icon} size={24} color={focused ? color.tomato : color.ink3} />
-            <T variant="tab" color={focused ? 'ink' : 'ink3'}>
-              {label}
-            </T>
-          </Pressable>
-        );
-      })}
+    <View accessibilityRole="tablist" style={[styles.bar, { paddingBottom: Math.max(insets.bottom, space.s2) }]}>
+      <View style={styles.row}>
+        {state.routes.map((route, index) => {
+          const focused = state.index === index;
+          const { options } = descriptors[route.key];
+          const label = typeof options.tabBarLabel === 'string' ? options.tabBarLabel : (options.title ?? route.name);
+          const icon = ICONS[route.name] ?? 'path';
+          const onPress = () => {
+            const event = emitter.emit({ type: 'tabPress', target: route.key, canPreventDefault: true });
+            if (!focused && !event.defaultPrevented) navigateToTab(route.key);
+          };
+          return (
+            <Pressable
+              key={route.key}
+              accessibilityRole="tab"
+              accessibilityState={{ selected: focused }}
+              accessibilityLabel={label}
+              onPress={onPress}
+              style={({ pressed }) => [styles.item, pressed && styles.pressed]}
+            >
+              <View style={[styles.iconWrap, focused && styles.iconWrapOn]}>
+                <Icon name={icon} size={22} color={focused ? color.tomato : color.ink3} />
+              </View>
+              <T variant="tab" color={focused ? 'ink' : 'ink3'} numberOfLines={1}>
+                {label}
+              </T>
+            </Pressable>
+          );
+        })}
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   bar: {
-    flexDirection: 'row',
-    justifyContent: 'space-around',
     backgroundColor: color.paper,
     borderTopWidth: 1,
     borderTopColor: color.rule,
-    paddingTop: 9,
+    paddingTop: space.s2,
   },
-  item: { width: 84, alignItems: 'center', gap: 3, minHeight: 44, paddingVertical: 2 },
+  row: { ...pageColumn, flexDirection: 'row', alignItems: 'stretch' },
+  item: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 2, minHeight: 48, paddingVertical: space.s1, paddingHorizontal: space.s2 },
+  pressed: { opacity: 0.72 },
+  iconWrap: { minWidth: 56, height: 32, borderRadius: radius.pill, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space.s3 },
+  iconWrapOn: { backgroundColor: color.tomatoWash },
 });

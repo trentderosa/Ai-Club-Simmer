@@ -18,6 +18,7 @@ import { createTimer, parseStepDurationSeconds, type TimerState } from '../domai
 import { useSession } from '../state/session';
 import { Button, IconButton } from './button';
 import { Icon } from './icon';
+import { pageColumn } from './layout';
 import { T } from './text';
 import { TimerCard } from './timer-card';
 import { VideoRow } from './video';
@@ -88,6 +89,7 @@ export function CookSteps({
 
   return (
     <SafeAreaView edges={['top']} style={styles.fill}>
+      <View style={[styles.column, pageColumn]}>
       <View style={styles.top}>
         <IconButton icon="x" label="Close cook mode" onPress={onClose} />
         <T variant="byline" color="ink3" numberOfLines={1} style={styles.topTitle}>
@@ -106,16 +108,16 @@ export function CookSteps({
           <T variant="overline" color="ink3">
             Mastery challenge
           </T>
-          <T variant="caption" style={{ marginTop: 4 }}>
+          <T variant="caption" style={styles.challengeLine}>
             {revealedLabel(counts)}
           </T>
-          <T variant="caption" style={{ marginTop: 6 }}>
+          <T variant="caption" style={styles.challengeNote}>
             Reveal a step and you’ll still finish, but the mastery seal needs zero reveals.
           </T>
         </View>
       ) : null}
 
-      <ScrollView contentContainerStyle={styles.body}>
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.body}>
         {showIngredients ? (
           <IngredientsPanel recipe={recipe} />
         ) : (
@@ -128,35 +130,35 @@ export function CookSteps({
               <HiddenStep index={index} total={total} onReveal={() => void revealStep()} loading={revealing} error={revealError} />
             ) : (
               <>
-            <Instruction step={step} recipe={recipe} />
-            {step.whyItMatters ? (
-              <View style={styles.why}>
-                <T variant="body" style={styles.whyText}>
-                  <T variant="bodySemi" style={styles.whyLead}>
-                    Why it matters.{' '}
-                  </T>
-                  {step.whyItMatters}
-                </T>
-              </View>
-            ) : null}
-            {step.isSafetyStep ? (
-              <View style={styles.safety} accessibilityRole="alert">
-                <Icon name="alert" color={color.safety} size={20} />
-                <View style={{ flex: 1 }}>
-                  <T style={styles.safetyLabel}>Safety</T>
-                  <T style={styles.safetyText}>Heat, a blade, or raw meat on this step. Slow down and keep your hands clear.</T>
-                </View>
-              </View>
-            ) : null}
-            {video ? <VideoRow compact video={video} placeholder={backend.label !== 'live'} caption={backend.label !== 'live' ? 'Placeholder video' : 'YouTube'} /> : null}
-            {timers[index] ? <TimerCard timer={timers[index]} onChange={(t) => setTimer(index, t)} /> : null}
+                <Instruction step={step} recipe={recipe} />
+                {step.whyItMatters ? (
+                  <View style={styles.why}>
+                    <T variant="body" style={styles.whyText}>
+                      <T variant="bodySemi" style={styles.whyLead}>
+                        Why it matters.{' '}
+                      </T>
+                      {step.whyItMatters}
+                    </T>
+                  </View>
+                ) : null}
+                {step.isSafetyStep ? (
+                  <View style={styles.safety} accessibilityRole="alert">
+                    <Icon name="alert" color={color.safety} size={20} />
+                    <View style={styles.safetyCopy}>
+                      <T style={styles.safetyLabel}>Safety</T>
+                      <T style={styles.safetyText}>Heat, a blade, or raw meat on this step. Slow down and keep your hands clear.</T>
+                    </View>
+                  </View>
+                ) : null}
+                {video ? <VideoRow compact video={video} placeholder={backend.label !== 'live'} caption={backend.label !== 'live' ? 'Placeholder video' : 'YouTube'} /> : null}
+                {timers[index] ? <TimerCard timer={timers[index]} onChange={(t) => setTimer(index, t)} /> : null}
               </>
             )}
           </>
         )}
       </ScrollView>
 
-      <View style={[styles.foot, { paddingBottom: Math.max(insets.bottom, 14) + 14 }]}>
+      <View style={[styles.foot, { paddingBottom: Math.max(insets.bottom, space.s4) + space.s3 }]}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Previous step"
@@ -184,6 +186,7 @@ export function CookSteps({
           style={{ flex: 1 }}
         />
       </View>
+      </View>
     </SafeAreaView>
   );
 }
@@ -206,7 +209,7 @@ function HiddenStep({
       <T variant="overline" color="ink3">
         Hidden step
       </T>
-      <T variant="body" style={{ marginTop: 8 }}>
+      <T variant="body" style={styles.hiddenBody}>
         This step starts hidden. Reveal it only if you need a reminder.
       </T>
       <Button
@@ -215,10 +218,10 @@ function HiddenStep({
         onPress={onReveal}
         loading={loading}
         accessibilityHint={`Reveal step ${index + 1} of ${total}`}
-        style={{ marginTop: 16, alignSelf: 'flex-start' }}
+        style={styles.reveal}
       />
       {error ? (
-        <T variant="caption" style={{ marginTop: 10, color: color.safety }} accessibilityLiveRegion="polite">
+        <T variant="caption" style={styles.revealError} accessibilityLiveRegion="polite">
           {error}
         </T>
       ) : null}
@@ -229,7 +232,7 @@ function HiddenStep({
 function Instruction({ step, recipe }: { step: RecipeStep; recipe: Recipe }) {
   const runs = useMemo(() => highlightIngredients(step.instruction, recipe.ingredients), [step.instruction, recipe.ingredients]);
   return (
-    <T variant="cookStep" style={{ marginTop: 20 }} accessibilityLabel={step.instruction}>
+    <T variant="cookStep" style={styles.instruction} accessibilityLabel={step.instruction}>
       {runs.map((r, i) =>
         r.highlight ? (
           <T key={i} variant="cookStep" style={styles.mark}>
@@ -245,16 +248,16 @@ function Instruction({ step, recipe }: { step: RecipeStep; recipe: Recipe }) {
 
 function IngredientsPanel({ recipe }: { recipe: Recipe }) {
   return (
-    <View style={{ paddingTop: 10 }}>
-      <T variant="h2" style={{ paddingBottom: 10, borderBottomWidth: 1, borderBottomColor: color.ink }}>
+    <View style={styles.ingPanel}>
+      <T variant="h2" accessibilityRole="header" style={styles.ingHead}>
         Ingredients
       </T>
       {recipe.ingredients.map((ing, i) => (
         <View key={`${ing.name}-${i}`} style={styles.ing}>
-          <T variant="bodySemi" style={{ width: 96, paddingRight: 10 }}>
+          <T variant="bodySemi" style={styles.amount}>
             {ing.amount}
           </T>
-          <T style={{ flex: 1 }}>{ing.name}</T>
+          <T style={styles.ingName}>{ing.name}</T>
         </View>
       ))}
     </View>
@@ -263,25 +266,38 @@ function IngredientsPanel({ recipe }: { recipe: Recipe }) {
 
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: color.sheet },
-  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 12, paddingRight: 16, paddingTop: 4, minHeight: 48 },
-  topTitle: { flex: 1, textAlign: 'center', marginHorizontal: 8 },
-  ticks: { flexDirection: 'row', gap: 5, paddingTop: 14, paddingHorizontal: space.gutter },
+  column: { flex: 1, minHeight: 0 },
+  scroll: { flex: 1, minHeight: 0 },
+  top: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: space.s3, paddingTop: space.s1, minHeight: 56 },
+  topTitle: { flex: 1, textAlign: 'center', marginHorizontal: space.s2 },
+  ticks: { flexDirection: 'row', gap: space.s1, paddingTop: space.s3, paddingHorizontal: space.gutter },
   tick: { flex: 1, height: 4, borderRadius: 2, backgroundColor: color.rule },
   tickDone: { backgroundColor: color.ink },
   tickOn: { backgroundColor: color.tomato },
-  challengeHead: { paddingHorizontal: space.gutter, paddingTop: 16 },
-  hidden: { marginTop: 20, borderWidth: 1, borderColor: color.ink, borderRadius: radius.md, paddingVertical: 16, paddingHorizontal: 16, backgroundColor: color.paper },
-  body: { paddingHorizontal: space.gutter, paddingTop: 30, paddingBottom: 24 },
-  stepNum: { flexDirection: 'row', alignItems: 'baseline', gap: 10 },
+  challengeHead: { marginTop: space.s4, marginHorizontal: space.gutter, padding: space.s3, backgroundColor: color.paper, borderRadius: radius.sm, borderWidth: 1, borderColor: color.rule },
+  challengeLine: { marginTop: space.s1 },
+  challengeNote: { marginTop: space.s2 },
+  hidden: { marginTop: space.s4, borderWidth: 1, borderColor: color.ink, borderRadius: radius.md, padding: space.s4, backgroundColor: color.paper },
+  hiddenBody: { marginTop: space.s2 },
+  reveal: { marginTop: space.s4, alignSelf: 'flex-start' },
+  revealError: { marginTop: space.s3, color: color.safety },
+  body: { paddingHorizontal: space.gutter, paddingTop: space.s6, paddingBottom: space.s10 },
+  stepNum: { flexDirection: 'row', alignItems: 'baseline', gap: space.s3 },
   of: { fontFamily: font.bodySemi, fontSize: 15, color: color.ink3 },
+  instruction: { marginTop: space.s3 },
   mark: { color: color.tomatoDeep, textDecorationLine: 'underline', textDecorationColor: color.tomatoWash },
-  why: { marginTop: 18, paddingLeft: 14, borderLeftWidth: 2, borderLeftColor: color.butter },
+  why: { marginTop: space.s4, paddingLeft: space.s4, borderLeftWidth: 2, borderLeftColor: color.butter },
   whyText: { fontSize: 16, lineHeight: 23, color: color.ink2 },
   whyLead: { fontSize: 16, lineHeight: 23, fontFamily: font.bodyBold, color: color.ink },
-  safety: { marginTop: 18, flexDirection: 'row', gap: 8, borderWidth: 1.5, borderColor: color.safety, backgroundColor: color.safetyWash, borderRadius: radius.sm, paddingVertical: 10, paddingHorizontal: 12 },
+  safety: { marginTop: space.s4, flexDirection: 'row', gap: space.s2, alignItems: 'flex-start', borderWidth: 1.5, borderColor: color.safety, backgroundColor: color.safetyWash, borderRadius: radius.sm, paddingVertical: space.s3, paddingHorizontal: space.s3 },
+  safetyCopy: { flex: 1 },
   safetyLabel: { fontFamily: font.bodyBold, fontSize: 12, lineHeight: 16, letterSpacing: 1.2, textTransform: 'uppercase', color: color.safety },
   safetyText: { fontFamily: font.body, fontSize: 15, lineHeight: 20, color: color.safety },
-  ing: { flexDirection: 'row', paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: color.ruleSoft },
-  foot: { flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 10, backgroundColor: color.sheet },
-  backBtn: { width: 96, height: 72, borderRadius: radius.md, borderWidth: 1.5, borderColor: color.rule, alignItems: 'center', justifyContent: 'center' },
+  ingPanel: { paddingTop: space.s2 },
+  ingHead: { paddingBottom: space.s3, borderBottomWidth: 1, borderBottomColor: color.ink },
+  ing: { flexDirection: 'row', alignItems: 'flex-start', paddingVertical: space.s3, minHeight: 48, borderBottomWidth: 1, borderBottomColor: color.ruleSoft },
+  amount: { width: 112, paddingRight: space.s3 },
+  ingName: { flex: 1 },
+  foot: { flexDirection: 'row', alignItems: 'center', gap: space.s3, paddingHorizontal: space.gutter, paddingTop: space.s3, backgroundColor: color.sheet, borderTopWidth: 1, borderTopColor: color.rule },
+  backBtn: { width: 72, height: 72, borderRadius: radius.md, borderWidth: 1.5, borderColor: color.ink, alignItems: 'center', justifyContent: 'center' },
 });
