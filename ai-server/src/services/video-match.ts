@@ -3,8 +3,9 @@
  *
  * A title matches when every meaningful word of the dish or technique
  * appears as its own word (plurals count; "pho" does not match "phone").
- * Cooking verbs also accept -ed and -ing ("roast" / "roasted", "dice" / "diced").
- * Other words stay as written, so "roll" does not match "rolled".
+ * Technique names accept -ed and -ing on every word ("knead" / "kneading").
+ * Dish titles accept those endings only for cooking verbs ("roast" / "roasted"),
+ * so a noun stays as written and "roll" does not match "rolled".
  * A different dish is a protein or another dish name between those words,
  * or a known dish phrase that adds a word the query did not ask for
  * ("scrambled eggs fried rice" is not scrambled eggs).
@@ -127,17 +128,24 @@ export function meaningfulWords(name: string): string[] {
   return words(name).filter((word) => word.length >= 2 && !STOP_WORDS.has(word));
 }
 
-export function titleSharesMeaningfulWords(title: string, name: string, inflectVerbs = false): boolean {
+/**
+ * false keeps the written word and its plurals. true adds -ed/-ing on every
+ * word, which technique titles use. 'cooking' adds those endings only for
+ * cooking verbs, which dish titles use.
+ */
+type Inflect = boolean | 'cooking';
+
+export function titleSharesMeaningfulWords(title: string, name: string, inflect: Inflect = false): boolean {
   const wanted = meaningfulWords(name);
   if (wanted.length === 0) return false;
-  return locateWords(words(title), wanted, inflectVerbs) !== null;
+  return locateWords(words(title), wanted, inflect) !== null;
 }
 
-export function hasConflictingDishWords(title: string, name: string, inflectVerbs = false): boolean {
+export function hasConflictingDishWords(title: string, name: string, inflect: Inflect = false): boolean {
   const queryWords = meaningfulWords(name);
   if (queryWords.length === 0) return false;
   const titleTokens = words(title);
-  const positions = locateWords(titleTokens, queryWords, inflectVerbs);
+  const positions = locateWords(titleTokens, queryWords, inflect);
   if (!positions) return false;
   const start = Math.min(...positions);
   const end = Math.max(...positions);
@@ -145,7 +153,7 @@ export function hasConflictingDishWords(title: string, name: string, inflectVerb
   for (let i = start + 1; i < end; i++) {
     if (used.has(i)) continue;
     const token = titleTokens[i];
-    if (!token || STOP_WORDS.has(token) || isQueryToken(token, queryWords, inflectVerbs)) continue;
+    if (!token || STOP_WORDS.has(token) || isQueryToken(token, queryWords, inflect)) continue;
     if (isListed(token, PROTEINS) || isListed(token, GAP_DISH_HEADS)) return true;
   }
   return DIFFERENT_DISH_PHRASES.some(
@@ -218,8 +226,9 @@ function verbForms(word: string): Set<string> {
   return forms;
 }
 
-function matchesWord(titleWord: string, queryWord: string, inflectVerbs: boolean): boolean {
-  const forms = inflectVerbs && COOKING_VERBS.has(queryWord) ? verbForms(queryWord) : nounForms(queryWord);
+function matchesWord(titleWord: string, queryWord: string, inflect: Inflect): boolean {
+  const inflectThis = inflect === true || (inflect === 'cooking' && COOKING_VERBS.has(queryWord));
+  const forms = inflectThis ? verbForms(queryWord) : nounForms(queryWord);
   return forms.has(titleWord);
 }
 
@@ -227,8 +236,8 @@ function sameWord(a: string, b: string): boolean {
   return matchesWord(a, b, false) || matchesWord(b, a, false);
 }
 
-function isQueryToken(token: string, queryWords: readonly string[], inflectVerbs: boolean): boolean {
-  return queryWords.some((word) => matchesWord(token, word, inflectVerbs));
+function isQueryToken(token: string, queryWords: readonly string[], inflect: Inflect): boolean {
+  return queryWords.some((word) => matchesWord(token, word, inflect));
 }
 
 function isListed(token: string, list: ReadonlySet<string>): boolean {
@@ -249,14 +258,14 @@ const MAX_CANDIDATES_PER_WORD = 8;
 function locateWords(
   titleTokens: readonly string[],
   wanted: readonly string[],
-  inflectVerbs: boolean
+  inflect: Inflect
 ): number[] | null {
   const candidates: number[][] = [];
   for (const word of wanted) {
     const spots: number[] = [];
     for (let i = 0; i < titleTokens.length && spots.length < MAX_CANDIDATES_PER_WORD; i++) {
       const token = titleTokens[i];
-      if (token && matchesWord(token, word, inflectVerbs)) spots.push(i);
+      if (token && matchesWord(token, word, inflect)) spots.push(i);
     }
     if (spots.length === 0) return null;
     candidates.push(spots);

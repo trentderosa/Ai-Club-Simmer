@@ -79,7 +79,7 @@ export function dishVideoSearchQuery(dishName: string): string {
  * stay as written, so "Rolled Egg Omelette" does not name "egg roll".
  */
 export function dishVideoTitleMatches(title: string, dishName: string): boolean {
-  return titleSharesMeaningfulWords(title, dishName, true) && !hasConflictingDishWords(title, dishName, true);
+  return titleSharesMeaningfulWords(title, dishName, 'cooking') && !hasConflictingDishWords(title, dishName, 'cooking');
 }
 
 export interface DishVideoHit {

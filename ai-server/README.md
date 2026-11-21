@@ -132,7 +132,8 @@ for a locked slot.
 With `YOUTUBE_API_KEY` set, `src/services/video-finder.ts` runs one YouTube search per
 distinct technique in a new recipe and caches it in `technique_videos`. The search looks at
 up to 5 results and, when a title shares the technique's words, one `videos.list` call for
-duration. It keeps the first hit that names the technique. A clip under 60 seconds, or a
+duration. It keeps the first hit that names the technique. Every word of the technique
+accepts -ed and -ing, so "Kneading Dough" names knead dough. A clip under 60 seconds, or a
 title marked Shorts, is kept only when it reads as a technique demo, and a title that names
 a different dish is dropped. If every hit is rejected, that technique is cached as "no
 result" and the recipe still returns with no video for the step. Misses are cached for
@@ -149,7 +150,7 @@ per normalized dish name (path slots and Cook anything). A follow-up `videos.lis
 keeps embeddable videos about 3–20 minutes long whose titles name that dish and not a
 different one ("fried chicken and rice" is not fried rice), and returns at most 3, highest
 view count first, as `dish_videos`. Title matching uses the tightest window of the dish's
-words, so "Rice cooker hack: Chicken Fried Rice" names fried rice. Only cooking
+words, so "Rice cooker hack: Chicken Fried Rice" names fried rice. For a dish, only cooking
 verbs take -ed or -ing, so "Roasted Chicken" names roast chicken and "Rolled Egg
 Omelette" does not name egg roll. A rejected search is an
 empty list. Results are cached in `dish_videos` (migration `20261117201646_dish_videos.sql`).

@@ -23,10 +23,12 @@ describe('titleSharesMeaningfulWords', () => {
     expect(titleSharesMeaningfulWords('Chopped onions', 'chop', true)).toBe(true);
     expect(titleSharesMeaningfulWords('Pan fried dumplings', 'pan fry', true)).toBe(true);
     expect(titleSharesMeaningfulWords('How to sauté onions', 'saute onions', true)).toBe(true);
-    expect(titleSharesMeaningfulWords('Roasted Chicken', 'roast chicken', true)).toBe(true);
-    expect(titleSharesMeaningfulWords('Rolled Egg Omelette (Tamagoyaki)', 'egg roll', true)).toBe(false);
-    expect(titleSharesMeaningfulWords('Corned beef hash', 'corn', true)).toBe(false);
-    expect(titleSharesMeaningfulWords('Potted shrimp', 'pot', true)).toBe(false);
+    expect(titleSharesMeaningfulWords('Roasted Chicken', 'roast chicken', 'cooking')).toBe(true);
+    expect(titleSharesMeaningfulWords('Kneading Dough for Beginners', 'knead dough', true)).toBe(true);
+    expect(titleSharesMeaningfulWords('Caramelized Onions', 'caramelize onions', true)).toBe(true);
+    expect(titleSharesMeaningfulWords('Rolled Egg Omelette (Tamagoyaki)', 'egg roll', 'cooking')).toBe(false);
+    expect(titleSharesMeaningfulWords('Corned beef hash', 'corn', 'cooking')).toBe(false);
+    expect(titleSharesMeaningfulWords('Potted shrimp', 'pot', 'cooking')).toBe(false);
   });
 });
 
