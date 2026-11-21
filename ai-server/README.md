@@ -149,7 +149,7 @@ budget still writes the shared cache. A cached video's title is checked again on
 no YouTube call: one that no longer names the technique or names a different dish counts as
 a miss and is searched again (a cached video with no title is kept). The response has
 `videos[techniqueName]`. Safe search,
-the embeddable filter, the watch-URL allowlist, the timeout, and the quota cooldown are unchanged.
+the embeddable filter, the watch-URL allowlist, and the timeout are unchanged. A quota pause is shared with dish videos and is read from `youtube_search_quota` before these searches run.
 
 The same key is used by `src/services/dish-video-finder.ts` for one "{dish} recipe" search
 per normalized dish name (path slots and Cook anything). A follow-up `videos.list` call
@@ -163,9 +163,14 @@ empty list. Results are cached in `dish_videos` (migration `20261117201646_dish_
 Cached titles are checked again on read, with no YouTube call. Off-target videos are dropped,
 and when none survive the dish is searched again and the new result replaces the cache row. An empty result is
 retried after 7 days. Quota and network failures are not cached; a failed search uses a
-short per-dish cooldown, and a quota exhaustion pauses every dish search until midnight
-Pacific. `dish_videos` is `[]`, and the recipe still returns. Errors never include the
-request URL or the key.
+short per-dish cooldown, and a quota exhaustion pauses every dish search and every
+technique search until midnight Pacific. The pause, and each search that is about to
+run, is stored in `youtube_search_quota` (migration `20261121180000_youtube_search_quota.sql`,
+applied after merge) via `claim_youtube_search` and `record_youtube_quota_cooldown`. A
+restart reads the same pause. If that table cannot be read or the pause cannot be saved,
+the search is skipped, the video list for that lookup is empty, and the recipe still
+returns. YouTube request timeouts are unchanged. `dish_videos` is `[]` when the dish
+search is skipped or fails. Errors never include the request URL or the key.
 
 Results are stored in `user_recipes.video_ids` (Cook anything uses
 `user_generated_recipes.video_ids`) only when the lookup is complete, meaning every

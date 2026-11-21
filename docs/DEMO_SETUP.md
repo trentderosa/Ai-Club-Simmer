@@ -41,7 +41,7 @@ Set `OLLAMA_MODEL` to match. A 7–8B model on a laptop GPU or Apple silicon tak
 1. In Google Cloud Console, create a project, enable **YouTube Data API v3**, and create an **API key**. Restrict it to that API.
 2. Put it in `ai-server/.env` as `YOUTUBE_API_KEY`.
 
-The quota is 10,000 units/day, and a search costs 100, so that's about 100 searches/day. Results are cached per technique in `technique_videos`, and each recipe makes at most 6 new searches.
+The quota is 10,000 units/day, and a search costs 100, so that's about 100 searches/day. Results are cached per technique in `technique_videos`, and each recipe makes at most 6 new searches. A quota error pauses further searches until midnight Pacific, and that pause is stored in Postgres (`youtube_search_quota`, migration `20261121180000_youtube_search_quota.sql`, applied after merge) so restarting the AI server does not search again.
 
 ## 5. AI server (demo laptop)
 

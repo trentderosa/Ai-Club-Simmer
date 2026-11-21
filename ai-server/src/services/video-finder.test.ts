@@ -13,6 +13,7 @@ import {
   type TechniqueVideo,
 } from './video-finder.js';
 import type { Recipe } from '../schemas/recipe.js';
+import { InMemoryYouTubeQuotaGate, youtubeQuotaResetAt, type YouTubeQuotaGate } from './youtube-quota.js';
 
 const NOW = new Date('2026-11-15T12:00:00Z');
 
@@ -175,6 +176,65 @@ describe('VideoFinder', () => {
       technique: 'dice onion',
       error: 'YouTube search failed: 403 quotaExceeded',
     });
+  });
+
+  it('honors a stored quota pause, including on a new finder, and does not call YouTube', async () => {
+    const gate = new InMemoryYouTubeQuotaGate();
+    const now = new Date('2026-02-01T00:00:00.000Z');
+    await gate.recordCooldown(youtubeQuotaResetAt(now), now);
+    const search: VideoSearchClient = { search: vi.fn().mockResolvedValue(video('abc123')) };
+    const finder = new VideoFinder(cache, search, logger, () => now, { quota: gate });
+
+    await expect(finder.findForRecipe(recipeWith(['Dice onion']))).resolves.toEqual({
+      videos: {},
+      complete: false,
+    });
+    expect(search.search).not.toHaveBeenCalled();
+    expect(gate.recordedSearches).toHaveLength(0);
+
+    const restarted = new VideoFinder(new InMemoryTechniqueVideoCache(), search, logger, () => now, { quota: gate });
+    await restarted.findForRecipe(recipeWith(['Whisk eggs']));
+    expect(search.search).not.toHaveBeenCalled();
+  });
+
+  it('records each technique search, then a quota error blocks the next recipe', async () => {
+    const gate = new InMemoryYouTubeQuotaGate();
+    const search: VideoSearchClient = {
+      search: vi.fn().mockRejectedValue(new Error('YouTube search failed: 403 dailyLimitExceeded')),
+    };
+    const now = new Date('2026-02-01T00:00:00.000Z');
+    const finder = new VideoFinder(cache, search, logger, () => now, { quota: gate });
+
+    const first = await finder.findForRecipe(recipeWith(['Dice onion', 'Whisk eggs']));
+    expect(first).toEqual({ videos: {}, complete: false });
+    expect(search.search).toHaveBeenCalledTimes(2);
+    expect(gate.recordedSearches).toHaveLength(2);
+
+    const restarted = new VideoFinder(new InMemoryTechniqueVideoCache(), search, logger, () => now, { quota: gate });
+    await restarted.findForRecipe(recipeWith(['Mince garlic']));
+    expect(search.search).toHaveBeenCalledTimes(2);
+  });
+
+  it('skips new searches when the quota table fails and still returns a cached video', async () => {
+    await cache.put({
+      techniqueKey: 'dice onion',
+      searchQuery: buildSearchQuery('dice onion'),
+      video: { videoId: 'dicevid001', title: 'How to dice an onion' },
+      fetchedAt: NOW,
+    });
+    const search: VideoSearchClient = { search: vi.fn().mockResolvedValue(video('abc123')) };
+    const gate: YouTubeQuotaGate = {
+      claimSearches: vi.fn().mockRejectedValue(new Error('db down')),
+      recordCooldown: vi.fn(),
+    };
+    const finder = new VideoFinder(cache, search, logger, () => NOW, { quota: gate });
+
+    await expect(finder.findForRecipe(recipeWith(['Dice onion', 'Whisk eggs']))).resolves.toEqual({
+      videos: { 'Dice onion': { videoId: 'dicevid001', title: 'How to dice an onion' } },
+      complete: false,
+    });
+    expect(search.search).not.toHaveBeenCalled();
+    expect(logger.warn).toHaveBeenCalledWith('youtube_quota_check_failed', { error: 'db down' });
   });
 
   it(`caps new searches at ${MAX_VIDEO_SEARCHES_PER_RECIPE} per recipe`, async () => {

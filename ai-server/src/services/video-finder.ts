@@ -12,6 +12,8 @@
  *      returns with no video for that technique.
  *   3. Any failure (no key, quota, network, timeout) leaves that technique
  *      without a video; the recipe still works. Failures are not cached.
+ *      A quota pause stored in youtube_search_quota is honored here too.
+ *      If that table cannot be read, the new searches are skipped.
  *   4. New searches run concurrently under one time budget per recipe
  *      (VIDEO_LOOKUP_BUDGET_MS), so a YouTube outage can't stall the response.
  *
@@ -34,6 +36,12 @@ import {
   techniqueSubjectFromQuery,
   titleSharesMeaningfulWords,
 } from './video-match.js';
+import {
+  allowYouTubeSearches,
+  isYouTubeQuotaError,
+  noteYouTubeQuotaExceeded,
+  type YouTubeQuotaGate,
+} from './youtube-quota.js';
 
 export interface TechniqueVideo {
   videoId: string;
@@ -57,6 +65,8 @@ export interface VideoLookupResult {
 export interface VideoFinderOptions {
   /** Wall-clock budget for all new searches of one recipe, in ms. */
   budgetMs?: number;
+  /** Shared daily pause. Absent in dev without Supabase; the dish finder keeps its own. */
+  quota?: YouTubeQuotaGate;
 }
 
 export interface CachedTechniqueVideo {
@@ -124,6 +134,7 @@ export function storedTechniqueVideosMatch(videos: RecipeVideos): boolean {
 
 export class VideoFinder {
   private readonly budgetMs: number;
+  private readonly quota?: YouTubeQuotaGate;
 
   constructor(
     private readonly cache: TechniqueVideoCache,
@@ -133,6 +144,7 @@ export class VideoFinder {
     options: VideoFinderOptions = {}
   ) {
     this.budgetMs = options.budgetMs ?? DEFAULT_VIDEO_LOOKUP_BUDGET_MS;
+    this.quota = options.quota;
   }
 
   async findForRecipe(recipe: Recipe): Promise<VideoLookupResult> {
@@ -182,7 +194,14 @@ export class VideoFinder {
       toSearch.push(key);
     }
 
-    if (toSearch.length > 0) {
+    let quotaAllowed = true;
+    if (toSearch.length > 0 && this.quota) {
+      const decision = await allowYouTubeSearches(this.quota, toSearch.length, this.now(), this.logger);
+      quotaAllowed = decision.allowed;
+      if (!quotaAllowed) complete = false;
+    }
+
+    if (toSearch.length > 0 && quotaAllowed) {
       const settled = new Set<string>();
       let budgetExpired = false;
       // Each task catches its own errors, so none of them can reject. A task
@@ -195,6 +214,9 @@ export class VideoFinder {
         } catch (error) {
           // Not cached: a transient failure shouldn't block the technique for a week.
           this.logger.warn('video_search_failed', { technique: key, error: errorMessage(error) });
+          if (this.quota && isYouTubeQuotaError(error)) {
+            await noteYouTubeQuotaExceeded(this.quota, this.now(), this.logger);
+          }
           return;
         }
         if (!budgetExpired) {

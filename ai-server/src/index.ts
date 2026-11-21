@@ -40,6 +40,10 @@ import {
   SupabaseDishVideoCache,
   YouTubeDishVideoClient,
 } from './services/dish-video-finder.js';
+import {
+  SupabaseYouTubeQuotaGate,
+  type YouTubeQuotaGate,
+} from './services/youtube-quota.js';
 import { createDishPhotoRouter } from './routes/dish-photos.js';
 import { SupabaseKnownDishNames } from './services/known-dish-names.js';
 import { InMemoryGeneratedRecipeRepository } from './repositories/in-memory-generated-recipe-repository.js';
@@ -95,7 +99,7 @@ interface ServiceConfig {
  * F4 technique videos: needs YOUTUBE_API_KEY. The cache is the shared
  * technique_videos table when Supabase is configured, else in memory (dev).
  */
-function createVideoFinder(): VideoFinder | null {
+function createVideoFinder(quota: YouTubeQuotaGate | null): VideoFinder | null {
   if (!config.youtube.apiKey) {
     console.warn('No YOUTUBE_API_KEY - recipes will have no technique videos');
     return null;
@@ -110,7 +114,7 @@ function createVideoFinder(): VideoFinder | null {
     new YouTubeSearchClient({ apiKey: config.youtube.apiKey, timeoutMs: config.youtube.timeoutMs }),
     console,
     (): Date => new Date(),
-    { budgetMs: config.youtube.lookupBudgetMs }
+    { budgetMs: config.youtube.lookupBudgetMs, ...(quota ? { quota } : {}) }
   );
 }
 
@@ -122,7 +126,14 @@ function createVideoFinder(): VideoFinder | null {
  * Dish recipe videos ("how to make {dish}"). Same YouTube key as technique
  * videos, cached per normalized dish name in dish_videos.
  */
-function createDishVideoFinder(): DishVideoFinder | null {
+function createYouTubeQuotaGate(): YouTubeQuotaGate | null {
+  if (!config.youtube.apiKey) return null;
+  const { url, serviceRoleKey } = config.supabase;
+  if (!url || !serviceRoleKey) return null;
+  return new SupabaseYouTubeQuotaGate({ url, serviceRoleKey });
+}
+
+function createDishVideoFinder(quota: YouTubeQuotaGate | null): DishVideoFinder | null {
   if (!config.youtube.apiKey) return null;
   const { url, serviceRoleKey } = config.supabase;
   const cache =
@@ -131,7 +142,10 @@ function createDishVideoFinder(): DishVideoFinder | null {
       : new InMemoryDishVideoCache();
   return new DishVideoFinder(
     cache,
-    new YouTubeDishVideoClient({ apiKey: config.youtube.apiKey, timeoutMs: config.youtube.timeoutMs })
+    new YouTubeDishVideoClient({ apiKey: config.youtube.apiKey, timeoutMs: config.youtube.timeoutMs }),
+    console,
+    (): Date => new Date(),
+    quota ?? undefined
   );
 }
 
@@ -256,6 +270,7 @@ function createServicesFromConfig(): ServiceConfig {
     // behavior; production uses shared Supabase tables.
   }
 
+  const youtubeQuota = createYouTubeQuotaGate();
   return {
     supabase: createSupabaseService({
       jwtVerifier,
@@ -264,8 +279,8 @@ function createServicesFromConfig(): ServiceConfig {
     }),
     jwtVerifier,
     checkInService,
-    videoFinder: createVideoFinder(),
-    dishVideoFinder: createDishVideoFinder(),
+    videoFinder: createVideoFinder(youtubeQuota),
+    dishVideoFinder: createDishVideoFinder(youtubeQuota),
     photoFinder: createPhotoFinder(),
     generatedRecipes,
     masteryRepository: url && serviceRoleKey ? new SupabaseMasteryRepository({ url, serviceRoleKey }) : null,
@@ -370,6 +385,15 @@ app.listen(config.port, config.host, () => {
   console.info(`Preview route: ${config.enablePreviewRoute ? 'ENABLED' : 'disabled'}`);
   console.info(`Technique videos: ${services.videoFinder ? 'ENABLED' : 'disabled'}`);
   console.info(`Dish videos: ${services.dishVideoFinder ? 'ENABLED' : 'disabled'}`);
+  console.info(
+    `YouTube quota cooldown: ${
+      !config.youtube.apiKey
+        ? 'disabled'
+        : config.supabase.url && config.supabase.serviceRoleKey
+          ? 'database'
+          : 'in-memory (dev)'
+    }`
+  );
   console.info('Dish photos: ENABLED');
   console.info(
     `Cook anything generation limit: ${
