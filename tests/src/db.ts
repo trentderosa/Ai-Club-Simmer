@@ -262,6 +262,29 @@ export class TestDatabase {
       END
       $cook_limit_seq$;
 
+      -- 20261121180000_youtube_search_quota.sql: re-assert after broad GRANTs
+      REVOKE ALL ON youtube_search_quota FROM PUBLIC, anon, authenticated;
+      GRANT ALL ON youtube_search_quota TO service_role;
+      REVOKE EXECUTE ON FUNCTION public.claim_youtube_search(INTEGER, TIMESTAMPTZ)
+          FROM PUBLIC, anon, authenticated;
+      GRANT EXECUTE ON FUNCTION public.claim_youtube_search(INTEGER, TIMESTAMPTZ)
+          TO service_role;
+      REVOKE EXECUTE ON FUNCTION public.record_youtube_quota_cooldown(TIMESTAMPTZ, TIMESTAMPTZ)
+          FROM PUBLIC, anon, authenticated;
+      GRANT EXECUTE ON FUNCTION public.record_youtube_quota_cooldown(TIMESTAMPTZ, TIMESTAMPTZ)
+          TO service_role;
+      DO $youtube_quota_seq$
+      DECLARE
+          seq text;
+      BEGIN
+          seq := pg_get_serial_sequence('public.youtube_search_quota', 'id');
+          IF seq IS NOT NULL THEN
+              EXECUTE format('REVOKE ALL ON SEQUENCE %s FROM PUBLIC, anon, authenticated', seq);
+              EXECUTE format('GRANT USAGE, SELECT ON SEQUENCE %s TO service_role', seq);
+          END IF;
+      END
+      $youtube_quota_seq$;
+
       -- 20261116000000_mastery_sessions.sql: re-assert after broad GRANTs
       REVOKE ALL ON mastery_sessions FROM PUBLIC, anon, authenticated;
       GRANT SELECT, INSERT, UPDATE ON mastery_sessions TO service_role;
@@ -283,6 +306,7 @@ export class TestDatabase {
   }
 
   async cleanupTestData(): Promise<void> {
+    await this.pool.query('DELETE FROM youtube_search_quota');
     await this.pool.query('DELETE FROM cook_anything_generation_hits');
     await this.pool.query('DELETE FROM xp_award_attempts');
     await this.pool.query('DELETE FROM generated_recipe_xp_events');

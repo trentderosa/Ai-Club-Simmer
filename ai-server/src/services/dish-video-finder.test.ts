@@ -15,6 +15,7 @@ import {
   type DishVideoHit,
   type DishVideoSearchClient,
 } from './dish-video-finder.js';
+import { InMemoryYouTubeQuotaGate, type YouTubeQuotaGate } from './youtube-quota.js';
 
 const SECRET = 'super-secret-youtube-key';
 
@@ -219,6 +220,53 @@ describe('DishVideoFinder', () => {
     now = reset;
     await finder.findForDish('pad thai');
     expect(failing.search).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps the quota pause on a new finder and records the search it actually makes', async () => {
+    const gate = new InMemoryYouTubeQuotaGate();
+    const failing: DishVideoSearchClient = {
+      search: vi.fn().mockRejectedValue(new Error('YouTube search failed: 403 quotaExceeded')),
+    };
+    let now = new Date('2026-02-01T00:00:00.000Z');
+    const first = new DishVideoFinder(new InMemoryDishVideoCache(), failing, { warn: vi.fn() }, () => now, gate);
+    await expect(first.findForDish('pho')).resolves.toEqual({ videos: [], complete: false });
+    expect(gate.recordedSearches).toHaveLength(1);
+
+    const restarted = new DishVideoFinder(
+      new InMemoryDishVideoCache(),
+      failing,
+      { warn: vi.fn() },
+      () => now,
+      gate
+    );
+    await expect(restarted.findForDish('ramen')).resolves.toEqual({ videos: [], complete: false });
+    expect(failing.search).toHaveBeenCalledTimes(1);
+    expect(gate.recordedSearches).toHaveLength(1);
+
+    now = youtubeQuotaResetAt(now);
+    await restarted.findForDish('ramen');
+    expect(failing.search).toHaveBeenCalledTimes(2);
+    expect(gate.recordedSearches).toHaveLength(2);
+  });
+
+  it('skips YouTube when the quota table cannot be read and still returns an empty list', async () => {
+    const warn = vi.fn();
+    const search: DishVideoSearchClient = { search: vi.fn().mockResolvedValue([]) };
+    const gate: YouTubeQuotaGate = {
+      claimSearches: vi.fn().mockRejectedValue(new Error('Supabase claim_youtube_search timed out after 20ms')),
+      recordCooldown: vi.fn(),
+    };
+    const finder = new DishVideoFinder(new InMemoryDishVideoCache(), search, { warn }, () => new Date(), gate);
+
+    await expect(finder.findForDish('pho')).resolves.toEqual({ videos: [], complete: false });
+    await expect(finder.findForDish('pho')).resolves.toEqual({ videos: [], complete: false });
+
+    expect(search.search).not.toHaveBeenCalled();
+    expect(gate.recordCooldown).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith('youtube_quota_check_failed', {
+      error: 'Supabase claim_youtube_search timed out after 20ms',
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('super-secret-youtube-key');
   });
 });
 

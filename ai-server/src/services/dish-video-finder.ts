@@ -11,9 +11,11 @@
  * Results, including a genuine empty set, are cached in dish_videos. A
  * failure (no key, quota, network, timeout) is not cached and the section
  * is hidden. Failed searches use a short per-dish cooldown; a quota
- * exhaustion cools down every dish search until the YouTube quota resets
- * (midnight Pacific). The API key stays in this process; errors never
- * include the request URL.
+ * exhaustion cools down every dish and technique search until the YouTube
+ * quota resets (midnight Pacific). With Supabase, that pause is stored in
+ * youtube_search_quota so a restart keeps it. If the pause cannot be read
+ * or saved, the search is skipped and this returns an empty list. The API
+ * key stays in this process; errors never include the request URL.
  */
 import { z } from 'zod';
 import { normalizeDishName } from '../cook-anything/dish-name.js';
@@ -21,6 +23,14 @@ import { isYouTubeVideoId, youtubeWatchUrl } from '../cook-anything/youtube-url.
 import { rememberUntil } from './cooldown-map.js';
 import { SupabaseRest, type SupabaseRestConfig } from './supabase-rest.js';
 import { hasConflictingDishWords, parseIsoDuration, titleSharesMeaningfulWords } from './video-match.js';
+import {
+  allowYouTubeSearches,
+  isYouTubeQuotaError,
+  noteYouTubeQuotaExceeded,
+  type YouTubeQuotaGate,
+} from './youtube-quota.js';
+
+export { isYouTubeQuotaError, youtubeQuotaResetAt } from './youtube-quota.js';
 
 export { parseIsoDuration };
 
@@ -131,41 +141,18 @@ export function selectDishVideos(
   return videos;
 }
 
-/** YouTube Data API quota resets at midnight Pacific Time. */
-export function youtubeQuotaResetAt(now: Date): Date {
-  const dateInPacific = (instant: Date): string =>
-    new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/Los_Angeles',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).format(instant);
-  const today = dateInPacific(now);
-  let lo = now.getTime();
-  let hi = lo + 36 * 60 * 60 * 1000;
-  while (lo < hi) {
-    const mid = Math.floor((lo + hi) / 2);
-    if (dateInPacific(new Date(mid)) === today) lo = mid + 1;
-    else hi = mid;
-  }
-  return new Date(lo);
-}
-
-export function isYouTubeQuotaError(error: unknown): boolean {
-  const message = errorMessage(error).toLowerCase();
-  return message.includes('quotaexceeded') || message.includes('dailylimitexceeded');
-}
-
 export class DishVideoFinder {
   private readonly inFlight = new Map<string, Promise<DishVideoLookupResult>>();
   private readonly retryAfter = new Map<string, number>();
+  /** In-process pause used when no shared gate is configured (dev). */
   private quotaCooldownUntil = 0;
 
   constructor(
     private readonly cache: DishVideoCache,
     private readonly search: DishVideoSearchClient,
     private readonly logger: DishVideoFinderLogger = console,
-    private readonly now: () => Date = (): Date => new Date()
+    private readonly now: () => Date = (): Date => new Date(),
+    private readonly quota?: YouTubeQuotaGate
   ) {}
 
   async findForDish(dishName: string): Promise<DishVideoLookupResult> {
@@ -201,11 +188,14 @@ export class DishVideoFinder {
     }
 
     const nowMs = this.now().getTime();
-    if (nowMs < this.quotaCooldownUntil) {
-      return { videos: [], complete: false };
-    }
     const cooldownUntil = this.retryAfter.get(key);
     if (cooldownUntil !== undefined && nowMs < cooldownUntil) {
+      return { videos: [], complete: false };
+    }
+    if (this.quota) {
+      const decision = await allowYouTubeSearches(this.quota, 1, this.now(), this.logger);
+      if (!decision.allowed) return { videos: [], complete: false };
+    } else if (nowMs < this.quotaCooldownUntil) {
       return { videos: [], complete: false };
     }
 
@@ -216,7 +206,8 @@ export class DishVideoFinder {
     } catch (error) {
       this.logger.warn('dish_video_search_failed', { dish: key, error: errorMessage(error) });
       if (isYouTubeQuotaError(error)) {
-        this.quotaCooldownUntil = Math.max(this.quotaCooldownUntil, youtubeQuotaResetAt(this.now()).getTime());
+        const until = await noteYouTubeQuotaExceeded(this.quota, this.now(), this.logger);
+        this.quotaCooldownUntil = Math.max(this.quotaCooldownUntil, until.getTime());
       } else {
         rememberUntil(this.retryAfter, key, nowMs + DISH_VIDEO_ERROR_COOLDOWN_MS, nowMs);
       }
