@@ -10,6 +10,7 @@ The app never holds the service-role key or the YouTube key, and it never calls 
 | Screen | Call |
 | --- | --- |
 | Sign up / log in / log out (F1) | `supabase.auth.signUp / signInWithPassword / signOut` |
+| Password reset (F1) | `supabase.auth.resetPasswordForEmail` (`redirectTo`: current web origin + Pages base path + `/reset-password`), then `supabase.auth.updateUser({ password })` on the recovery session |
 | Onboarding, edit profile (F1) | `profiles` insert / update (own row) |
 | Plan (F2, F7) | `rpc('get_my_plan')` + `rpc('get_my_plan_summary')` |
 | Recipe + cook mode (F3, F4, F5) | AI server `POST /api/recipes/generate/:slotId` |
@@ -24,6 +25,8 @@ The app never holds the service-role key or the YouTube key, and it never calls 
 ## F1. Sign-up and onboarding
 
 Auth is plain Supabase email + password. After sign-up, insert the profile. RLS allows only your own row.
+
+A signed-out user can request a password reset. `resetPasswordForEmail` redirects back to this app (`/reset-password` on the GitHub Pages base, or the local web origin). The recovery session sets a new password with `updateUser` before the plan or onboarding. Full mock mode shows the same confirmation, says it is practice mode, and does not call Supabase.
 
 ```ts
 await supabase.from('profiles').upsert({

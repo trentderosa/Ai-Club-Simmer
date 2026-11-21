@@ -1,7 +1,8 @@
 /**
  * Root: fonts, providers, and the auth/onboarding guards.
  * Which screens exist depends on the session status (see state/session.tsx):
- *   signed_out -> sign-in · needs_onboarding -> onboarding · ready -> the app
+ *   signed_out -> sign-in · set_password -> reset-password
+ *   needs_onboarding -> onboarding · ready -> the app
  */
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
@@ -81,6 +82,10 @@ function RootStack() {
       <Stack.Screen name="index" />
       <Stack.Protected guard={status === 'signed_out'}>
         <Stack.Screen name="sign-in" />
+        <Stack.Screen name="forgot-password" />
+      </Stack.Protected>
+      <Stack.Protected guard={status === 'set_password'}>
+        <Stack.Screen name="reset-password" />
       </Stack.Protected>
       <Stack.Protected guard={status === 'needs_onboarding'}>
         <Stack.Screen name="onboarding" />

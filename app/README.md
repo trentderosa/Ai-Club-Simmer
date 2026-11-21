@@ -15,7 +15,7 @@ npm run web:mock        # fake data in the browser, no Supabase or ai-server nee
 npm run start:mock      # same, for Expo Go / a simulator (press i / a, or scan the QR code)
 ```
 
-In mock mode any email works. **Sign in** loads a demo cook (Jordan, 3 of 10 dishes done, 239 XP, three recipes in the book, three badges). Sign in as `mastery@simmer.test` (any password) loads a second canned user (Riley, 9 of 10 done, 917 XP) already at the Roast Chicken mastery challenge. **Create account** starts a fresh user who goes through onboarding. Mock state lives in memory and resets on reload. The ten canned path recipes follow the same food-safety rules as generated ones: raw chicken is patted dry, never rinsed; both chicken dishes give 165°F in the thickest part; and every knife step is a safety step, so it stays visible in the mastery challenge. The mock Roast Chicken has 8 steps with 3 hidden.
+In mock mode any email works. **Sign in** loads a demo cook (Jordan, 3 of 10 dishes done, 239 XP, three recipes in the book, three badges). Sign in as `mastery@simmer.test` (any password) loads a second canned user (Riley, 9 of 10 done, 917 XP) already at the Roast Chicken mastery challenge. **Create account** starts a fresh user who goes through onboarding. **Forgot your password** shows the same confirmation as the live app and says it is practice mode; no email is sent. Mock state lives in memory and resets on reload. The ten canned path recipes follow the same food-safety rules as generated ones: raw chicken is patted dry, never rinsed; both chicken dishes give 165°F in the thickest part; and every knife step is a safety step, so it stays visible in the mastery challenge. The mock Roast Chicken has 8 steps with 3 hidden.
 
 Against the real backend:
 
@@ -62,7 +62,7 @@ Set these as GitHub **repository variables** (Settings → Secrets and variables
 Before the first live build, allow the Pages site through Supabase and the AI server:
 
 - **Supabase redirect URLs** (Authentication → URL configuration → Redirect URLs): `https://trentderosa.github.io/Ai-Club-Simmer/**`
-- **Supabase Site URL**: `https://trentderosa.github.io/Ai-Club-Simmer` (the app does not send its own email redirect, so confirmation links use the Site URL)
+- **Supabase Site URL**: `https://trentderosa.github.io/Ai-Club-Simmer`. Sign-up confirmation links use the Site URL. Password reset sends `redirectTo` to the current origin, the Pages base path, and `/reset-password` (for example `https://trentderosa.github.io/Ai-Club-Simmer/reset-password`, or `http://localhost:8081/reset-password` locally). The `/**` allow-list covers the Pages URL. For local web, also allow the origin Expo prints (often `http://localhost:8081/**`). A phone build uses the `simmer` scheme URL from `Linking.createURL('reset-password')`; add that URL if you test reset on a device. Expo Go uses its `exp://` URL instead.
 - **AI server `ALLOWED_ORIGINS`**: `https://trentderosa.github.io`
 
 `https://trentderosa.github.io` is the browser origin of the Pages URL `https://trentderosa.github.io/Ai-Club-Simmer/`. `ALLOWED_ORIGINS` entries are scheme and host only. A path on that entry is rejected when the AI server starts.
@@ -92,6 +92,8 @@ app/
 │   ├── _layout.tsx          # Fonts, providers, auth/onboarding guards (Stack.Protected)
 │   ├── (tabs)/              # Today (plan + Cook anything), recipe book, profile (You). Tab visuals: components/tab-bar.tsx
 │   ├── sign-in.tsx          # F1 sign up / sign in
+│   ├── forgot-password.tsx  # F1 request a reset email
+│   ├── reset-password.tsx   # F1 set a new password from the recovery link
 │   ├── onboarding.tsx       # F1 steps 2-4 -> profiles
 │   ├── cook-anything.tsx    # F11 type a dish (loading / empty / error)
 │   ├── edit-profile.tsx     # F1 edit onboarding answers (same form, same columns)
@@ -127,8 +129,9 @@ Rules of thumb for the next person:
 | Screen | Call |
 | --- | --- |
 | Sign in / up / out | `supabase.auth.signInWithPassword / signUp / signOut`. The first name goes in auth `user_metadata.first_name` because `profiles` has no name column. |
+| Password reset | `supabase.auth.resetPasswordForEmail` with `redirectTo` set to the current web origin, the Expo base path, and `/reset-password`. The recovery session stays on the set-password screen until `supabase.auth.updateUser({ password })`. Full mock mode does not call Supabase. |
 | Onboarding | `profiles` upsert (own row): `goals`, `experience_level`, `equipment`, `budget`, `days_per_week`, `minutes_per_session`, `onboarding_completed: true`. The mockup's diet question is left out (no column yet). |
-| Routing | `profiles.onboarding_completed !== true` → onboarding, otherwise Today |
+| Routing | A recovery session goes to set-new-password first. Otherwise `profiles.onboarding_completed !== true` → onboarding, otherwise Today |
 | Today | `rpc('get_my_plan')` + `rpc('get_my_plan_summary')`, re-read on focus. "Cook anything" opens `/cook-anything`. The next dish’s photo is `POST /api/dish-photos`. If that call is unreachable, times out, or returns 429 or 503, the plan stays up with a short message and Try again. |
 | Recipe book | `rpc('get_my_recipe_book_v2')` (falls back to `get_my_recipe_book` if v2 isn't migrated yet) + `get_my_plan` (for technique names and "Still to come"). The book also lists Cook anything dishes that have a check-in, with a small "Cook anything" tag. Tapping an entry opens a read-only detail screen (`/book-entry/[kind]/[id]`) with the recipe, the user's own check-ins ("Your cooks", read from `check_ins` / `generated_recipe_check_ins`) and a Cook again button into the existing cook flow. Repeats earn 50% XP, which the book and a done recipe both say. |
 | Profile / You | First name from auth `user_metadata.first_name`. `rpc('get_my_plan_summary')` for XP and path progress, `rpc('get_my_badges')` for the shelf (unearned seals are grayed out), `profiles` for onboarding answers and `created_at` ("Cooking since …"). Edit reuses the onboarding steps and upserts the same columns. Sign-out lives here. |

@@ -1,7 +1,21 @@
 import type { Session, SupabaseClient } from '@supabase/supabase-js';
-import { AppState } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import Constants from 'expo-constants';
+import * as Linking from 'expo-linking';
+import { AppState, Platform } from 'react-native';
 import type { z } from 'zod';
 
+import {
+  authCallbackUrlWithoutSecrets,
+  authRedirectTo,
+  mapAuthChange,
+  parseRecoveryLink,
+  readRecoveryOwner,
+  resolveWebBasePath,
+  writeRecoveryOwner,
+  type AuthChange,
+  type RecoveryLink,
+} from '../domain/password-reset';
 import { createAiServerClient, type AiServerClient } from './ai-server';
 import type { AppSession, Backend } from './backend';
 import { ApiError } from './errors';
@@ -43,6 +57,39 @@ function fromSupabaseError(e: { message: string; code?: string; status?: number 
   return new ApiError('server', msg, e.status, e.code);
 }
 
+function fromAuthError(e: { message: string; status?: number; code?: string }): ApiError {
+  const msg = e.message || 'Supabase auth request failed.';
+  if (e.status === 429 || /rate limit/i.test(msg)) return new ApiError('rate_limited', msg, e.status, e.code);
+  if (e.status === 400 || e.status === 422) return new ApiError('validation', msg, e.status, e.code);
+  if (e.status === 401) return new ApiError('unauthorized', msg, e.status, e.code);
+  if (/failed to fetch|network/i.test(msg)) return new ApiError('network', `Can't reach Supabase. ${msg}`);
+  return new ApiError('server', msg, e.status, e.code);
+}
+
+function configuredBasePath(): string | null {
+  const experiments = Constants.expoConfig?.experiments as { baseUrl?: unknown } | undefined;
+  return typeof experiments?.baseUrl === 'string' ? experiments.baseUrl : null;
+}
+
+function documentBaseHref(): string | null {
+  try {
+    if (typeof document === 'undefined') return null;
+    return document.querySelector('base')?.getAttribute('href') ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Current web origin + Pages base (or the local origin) + /reset-password. Native uses the app scheme. */
+function passwordResetRedirect(): string {
+  return authRedirectTo({
+    platform: Platform.OS,
+    href: typeof window === 'undefined' ? null : window.location.href,
+    basePath: resolveWebBasePath(configuredBasePath(), documentBaseHref()),
+    nativeUrl: Linking.createURL('reset-password'),
+  });
+}
+
 function parseOrThrow<S extends z.ZodTypeAny>(schema: S, data: unknown, what: string): z.infer<S> {
   const r = schema.safeParse(data);
   if (!r.success) throw new ApiError('bad_response', `Unexpected ${what} from Supabase: ${r.error.message}`);
@@ -55,8 +102,107 @@ export function createLiveBackend(opts: {
   ai: AiServerClient | string;
   label?: Backend['label'];
 }): Backend {
+  // Read the callback before the client is created. detectSessionInUrl strips the hash on success.
+  const initialLink: RecoveryLink = parseRecoveryLink(typeof window === 'undefined' ? null : window.location.href);
+  let recoveryOwnerId: string | null = null;
+  let rememberedOwnerId: string | null = null;
+  let recoveryFailed = false;
+  let expectRecovery = false;
+  const listeners = new Set<(session: AppSession | null, change: AuthChange) => void>();
+  let preparing: Promise<void> | null = null;
+
   const supabase: SupabaseClient = createSupabaseClient(opts.supabaseUrl, opts.supabaseAnonKey);
   const ai = typeof opts.ai === 'string' ? createAiServerClient(opts.ai) : opts.ai;
+
+  function acceptRecovery(userId: string) {
+    recoveryOwnerId = userId;
+    rememberedOwnerId = userId;
+    recoveryFailed = false;
+    void writeRecoveryOwner(AsyncStorage, userId);
+  }
+
+  function emit(session: AppSession | null, change: AuthChange) {
+    listeners.forEach((listener) => listener(session, change));
+  }
+
+  // Subscribe before initialization finishes, or the recovery event is missed.
+  supabase.auth.onAuthStateChange((event, session) => {
+    const appSession = toAppSession(session);
+    const userId = session?.user?.id ?? null;
+    if (userId && (event === 'PASSWORD_RECOVERY' || (expectRecovery && event === 'SIGNED_IN'))) {
+      expectRecovery = false;
+      acceptRecovery(userId);
+      emit(appSession, 'password_recovery');
+      return;
+    }
+    if (event === 'SIGNED_IN' && userId && rememberedOwnerId === userId && !recoveryFailed) {
+      acceptRecovery(userId);
+      emit(appSession, 'password_recovery');
+      return;
+    }
+    if (event === 'SIGNED_IN' && userId && rememberedOwnerId && rememberedOwnerId !== userId) {
+      rememberedOwnerId = null;
+      recoveryOwnerId = null;
+      void writeRecoveryOwner(AsyncStorage, null);
+    }
+    emit(appSession, mapAuthChange(event));
+  });
+
+  async function restoreStoredOwner(stored: string | null) {
+    if (!stored || recoveryOwnerId) return;
+    const { data } = await supabase.auth.getSession();
+    const current = data.session?.user.id ?? null;
+    if (current && current === stored) {
+      recoveryOwnerId = stored;
+      rememberedOwnerId = stored;
+      return;
+    }
+    if (current && current !== stored) {
+      rememberedOwnerId = null;
+      await writeRecoveryOwner(AsyncStorage, null);
+    }
+  }
+
+  async function adoptRecoveryUrl(href: string | null) {
+    const link = parseRecoveryLink(href);
+    if (link.kind === 'none') return;
+    if (link.kind === 'error') {
+      recoveryFailed = true;
+      return;
+    }
+    if (link.kind === 'code') {
+      const { data, error } = await supabase.auth.exchangeCodeForSession(link.code);
+      if (error || !data.session?.user?.id || !recoveryOwnerId) recoveryFailed = true;
+      return;
+    }
+    expectRecovery = true;
+    try {
+      const { data, error } = await supabase.auth.setSession({
+        access_token: link.accessToken,
+        refresh_token: link.refreshToken,
+      });
+      if (error || !data.session?.user?.id) recoveryFailed = true;
+      else acceptRecovery(data.session.user.id);
+    } finally {
+      expectRecovery = false;
+    }
+  }
+
+  function stripBrowserSecrets() {
+    if (typeof window === 'undefined' || !window.history?.replaceState) return;
+    try {
+      const next = authCallbackUrlWithoutSecrets(window.location.href);
+      if (next !== window.location.href) window.history.replaceState(window.history.state, '', next);
+    } catch {
+      // Leave the address bar alone. Tokens are not logged.
+    }
+  }
+
+  if (Platform.OS !== 'web') {
+    Linking.addEventListener('url', ({ url }) => {
+      void adoptRecoveryUrl(url);
+    });
+  }
 
   // Supabase recommends pausing token refresh while the app is backgrounded.
   AppState.addEventListener('change', (state) => {
@@ -74,8 +220,8 @@ export function createLiveBackend(opts: {
     },
 
     onSessionChange(listener) {
-      const { data } = supabase.auth.onAuthStateChange((_event, session) => listener(toAppSession(session)));
-      return () => data.subscription.unsubscribe();
+      listeners.add(listener);
+      return () => listeners.delete(listener);
     },
 
     async signIn(email, password) {
@@ -96,6 +242,69 @@ export function createLiveBackend(opts: {
     async signOut() {
       const { error } = await supabase.auth.signOut();
       if (error) throw fromSupabaseError(error);
+    },
+
+    async requestPasswordReset(email) {
+      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: passwordResetRedirect() });
+      if (error) throw fromAuthError(error);
+    },
+
+    async updatePassword(password) {
+      if (password.length < 6) throw new ApiError('validation', 'Password should be at least 6 characters.');
+      const { data: current } = await supabase.auth.getSession();
+      const userId = current.session?.user.id ?? null;
+      if (!recoveryOwnerId || userId !== recoveryOwnerId) {
+        throw new ApiError('unauthorized', 'That link has expired or was already used.');
+      }
+      const { data, error } = await supabase.auth.updateUser({ password });
+      if (error) throw fromAuthError(error);
+      if (!data.user) throw new ApiError('unauthorized', 'That link has expired or was already used.');
+    },
+
+    async prepareAuth() {
+      if (!preparing) {
+        preparing = (async () => {
+          const stored = await readRecoveryOwner(AsyncStorage);
+          if (stored) rememberedOwnerId = stored;
+          if (Platform.OS === 'web') {
+            await supabase.auth.getSession();
+            // Implicit recovery notifies on a timeout queued before this returns.
+            await new Promise((resolve) => setTimeout(resolve, 0));
+            stripBrowserSecrets();
+            const callback = initialLink.kind === 'tokens' || initialLink.kind === 'code';
+            if (initialLink.kind === 'error' || (callback && !recoveryOwnerId)) recoveryFailed = true;
+            if (!recoveryOwnerId) await restoreStoredOwner(stored);
+            return;
+          }
+          await adoptRecoveryUrl(await Linking.getInitialURL());
+          if (!recoveryOwnerId) await restoreStoredOwner(stored);
+        })();
+      }
+      return preparing;
+    },
+
+    passwordRecoveryPending() {
+      return recoveryOwnerId !== null && !recoveryFailed;
+    },
+
+    passwordRecoveryFailed() {
+      return recoveryFailed;
+    },
+
+    passwordResetOwns(userId) {
+      return userId !== null && userId === recoveryOwnerId;
+    },
+
+    clearPasswordRecovery() {
+      recoveryOwnerId = null;
+      rememberedOwnerId = null;
+      recoveryFailed = false;
+      expectRecovery = false;
+      void writeRecoveryOwner(AsyncStorage, null);
+    },
+
+    clearRecoveryFailure() {
+      recoveryFailed = false;
     },
 
     async getProfile(userId) {
