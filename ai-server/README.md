@@ -85,9 +85,9 @@ NODE_ENV=production HOST=127.0.0.1 TRUST_PROXY=true npm start
 | `OLLAMA_MAX_CONCURRENT` | Model calls at once, one shared queue for every Ollama call. Default `1`, range 1 to 8. |
 | `OLLAMA_MAX_QUEUE` | Calls allowed to wait. Default `3`, range 0 to 100. A full queue returns `503 GENERATION_BUSY` with `Retry-After`. |
 | `OLLAMA_QUEUE_TIMEOUT_MS` | Longest one model call waits for a slot. Default `60000`, range 1000 to 600000. Each retry waits again; `OLLAMA_REQUEST_BUDGET_MS` caps the total. |
-| `OLLAMA_REQUEST_BUDGET_MS` | Most time one recipe request may spend queueing and running in total, retries included. Default `170000`, range 10000 to 600000. Keep it under the app's 193 s recipe timeout. |
+| `OLLAMA_REQUEST_BUDGET_MS` | Most time one recipe request may spend queueing and running in total, retries included. Default `170000`, range 10000 to 600000. Keep it under the app's 193 s recipe timeout. Must be larger than `OLLAMA_TIMEOUT_MS`; startup warns if it isn't. |
 | `OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS` | Longest a coach note waits before the fallback note is used. Default `15000`, range 1000 to 600000. |
-| `OLLAMA_COACH_NOTE_BUDGET_MS` | Most time one coach note may spend queueing and running in total before the fallback note is used. Default `120000`, range 5000 to 600000. |
+| `OLLAMA_COACH_NOTE_BUDGET_MS` | Most time one coach note may spend queueing and running in total before the fallback note is used. Default `120000`, range 5000 to 600000. Must be larger than `OLLAMA_TIMEOUT_MS`; startup warns if it isn't. |
 | `HOST` | `127.0.0.1` for the https tunnel (the command above). Same-Wi-Fi (`0.0.0.0`) is for the Expo dev client only, with no tunnel. The GitHub Pages app needs the https tunnel, because an https page cannot call an http LAN address. |
 | `TRUST_PROXY` | Exactly `true` for the tunnel. Express then trusts `X-Forwarded-For` only when the direct peer is loopback. A LAN client cannot spoof `req.ip`, so `HOST=0.0.0.0` is safe with this setting. |
 | `ALLOWED_ORIGINS` | Include `https://trentderosa.github.io` (scheme and host only; `/Ai-Club-Simmer` is not part of the origin). Setting `ALLOWED_ORIGINS` replaces the localhost defaults, so list any dev origins you still want. The Pages origin is not in the default list. |

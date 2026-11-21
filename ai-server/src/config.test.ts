@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadOllamaGateConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
+import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadOllamaGateConfig, loadXpAwardTimeoutMs, ollamaTimingWarnings, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -247,5 +247,32 @@ describe('loadOllamaGateConfig', () => {
     expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: '4999' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
     expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: '600001' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
     expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: 'abc' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
+  });
+});
+
+describe('ollamaTimingWarnings', () => {
+  it('returns nothing when both budgets exceed the timeout', () => {
+    expect(ollamaTimingWarnings(60000, 170000, 120000)).toEqual([]);
+  });
+
+  it('warns for each budget that is not strictly greater, naming the values', () => {
+    const w = ollamaTimingWarnings(120000, 120000, 100000);
+    expect(w).toHaveLength(2);
+    expect(w[0]).toMatch(/OLLAMA_REQUEST_BUDGET_MS \(120000\).*OLLAMA_TIMEOUT_MS \(120000\)/);
+    expect(w[1]).toMatch(/OLLAMA_COACH_NOTE_BUDGET_MS \(100000\).*OLLAMA_TIMEOUT_MS \(120000\)/);
+  });
+
+  it('warns about only the budget that is too small', () => {
+    const w = ollamaTimingWarnings(130000, 170000, 120000);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(/OLLAMA_COACH_NOTE_BUDGET_MS/);
+  });
+
+  it('warns when the timeout is not a finite positive number', () => {
+    for (const bad of [NaN, Infinity, 0, -5]) {
+      const w = ollamaTimingWarnings(bad, 170000, 120000);
+      expect(w).toHaveLength(1);
+      expect(w[0]).toMatch(/OLLAMA_TIMEOUT_MS is /);
+    }
   });
 });
