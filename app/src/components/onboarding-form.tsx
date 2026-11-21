@@ -100,7 +100,7 @@ export function OnboardingForm({ mode, initial, saving, error, onSave, onCancel,
       }
     >
       <View style={styles.top}>
-        {showBack ? <IconButton icon="back" label="Back" onPress={back} /> : <View style={{ width: 40 }} />}
+        {showBack ? <IconButton icon="back" label="Back" onPress={back} /> : <View style={{ width: 44 }} />}
         <View style={styles.bar} accessibilityLabel={`Step ${step} of 4`}>
           {[1, 2, 3, 4].map((i) => (
             <View key={i} style={[styles.barSeg, i <= step && styles.barOn]} />

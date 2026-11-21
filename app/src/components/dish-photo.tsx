@@ -1,9 +1,11 @@
 /**
  * Dish photo for a recipe background. Uses the Commons image when we have
  * one, and the cutting-board photo when we don't or the image fails to load.
- * The credit line stays with the photo. On a recipe hero it opens the
- * Commons file page; on a tappable card it stays text so the card's own
- * press still opens the recipe.
+ * The credit line stays with the photo, on a small ink chip so it stays
+ * readable. On a recipe hero it opens the Commons file page; on a tappable
+ * card it stays text so the card's own press still opens the recipe.
+ * List thumbnails can pass showCredit={false}: a 72px image can't hold the line.
+ * The recipe book shows that same line under the row byline.
  */
 import { Image } from 'expo-image';
 import { useState } from 'react';
@@ -11,19 +13,30 @@ import { Linking, Pressable, StyleSheet, type StyleProp, type ViewStyle } from '
 
 import type { DishPhoto } from '../api';
 import { heroPhotoForGenerated } from '../domain/generated-recipe-photo';
+import { color } from '../theme/tokens';
 import { T } from './text';
 
 export function DishPhotoFill({
   photo,
   linkCredit = false,
+  showCredit = true,
+  creditAt = 'bottom',
   creditStyle,
+  onFallback,
 }: {
   photo: DishPhoto | null | undefined;
   linkCredit?: boolean;
+  /** Small thumbnails skip the on-image credit. The book row shows it under the byline. */
+  showCredit?: boolean;
+  creditAt?: 'top' | 'bottom';
   creditStyle?: StyleProp<ViewStyle>;
+  /** Fired when the remote image fails and the cutting board is shown instead. */
+  onFallback?: () => void;
 }) {
-  const [imageFailed, setImageFailed] = useState(false);
-  const hero = imageFailed ? heroPhotoForGenerated(null) : heroPhotoForGenerated(photo);
+  const sourceKey = photo?.url ?? '';
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const imageFailed = failedSource === sourceKey;
+  const hero = heroPhotoForGenerated(imageFailed ? null : photo);
   const openSource = linkCredit && hero.sourceUrl
     ? () => {
         void Linking.openURL(hero.sourceUrl as string);
@@ -36,29 +49,46 @@ export function DishPhotoFill({
         style={StyleSheet.absoluteFill}
         contentFit="cover"
         accessibilityIgnoresInvertColors
-        onError={() => setImageFailed(true)}
+        onError={() => {
+          if (failedSource === sourceKey) return;
+          setFailedSource(sourceKey);
+          onFallback?.();
+        }}
       />
-      {openSource ? (
-        <Pressable
-          accessibilityRole="link"
-          accessibilityLabel={hero.credit}
-          onPress={openSource}
-          style={[styles.creditHit, creditStyle]}
-        >
-          <T style={styles.credit} numberOfLines={1}>
+      {showCredit ? (
+        openSource ? (
+          <Pressable
+            accessibilityRole="link"
+            accessibilityLabel={hero.credit}
+            onPress={openSource}
+            hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+            style={[styles.creditHit, creditAt === 'top' ? styles.creditTop : styles.creditBottom, creditStyle]}
+          >
+            <T style={styles.credit} numberOfLines={1}>
+              {hero.credit}
+            </T>
+          </Pressable>
+        ) : (
+          <T style={[styles.credit, styles.creditHit, creditAt === 'top' ? styles.creditTop : styles.creditBottom, creditStyle]} numberOfLines={1}>
             {hero.credit}
           </T>
-        </Pressable>
-      ) : (
-        <T style={[styles.credit, styles.creditHit, creditStyle]} numberOfLines={1}>
-          {hero.credit}
-        </T>
-      )}
+        )
+      ) : null}
     </>
   );
 }
 
 const styles = StyleSheet.create({
-  creditHit: { position: 'absolute', right: 10, bottom: 8, maxWidth: '70%' },
-  credit: { fontSize: 10, lineHeight: 13, color: 'rgba(255,255,255,0.85)', letterSpacing: 0.3 },
+  creditHit: {
+    position: 'absolute',
+    right: 8,
+    maxWidth: '78%',
+    backgroundColor: 'rgba(31,27,22,0.62)',
+    borderRadius: 4,
+    paddingHorizontal: 6,
+    paddingVertical: 3,
+  },
+  creditBottom: { bottom: 8 },
+  creditTop: { top: 8 },
+  credit: { fontSize: 11, lineHeight: 14, color: color.sheet },
 });

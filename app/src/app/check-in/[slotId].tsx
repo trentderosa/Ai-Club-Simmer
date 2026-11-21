@@ -176,15 +176,15 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
     <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <Screen footer={<Button label="Save check-in" onPress={() => void submit()} disabled={!rating} loading={saving} style={{ flex: 1 }} />}>
         <TopBar left={<IconButton icon="back" label="Back to cook mode" onPress={onBack} />} title="Check-in" />
-        <View style={[gutter, { marginTop: 6 }]}>
+        <View style={[gutter, styles.form]}>
           <T variant="h1" accessibilityRole="header">
             How did the {slot.dish_name.toLowerCase()} go?
           </T>
-          <T variant="small" style={{ marginTop: 8 }}>
+          <T variant="small" style={styles.lede}>
             Thirty seconds. Your coach uses this to write the next recipe for you.
           </T>
           {mastery ? (
-            <T variant="caption" style={{ marginTop: 10 }}>
+            <T variant="caption" style={styles.mastery}>
               Mastery challenge · {revealedLabel(mastery)}
             </T>
           ) : null}
@@ -193,11 +193,11 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
           <Counter text={wentWell} />
           <Field label="What was hard?" hint="Optional" value={wasHard} onChangeText={setWasHard} multiline maxLength={MAX} placeholder="Timing the sauce" />
           <Counter text={wasHard} />
-          <T variant="caption" style={{ marginTop: 16 }}>
+          <T variant="caption" style={styles.note}>
             If you rate it Hard, we’ll offer to cook it again before moving on. Your path never changes.
           </T>
           {slowHint ? (
-            <T variant="caption" style={{ marginTop: 16 }} accessibilityLiveRegion="polite">
+            <T variant="caption" style={styles.note} accessibilityLiveRegion="polite">
               {SLOW_CHECK_IN_HINT}
             </T>
           ) : null}
@@ -224,5 +224,9 @@ function Counter({ text }: { text: string }) {
 }
 
 const styles = StyleSheet.create({
-  error: { marginTop: space.s4, padding: 12, borderRadius: radius.sm, borderWidth: 1, borderColor: color.safety, backgroundColor: color.safetyWash },
+  form: { marginTop: space.s2, paddingBottom: space.s4 },
+  lede: { marginTop: space.s2 },
+  mastery: { marginTop: space.s3 },
+  note: { marginTop: space.s4 },
+  error: { marginTop: space.s4, padding: space.s3, borderRadius: radius.sm, borderWidth: 1, borderColor: color.safety, backgroundColor: color.safetyWash },
 });

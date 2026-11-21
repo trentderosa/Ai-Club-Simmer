@@ -1,7 +1,7 @@
 /** Onboarding / check-in inputs: option rows, chips, a segmented rating, a text field. */
 import { Pressable, StyleSheet, TextInput, View, type TextInputProps } from 'react-native';
 
-import { color, font, radius } from '../theme/tokens';
+import { color, font, radius, space } from '../theme/tokens';
 import { T } from './text';
 
 /** Serif option row with a radio, split by hairlines (first row sits on an ink rule). */
@@ -65,7 +65,9 @@ export function Segmented<V extends string>({ options, value, onChange }: { opti
             onPress={() => onChange(o.value)}
             style={[styles.segItem, i > 0 && styles.segDivider, on && styles.segOn]}
           >
-            <T style={[styles.segTitle, on && { color: color.paper }]}>{o.title}</T>
+            <T style={[styles.segTitle, on && { color: color.paper }]} numberOfLines={1}>
+              {o.title}
+            </T>
             <T variant="caption" style={[styles.segSub, on && { color: '#CFC6B6' }]}>
               {o.subtitle}
             </T>
@@ -101,18 +103,18 @@ const styles = StyleSheet.create({
   radio: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, borderColor: color.ink3 },
   radioOn: { borderWidth: 7, borderColor: color.tomato },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  chip: { height: 38, paddingHorizontal: 15, borderRadius: radius.pill, borderWidth: 1, borderColor: color.rule, backgroundColor: color.sheet, justifyContent: 'center' },
+  chip: { minHeight: 44, paddingHorizontal: 15, borderRadius: radius.pill, borderWidth: 1, borderColor: color.rule, backgroundColor: color.sheet, justifyContent: 'center' },
   chipOn: { backgroundColor: color.ink, borderColor: color.ink },
   chipText: { fontFamily: font.bodySemi, fontSize: 15, lineHeight: 20, color: color.ink },
-  seg: { flexDirection: 'row', borderWidth: 1, borderColor: color.ink, borderRadius: radius.md, overflow: 'hidden', marginTop: 14 },
-  segItem: { flex: 1, alignItems: 'center', paddingTop: 14, paddingBottom: 12, paddingHorizontal: 6 },
+  seg: { flexDirection: 'row', borderWidth: 1, borderColor: color.ink, borderRadius: radius.md, overflow: 'hidden', marginTop: space.s5 },
+  segItem: { flex: 1, alignItems: 'center', justifyContent: 'center', minHeight: 64, paddingVertical: space.s3, paddingHorizontal: space.s1 },
   segDivider: { borderLeftWidth: 1, borderLeftColor: color.ink },
   segOn: { backgroundColor: color.ink },
-  segTitle: { fontFamily: font.display, fontSize: 20, lineHeight: 26, color: color.ink },
-  segSub: { fontSize: 12, lineHeight: 16 },
-  field: { marginTop: 22 },
+  segTitle: { fontFamily: font.display, fontSize: 20, lineHeight: 26, color: color.ink, textAlign: 'center' },
+  segSub: { fontSize: 12, lineHeight: 16, textAlign: 'center' },
+  field: { marginTop: space.s5 },
   fieldLabel: { fontFamily: font.bodySemi, fontSize: 15, lineHeight: 20, color: color.ink, marginBottom: 8 },
   fieldHint: { fontFamily: font.body, color: color.ink3 },
-  input: { borderWidth: 1, borderColor: color.rule, backgroundColor: color.sheet, borderRadius: radius.sm, paddingHorizontal: 12, paddingVertical: 11, fontFamily: font.body, fontSize: 17, lineHeight: 24, color: color.ink, minHeight: 48 },
-  inputMulti: { minHeight: 78, textAlignVertical: 'top' },
+  input: { borderWidth: 1, borderColor: color.rule, backgroundColor: color.sheet, borderRadius: radius.sm, paddingHorizontal: space.s3, paddingVertical: space.s3, fontFamily: font.body, fontSize: 17, lineHeight: 24, color: color.ink, minHeight: 48 },
+  inputMulti: { minHeight: 96, textAlignVertical: 'top' },
 });

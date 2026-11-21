@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import type { PlanSlot, PlanSummary } from '../../api';
 import { DishPhotoFill } from '../../components/dish-photo';
 import { Icon } from '../../components/icon';
-import { gutter } from '../../components/layout';
+import { gutter, pageColumn } from '../../components/layout';
 import { PathList } from '../../components/path';
 import { EmptyState, ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
@@ -58,14 +58,14 @@ export default function Today() {
     <SafeAreaView edges={['top']} style={styles.fill}>
       <ScrollView
         style={styles.fill}
-        contentContainerStyle={{ paddingBottom: space.s10, flexGrow: 1 }}
+        contentContainerStyle={[pageColumn, styles.scroll]}
         refreshControl={<RefreshControl refreshing={data.status === 'loading' && data.data !== null} onRefresh={reload} tintColor={color.tomato} />}
       >
         <View style={[gutter, styles.head]}>
           <T variant="overline" color="ink3">
             {formatToday(now)}
           </T>
-          <T variant="display" style={{ marginTop: 6 }} accessibilityRole="header">
+          <T variant="display" style={styles.greeting} accessibilityRole="header">
             {greetingFor(now, session?.firstName ?? null)}
           </T>
         </View>
@@ -99,7 +99,7 @@ function PlanBody({ plan, summary, onOpen, onCookAnything }: { plan: PlanSlot[];
     <>
       <View style={[styles.rule, gutter]}>
         <View style={styles.ruleLine} />
-        <T variant="caption" style={{ marginTop: 12 }}>
+        <T variant="caption" style={styles.schedule}>
           {scheduleLine(summary)}
         </T>
       </View>
@@ -112,7 +112,7 @@ function PlanBody({ plan, summary, onOpen, onCookAnything }: { plan: PlanSlot[];
         <T variant="h2" accessibilityRole="header">
           Weeknight basics
         </T>
-        <T variant="caption">
+        <T variant="caption" style={styles.pathMeta}>
           <T variant="caption" style={styles.xpStrong}>
             {summary.total_xp} XP
           </T>{' '}
@@ -121,7 +121,7 @@ function PlanBody({ plan, summary, onOpen, onCookAnything }: { plan: PlanSlot[];
       </View>
       <PathList slots={plan} onOpen={onOpen} />
       {summary.estimated_weeks_remaining !== null && !summary.path_complete ? (
-        <T variant="caption" style={[gutter, { textAlign: 'center', marginTop: 4 }]}>
+        <T variant="caption" style={[gutter, styles.pace]}>
           About {summary.estimated_weeks_remaining} {summary.estimated_weeks_remaining === 1 ? 'week' : 'weeks'} to the mastery challenge at your pace.
         </T>
       ) : null}
@@ -141,15 +141,15 @@ function CookAnythingCard({ onOpen }: { onOpen: () => void }) {
         <T variant="overline" color="ink3">
           Outside the path
         </T>
-        <T variant="h3" style={{ marginTop: 6 }}>
+        <T variant="h3" style={styles.cookTitle}>
           Cook anything
         </T>
-        <T variant="caption" style={{ marginTop: 4 }}>
+        <T variant="caption" style={styles.cookBody}>
           Type a dish and we’ll write a recipe for your kitchen.
         </T>
       </View>
       <View style={styles.goSmall}>
-        <Icon name="arrow" color="#FFFFFF" size={20} />
+        <Icon name="arrow" color={color.paper} size={20} />
       </View>
     </Pressable>
   );
@@ -173,7 +173,7 @@ function NextUp({ slot, total, onOpen }: { slot: PlanSlot; total: number; onOpen
       style={({ pressed }) => [styles.next, pressed && { opacity: 0.85 }]}
     >
       <View style={styles.photo}>
-        <DishPhotoFill photo={photo} creditStyle={styles.todayCredit} />
+        <DishPhotoFill photo={photo} creditAt="top" creditStyle={styles.todayCredit} />
         <View style={styles.photoLabel}>
           <T variant="overline" color="ink">
             {slot.is_final ? 'Final recipe · Mastery challenge' : `Recipe ${slot.slot_order} of ${total}`}
@@ -185,12 +185,12 @@ function NextUp({ slot, total, onOpen }: { slot: PlanSlot; total: number; onOpen
           <T variant="h1" style={styles.nextTitle}>
             {slot.dish_name}
           </T>
-          <T variant="byline" style={{ marginTop: 8 }}>
+          <T variant="byline" style={styles.nextByline}>
             {slot.technique_focus} · {slot.xp_value} XP
           </T>
         </View>
         <View style={styles.go}>
-          <Icon name="arrow" color="#FFFFFF" size={24} />
+          <Icon name="arrow" color={color.onAccent} size={22} />
         </View>
       </View>
     </Pressable>
@@ -199,14 +199,14 @@ function NextUp({ slot, total, onOpen }: { slot: PlanSlot; total: number; onOpen
 
 function PathDone({ summary }: { summary: PlanSummary }) {
   return (
-    <View style={[gutter, { marginTop: 22 }]}>
+    <View style={[gutter, styles.done]}>
       <T variant="overline" color="herb">
         Path complete
       </T>
-      <T variant="h1" style={{ marginTop: 8 }}>
+      <T variant="h1" style={styles.doneTitle}>
         You cooked all {summary.total_slots}.
       </T>
-      <T variant="small" style={{ marginTop: 8 }}>
+      <T variant="small" style={styles.doneBody}>
         {summary.total_xp} XP earned. Any dish below can be cooked again.
       </T>
     </View>
@@ -215,19 +215,51 @@ function PathDone({ summary }: { summary: PlanSummary }) {
 
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: color.paper },
-  head: { paddingTop: 6 },
-  rule: { marginTop: 18 },
+  scroll: { paddingBottom: space.s10, flexGrow: 1 },
+  head: { paddingTop: space.s3 },
+  greeting: { marginTop: space.s2 },
+  rule: { marginTop: space.s4 },
   ruleLine: { height: 1, backgroundColor: color.ink },
-  next: { marginTop: 22, marginHorizontal: space.gutter },
-  photo: { height: 168, borderRadius: radius.md, overflow: 'hidden', backgroundColor: color.paperDeep, justifyContent: 'flex-end' },
-  photoLabel: { alignSelf: 'flex-start', margin: 12, backgroundColor: color.paper, paddingHorizontal: 9, paddingVertical: 5, borderRadius: 4 },
-  todayCredit: { top: 8, bottom: undefined },
-  meta: { flexDirection: 'row', alignItems: 'flex-end', marginTop: 14, gap: 12 },
+  schedule: { marginTop: space.s3 },
+  next: {
+    marginTop: space.s5,
+    marginHorizontal: space.gutter,
+    backgroundColor: color.sheet,
+    borderWidth: 1,
+    borderColor: color.rule,
+    borderRadius: radius.lg,
+    overflow: 'hidden',
+  },
+  photo: { height: 188, backgroundColor: color.paperDeep, justifyContent: 'flex-end' },
+  photoLabel: { alignSelf: 'flex-start', margin: space.s3, backgroundColor: color.paper, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.sm },
+  todayCredit: { maxWidth: '45%' },
+  meta: { flexDirection: 'row', alignItems: 'flex-end', gap: space.s3, paddingHorizontal: space.s4, paddingVertical: space.s4 },
   nextTitle: { fontSize: 28, lineHeight: 32 },
-  go: { width: 52, height: 52, borderRadius: 26, backgroundColor: color.tomato, alignItems: 'center', justifyContent: 'center' },
-  cookAnything: { marginTop: 22, marginHorizontal: space.gutter, paddingVertical: 16, paddingHorizontal: 16, borderWidth: 1, borderColor: color.ink, borderRadius: radius.md, flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: color.sheet },
-  goSmall: { width: 40, height: 40, borderRadius: 20, backgroundColor: color.tomato, alignItems: 'center', justifyContent: 'center' },
-  pathHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginTop: 34, marginBottom: 4 },
+  nextByline: { marginTop: space.s2 },
+  go: { width: 48, height: 48, borderRadius: 24, backgroundColor: color.tomato, alignItems: 'center', justifyContent: 'center' },
+  cookAnything: {
+    marginTop: space.s3,
+    marginHorizontal: space.gutter,
+    paddingVertical: space.s4,
+    paddingHorizontal: space.s4,
+    minHeight: 72,
+    borderWidth: 1,
+    borderColor: color.rule,
+    borderRadius: radius.lg,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.s3,
+    backgroundColor: color.sheet,
+  },
+  goSmall: { width: 44, height: 44, borderRadius: 22, backgroundColor: color.ink, alignItems: 'center', justifyContent: 'center' },
+  cookTitle: { marginTop: space.s2 },
+  cookBody: { marginTop: space.s1 },
+  pathHead: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', marginTop: space.s8, marginBottom: space.s2, gap: space.s3 },
+  pathMeta: { flexShrink: 1, textAlign: 'right' },
   xpStrong: { fontFamily: font.bodyBold, color: color.ink },
-  foot: { marginTop: space.s8, gap: 4 },
+  pace: { textAlign: 'center', marginTop: space.s3 },
+  done: { marginTop: space.s5 },
+  doneTitle: { marginTop: space.s2 },
+  doneBody: { marginTop: space.s2 },
+  foot: { marginTop: space.s6, gap: space.s1 },
 });

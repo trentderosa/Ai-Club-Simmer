@@ -11,7 +11,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import type { Badge, PlanSummary, Profile } from '../../api';
 import { Button } from '../../components/button';
-import { gutter, SectionHead } from '../../components/layout';
+import { gutter, pageColumn, SectionHead } from '../../components/layout';
 import { Seal } from '../../components/seal';
 import { EmptyState, ErrorState, LoadingState } from '../../components/states';
 import { T } from '../../components/text';
@@ -59,7 +59,7 @@ export default function ProfileScreen() {
     <SafeAreaView edges={['top']} style={styles.fill}>
       <ScrollView
         style={styles.fill}
-        contentContainerStyle={{ paddingBottom: space.s10, flexGrow: 1 }}
+        contentContainerStyle={[pageColumn, styles.scroll]}
         refreshControl={<RefreshControl refreshing={data.status === 'loading' && data.data !== null} onRefresh={reload} tintColor={color.tomato} />}
       >
         {data.data ? (
@@ -142,7 +142,7 @@ function ProfileBody({
         <SectionHead title="Badges" aside={counts.total ? `${counts.earned} of ${counts.total}` : undefined} />
       </View>
       {badges.length === 0 ? (
-        <EmptyState title="No badges yet" body="Cook a recipe and finish the check-in to earn the first one." />
+        <EmptyState compact title="No badges yet" body="Cook a recipe and finish the check-in to earn the first one." />
       ) : (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.shelf}>
           {badges.map((badge) => (
@@ -152,7 +152,7 @@ function ProfileBody({
               accessibilityLabel={`${badge.name}. ${badge.earned ? 'Earned' : 'Not earned yet'}. ${badge.description}`}
             >
               <Seal label={badgeSealLabel(badge)} kind={badge.kind} size={64} earned={badge.earned} />
-              <T style={[styles.shelfName, !badge.earned && { color: color.lockedText }]} numberOfLines={3}>
+              <T style={[styles.shelfName, !badge.earned && styles.shelfNameLocked]} numberOfLines={2}>
                 {badge.name}
               </T>
             </View>
@@ -164,7 +164,7 @@ function ProfileBody({
         <SectionHead
           title="Your answers"
           aside={
-            <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel="Edit your onboarding answers" hitSlop={8}>
+            <Pressable onPress={onEdit} accessibilityRole="button" accessibilityLabel="Edit your onboarding answers" hitSlop={8} style={styles.editHit}>
               <T variant="caption" style={styles.edit}>
                 Edit
               </T>
@@ -174,13 +174,13 @@ function ProfileBody({
         {profile ? (
           <Answers profile={profile} />
         ) : (
-          <T variant="small" style={{ marginTop: 12 }}>
+          <T variant="small" style={styles.missing}>
             We couldn’t load your onboarding answers. You can still edit them.
           </T>
         )}
       </View>
 
-      <View style={[gutter, { marginTop: space.s8, gap: 4 }]}>
+      <View style={[gutter, styles.signOut]}>
         <Button kind="quiet" label="Sign out" onPress={onSignOut} />
         {mockLabel ? (
           <T variant="caption" style={{ textAlign: 'center' }}>
@@ -207,7 +207,7 @@ function Answers({ profile }: { profile: Profile }) {
 
   if (rows.length === 0) {
     return (
-      <T variant="small" style={{ marginTop: 12 }}>
+      <T variant="small" style={styles.missing}>
         No answers saved yet.
       </T>
     );
@@ -229,20 +229,25 @@ function Answers({ profile }: { profile: Profile }) {
 
 const styles = StyleSheet.create({
   fill: { flex: 1, backgroundColor: color.paper },
-  prof: { flexDirection: 'row', alignItems: 'center', gap: 14, paddingHorizontal: space.gutter, paddingTop: 8 },
+  scroll: { paddingBottom: space.s10, flexGrow: 1 },
+  prof: { flexDirection: 'row', alignItems: 'center', gap: space.s4, paddingHorizontal: space.gutter, paddingTop: space.s4 },
   avatar: { width: 64, height: 64, borderRadius: 32, backgroundColor: color.herbWash, alignItems: 'center', justifyContent: 'center' },
   avatarLetter: { fontFamily: font.display, fontSize: 26, lineHeight: 32, color: color.herb },
-  stats: { flexDirection: 'row', marginTop: 20, marginHorizontal: space.gutter, borderTopWidth: 1, borderTopColor: color.ink, borderBottomWidth: 1, borderBottomColor: color.rule },
-  stat: { flex: 1, paddingVertical: 12 },
-  statDivider: { borderLeftWidth: 1, borderLeftColor: color.rule, paddingLeft: 14 },
-  statValue: { fontFamily: font.display, fontSize: 26, lineHeight: 30, color: color.ink, fontVariant: ['tabular-nums'] },
-  section: { marginTop: 30 },
-  shelf: { paddingHorizontal: space.gutter, paddingTop: 14, paddingBottom: 4, gap: 10 },
-  shelfItem: { width: 78, alignItems: 'center' },
-  shelfName: { marginTop: 6, fontFamily: font.body, fontSize: 12, lineHeight: 15, color: color.ink2, textAlign: 'center' },
+  stats: { flexDirection: 'row', marginTop: space.s5, marginHorizontal: space.gutter, borderTopWidth: 1, borderTopColor: color.ink, borderBottomWidth: 1, borderBottomColor: color.rule },
+  stat: { flex: 1, alignItems: 'center', paddingVertical: space.s4 },
+  statDivider: { borderLeftWidth: 1, borderLeftColor: color.rule },
+  statValue: { fontFamily: font.display, fontSize: 28, lineHeight: 32, color: color.ink, fontVariant: ['tabular-nums'], textAlign: 'center' },
+  section: { marginTop: space.s8 },
+  shelf: { paddingHorizontal: space.gutter, paddingTop: space.s4, paddingBottom: space.s2, gap: space.s4 },
+  shelfItem: { width: 96, alignItems: 'center' },
+  shelfName: { marginTop: space.s2, minHeight: 34, fontFamily: font.body, fontSize: 13, lineHeight: 17, color: color.ink2, textAlign: 'center' },
+  shelfNameLocked: { color: color.lockedText },
+  editHit: { minHeight: 44, justifyContent: 'center', paddingLeft: space.s3 },
   edit: { fontFamily: font.bodySemi, color: color.tomatoDeep },
-  answer: { paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: color.rule },
-  answerFirst: { marginTop: 2 },
+  missing: { marginTop: space.s3 },
+  answer: { paddingVertical: space.s3, borderBottomWidth: 1, borderBottomColor: color.rule, justifyContent: 'center' },
+  answerFirst: { marginTop: space.s1 },
   answerLabel: { fontFamily: font.bodyBold, letterSpacing: 0.8, textTransform: 'uppercase' },
-  answerValue: { marginTop: 2, fontFamily: font.body, fontSize: 17, lineHeight: 24, color: color.ink },
+  answerValue: { marginTop: space.s1, fontFamily: font.body, fontSize: 17, lineHeight: 24, color: color.ink },
+  signOut: { marginTop: space.s8, paddingTop: space.s4, borderTopWidth: 1, borderTopColor: color.rule, gap: space.s2 },
 });
