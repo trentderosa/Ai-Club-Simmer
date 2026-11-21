@@ -250,6 +250,12 @@ export class TestDatabase {
           FROM PUBLIC, anon, authenticated;
       GRANT EXECUTE ON FUNCTION public.try_cook_anything_generation(UUID, INTEGER, INTEGER, TIMESTAMPTZ)
           TO service_role;
+
+      -- 20261121200000_cook_anything_generation_refund.sql: re-assert after broad GRANTs
+      REVOKE EXECUTE ON FUNCTION public.refund_cook_anything_generation(UUID, INTEGER, TIMESTAMPTZ)
+          FROM PUBLIC, anon, authenticated;
+      GRANT EXECUTE ON FUNCTION public.refund_cook_anything_generation(UUID, INTEGER, TIMESTAMPTZ)
+          TO service_role;
       DO $cook_limit_seq$
       DECLARE
           seq text;

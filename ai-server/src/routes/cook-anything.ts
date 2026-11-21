@@ -188,6 +188,21 @@ export function createCookAnythingRouter(
     };
   }
 
+  // Best effort: a request that ended busy after allow() charged it did not
+  // produce a recipe, so its hit is given back. Never throws and never changes
+  // the response.
+  async function refundBusy(userId: string): Promise<void> {
+    try {
+      if (await generationLimiter.refund(userId)) {
+        console.info('cook_anything_generation_refunded');
+      }
+    } catch (error) {
+      console.error('cook_anything_refund_failed', {
+        error: error instanceof Error ? error.name : 'UnknownError',
+      });
+    }
+  }
+
   type GenerationWorkResult =
     | CookAnythingHttpResponse
     | GenerationWorkError
@@ -326,8 +341,9 @@ export function createCookAnythingRouter(
           return { limit: 'rate_limited' };
         }
         // The queue can fill during the allow() round trip. The hit is already
-        // charged (accepted), but the model is not called.
+        // charged, so it is refunded, and the model is not called.
         if (deps.ollamaClient.isSaturated?.()) {
+          await refundBusy(userId);
           return { error: { type: 'busy', message: 'Model is busy', attempts: 0 } };
         }
 
@@ -338,6 +354,9 @@ export function createCookAnythingRouter(
           { budget: deps.generationBudget }
         );
         if (!result.success) {
+          if (result.error.type === 'busy') {
+            await refundBusy(userId);
+          }
           return { error: result.error };
         }
         const clamped = clampRecipeCounts(result.recipe);
