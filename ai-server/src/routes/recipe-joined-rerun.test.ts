@@ -134,6 +134,21 @@ describe('recipe route joining a background generation', () => {
     expect(t.ollamaClient.generate).toHaveBeenCalledTimes(1);
   });
 
+  it('a background joiner of a prewarm that ended busy does not rerun', async () => {
+    const t = setup();
+    const prewarm = t.pathRecipes.generate('u1', t.slot, profile, { immediateOnly: true });
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(1));
+    const second = t.pathRecipes.generate('u1', t.slot, profile, { immediateOnly: true });
+    await t.settle();
+    t.pending[0].reject(new OllamaBusyError('queue_timeout'));
+    const [bg, joined] = await Promise.all([prewarm, second]);
+
+    expect(bg.success).toBe(false);
+    expect(joined).toMatchObject({ success: false, error: { type: 'busy' } });
+    expect(t.ollamaClient.generate).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalledWith('recipe_joined_generation_rerun', expect.anything());
+  });
+
   it('two joiners share one rerun', async () => {
     const t = setup();
     const prewarm = t.pathRecipes.generate('u1', t.slot, profile, { immediateOnly: true });
