@@ -9,8 +9,10 @@ import {
   authCallbackUrlWithoutSecrets,
   authRedirectTo,
   mapAuthChange,
+  PASSWORD_RESET_EMAIL_LIMIT_COPY,
   parseRecoveryLink,
   readRecoveryOwner,
+  recoverySessionMatchesLink,
   resolveWebBasePath,
   writeRecoveryOwner,
   type AuthChange,
@@ -105,9 +107,10 @@ export function createLiveBackend(opts: {
   // Read the callback before the client is created. detectSessionInUrl strips the hash on success.
   const initialLink: RecoveryLink = parseRecoveryLink(typeof window === 'undefined' ? null : window.location.href);
   let recoveryOwnerId: string | null = null;
-  let rememberedOwnerId: string | null = null;
   let recoveryFailed = false;
   let expectRecovery = false;
+  // True until the launch restore has finished, including the queued SIGNED_IN from storage.
+  let startup = true;
   const listeners = new Set<(session: AppSession | null, change: AuthChange) => void>();
   let preparing: Promise<void> | null = null;
 
@@ -116,7 +119,6 @@ export function createLiveBackend(opts: {
 
   function acceptRecovery(userId: string) {
     recoveryOwnerId = userId;
-    rememberedOwnerId = userId;
     recoveryFailed = false;
     void writeRecoveryOwner(AsyncStorage, userId);
   }
@@ -135,13 +137,8 @@ export function createLiveBackend(opts: {
       emit(appSession, 'password_recovery');
       return;
     }
-    if (event === 'SIGNED_IN' && userId && rememberedOwnerId === userId && !recoveryFailed) {
-      acceptRecovery(userId);
-      emit(appSession, 'password_recovery');
-      return;
-    }
-    if (event === 'SIGNED_IN' && userId && rememberedOwnerId && rememberedOwnerId !== userId) {
-      rememberedOwnerId = null;
+    if (event === 'SIGNED_IN' && !startup) {
+      // A fresh sign-in is not the restored recovery session. Drop a leftover owner.
       recoveryOwnerId = null;
       void writeRecoveryOwner(AsyncStorage, null);
     }
@@ -154,13 +151,9 @@ export function createLiveBackend(opts: {
     const current = data.session?.user.id ?? null;
     if (current && current === stored) {
       recoveryOwnerId = stored;
-      rememberedOwnerId = stored;
       return;
     }
-    if (current && current !== stored) {
-      rememberedOwnerId = null;
-      await writeRecoveryOwner(AsyncStorage, null);
-    }
+    if (current && current !== stored) await writeRecoveryOwner(AsyncStorage, null);
   }
 
   async function adoptRecoveryUrl(href: string | null) {
@@ -168,6 +161,14 @@ export function createLiveBackend(opts: {
     if (link.kind === 'none') return;
     if (link.kind === 'error') {
       recoveryFailed = true;
+      let current: AppSession | null = null;
+      try {
+        const { data } = await supabase.auth.getSession();
+        current = toAppSession(data.session);
+      } catch {
+        current = null;
+      }
+      emit(current, 'password_recovery_failed');
       return;
     }
     if (link.kind === 'code') {
@@ -246,7 +247,12 @@ export function createLiveBackend(opts: {
 
     async requestPasswordReset(email) {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: passwordResetRedirect() });
-      if (error) throw fromAuthError(error);
+      if (!error) return;
+      // The auth email cap is a few messages an hour, shared with sign-up. Other 429s stay on the short cooldown copy.
+      if (error.status === 429 || /rate limit/i.test(error.message || '')) {
+        throw new ApiError('rate_limited', PASSWORD_RESET_EMAIL_LIMIT_COPY, error.status, 'email_rate_limited');
+      }
+      throw fromAuthError(error);
     },
 
     async updatePassword(password) {
@@ -264,20 +270,30 @@ export function createLiveBackend(opts: {
     async prepareAuth() {
       if (!preparing) {
         preparing = (async () => {
-          const stored = await readRecoveryOwner(AsyncStorage);
-          if (stored) rememberedOwnerId = stored;
-          if (Platform.OS === 'web') {
-            await supabase.auth.getSession();
-            // Implicit recovery notifies on a timeout queued before this returns.
-            await new Promise((resolve) => setTimeout(resolve, 0));
-            stripBrowserSecrets();
-            const callback = initialLink.kind === 'tokens' || initialLink.kind === 'code';
-            if (initialLink.kind === 'error' || (callback && !recoveryOwnerId)) recoveryFailed = true;
+          try {
+            const stored = await readRecoveryOwner(AsyncStorage);
+            if (Platform.OS === 'web') {
+              const { data } = await supabase.auth.getSession();
+              // The session is already the link's tokens. Don't wait on the notify timer to accept it.
+              if (recoverySessionMatchesLink(initialLink, data.session?.access_token) && data.session?.user?.id) {
+                acceptRecovery(data.session.user.id);
+              }
+              // PASSWORD_RECOVERY still accepts the session if this comparison missed it.
+              await new Promise((resolve) => setTimeout(resolve, 0));
+              stripBrowserSecrets();
+              const callback = initialLink.kind === 'tokens' || initialLink.kind === 'code';
+              if (initialLink.kind === 'error' || (callback && !recoveryOwnerId)) recoveryFailed = true;
+              if (!recoveryOwnerId) await restoreStoredOwner(stored);
+              return;
+            }
+            await adoptRecoveryUrl(await Linking.getInitialURL());
             if (!recoveryOwnerId) await restoreStoredOwner(stored);
-            return;
+          } finally {
+            // Init can emit SIGNED_IN after getSession returns. That one is the restored session.
+            setTimeout(() => {
+              startup = false;
+            }, 0);
           }
-          await adoptRecoveryUrl(await Linking.getInitialURL());
-          if (!recoveryOwnerId) await restoreStoredOwner(stored);
         })();
       }
       return preparing;
@@ -297,7 +313,6 @@ export function createLiveBackend(opts: {
 
     clearPasswordRecovery() {
       recoveryOwnerId = null;
-      rememberedOwnerId = null;
       recoveryFailed = false;
       expectRecovery = false;
       void writeRecoveryOwner(AsyncStorage, null);

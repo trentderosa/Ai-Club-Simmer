@@ -44,6 +44,7 @@ import {
   VIDEOS,
 } from './fixtures';
 import { normalizeDishName, trimDishQuery, clientDishError } from '../../domain/dish-name';
+import { isPasswordResetEmail } from '../../domain/password-reset';
 import { hiddenStepIndices, maskRecipeForMastery, qualifiesForMasteryBadge } from '../../domain/mastery';
 import { awardXp, derivePlan, deriveSummary } from './mock-plan';
 
@@ -277,7 +278,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     async requestPasswordReset(email) {
       await delay(400);
       // Practice mode: validate the address and stop. No session, no inbox.
-      if (!email.includes('@')) throw new ApiError('validation', 'Enter a valid email address.', 400);
+      if (!isPasswordResetEmail(email)) throw new ApiError('validation', 'Enter a valid email address.', 400);
     },
 
     async updatePassword(password) {

@@ -119,7 +119,8 @@ export function SessionProvider({ backend, children }: { backend: Backend; child
         (s !== null && backend.passwordResetOwns(s.userId) && backend.passwordRecoveryPending()) ||
         change === 'password_recovery' ||
         change === 'password_recovery_failed';
-      if (!stay && change === 'token_refresh' && prevUser && s && prevUser === s.userId) return;
+      // Same user (a tab-focus refetch included): keep the screen. Recovery still routes.
+      if (!stay && prevUser && s && prevUser === s.userId) return;
       void resolveProfile(s);
     });
     return () => {

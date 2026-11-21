@@ -3,6 +3,7 @@
  * lists). Screens pick the action button from `action`.
  */
 import { isApiError, type ApiErrorKind } from '../api/errors';
+import { PASSWORD_RESET_EMAIL_LIMIT_COPY } from './password-reset';
 
 export type ErrorAction = 'retry' | 'sign_in' | 'onboarding' | 'back';
 
@@ -60,6 +61,9 @@ export function errorCopy(e: unknown): ErrorCopy {
     if (e.code === 'GENERATION_RATE_LIMIT_UNAVAILABLE') return NEW_RECIPES_PAUSED;
     if (e.kind === 'unavailable' && !isAuthUnavailable(e.message)) return SERVER_DOWN;
     const base = COPY[e.kind];
+    if (e.kind === 'rate_limited' && e.code === 'email_rate_limited') {
+      return { ...base, title: 'Too many emails', body: PASSWORD_RESET_EMAIL_LIMIT_COPY };
+    }
     // Validation messages from auth are specific and safe to show as-is.
     return e.kind === 'validation' && e.message ? { ...base, body: e.message } : base;
   }

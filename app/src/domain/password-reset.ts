@@ -13,6 +13,20 @@ export const PASSWORD_RESET_SENT_COPY =
 export const PASSWORD_RESET_PRACTICE_COPY =
   'Practice mode: no email is sent to a real inbox. This is only the confirmation.';
 
+/** Auth email cap is a few messages an hour, shared with sign-up. Not a one-minute cooldown. */
+export const PASSWORD_RESET_EMAIL_LIMIT_COPY =
+  'Too many emails were sent. Try again in an hour, or ask the team.';
+
+/** Same address check on the forgot-password screen and in mock mode. */
+export function isPasswordResetEmail(email: string): boolean {
+  return /.+@.+\..+/.test(email.trim());
+}
+
+/** True when the saved web session is the one from this reset link, not an older login. */
+export function recoverySessionMatchesLink(link: RecoveryLink, accessToken: string | null | undefined): boolean {
+  return link.kind === 'tokens' && typeof accessToken === 'string' && accessToken.length > 0 && accessToken === link.accessToken;
+}
+
 /** AsyncStorage key. The value is the user id that still has to set a password. */
 export const PASSWORD_RECOVERY_OWNER_KEY = 'simmer.password-recovery';
 
@@ -54,8 +68,10 @@ function combinedParams(url: URL): URLSearchParams {
   return params;
 }
 
-function onResetPath(pathname: string): boolean {
-  return /\/reset-password\/?$/.test(pathname);
+function onResetPath(url: URL): boolean {
+  if (/\/reset-password\/?$/.test(url.pathname)) return true;
+  // simmer://reset-password leaves the path in the host and pathname empty.
+  return url.pathname === '' && url.host === 'reset-password';
 }
 
 /**
@@ -74,7 +90,7 @@ export function parseRecoveryLink(href: string | null | undefined): RecoveryLink
   }
   const params = combinedParams(url);
   const type = params.get('type');
-  const recoveryShaped = type === 'recovery' || onResetPath(url.pathname);
+  const recoveryShaped = type === 'recovery' || onResetPath(url);
   if (!recoveryShaped) return { kind: 'none' };
   if (params.has('error') || params.has('error_code') || params.has('error_description')) return { kind: 'error' };
   const accessToken = params.get('access_token');

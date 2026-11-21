@@ -65,6 +65,8 @@ Before the first live build, allow the Pages site through Supabase and the AI se
 - **Supabase Site URL**: `https://trentderosa.github.io/Ai-Club-Simmer`. Sign-up confirmation links use the Site URL. Password reset sends `redirectTo` to the current origin, the Pages base path, and `/reset-password` (for example `https://trentderosa.github.io/Ai-Club-Simmer/reset-password`, or `http://localhost:8081/reset-password` locally). The `/**` allow-list covers the Pages URL. For local web, also allow the origin Expo prints (often `http://localhost:8081/**`). A phone build uses the `simmer` scheme URL from `Linking.createURL('reset-password')`; add that URL if you test reset on a device. Expo Go uses its `exp://` URL instead.
 - **AI server `ALLOWED_ORIGINS`**: `https://trentderosa.github.io`
 
+Pages resets work with the current redirect allow list. Local web and the simmer:// scheme need those URLs added in the Supabase project, which is Matthew's, and this PR does not change that project.
+
 `https://trentderosa.github.io` is the browser origin of the Pages URL `https://trentderosa.github.io/Ai-Club-Simmer/`. `ALLOWED_ORIGINS` entries are scheme and host only. A path on that entry is rejected when the AI server starts.
 
 Local `npm start` still accepts an `http` URL, including loopback, for LAN dev. The setup screen is only for a missing or non-`http(s)` value.
