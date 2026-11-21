@@ -112,7 +112,7 @@ export const RECIPES: Record<number, Recipe> = {
   1: r('Crunchy Knife Basics Salad', 20, [['1', 'cucumber'], ['1 pint', 'cherry tomatoes'], ['½', 'red onion'], ['1 head', 'romaine lettuce'], ['2 tbsp', 'olive oil'], ['1 tbsp', 'lemon juice'], ['1 pinch', 'salt']], [
     { instruction: 'Set a damp towel under your cutting board so it can’t slide.', isSafetyStep: true, whyItMatters: 'A board that moves is how most knife cuts happen.' },
     { instruction: 'Curl your fingertips into a claw and slice the cucumber into thin rounds.', isSafetyStep: true, techniqueName: 'Claw grip' },
-    { instruction: 'Halve the cherry tomatoes and thinly slice the red onion.', isSafetyStep: false, techniqueName: 'Slice an onion' },
+    { instruction: 'With your knife, halve the cherry tomatoes and thinly slice the red onion. Keep the claw grip.', isSafetyStep: true, techniqueName: 'Slice an onion' },
     { instruction: 'Tear the romaine into bite-size pieces with your hands.', isSafetyStep: false },
     { instruction: 'Whisk the olive oil, lemon juice and salt, then toss everything together.', isSafetyStep: false, whyItMatters: 'Dress right before eating so the lettuce stays crisp.' },
   ]),
@@ -156,11 +156,12 @@ export const RECIPES: Record<number, Recipe> = {
     { instruction: 'Roast for 25 minutes, flipping once halfway. Use oven mitts.', isSafetyStep: true },
   ]),
   8: r('Pan-Seared Chicken Breast', 20, [['2', 'chicken breasts'], ['1 tbsp', 'neutral oil'], ['1 tsp', 'salt'], ['½ tsp', 'pepper'], ['1 tbsp', 'butter']], [
-    { instruction: 'Pat the chicken dry, season both sides, then wash your hands and the board.', isSafetyStep: true, whyItMatters: 'Raw chicken spreads bacteria to anything it touches.' },
+    { instruction: 'Pat the chicken dry with paper towels (don’t rinse it), season both sides, then wash your hands and the board.', isSafetyStep: true, whyItMatters: 'Raw chicken spreads bacteria to anything it touches.' },
     { instruction: 'Heat the oil in a skillet over medium-high heat for 2 minutes.', isSafetyStep: true },
     { instruction: 'Sear the chicken without moving it for 6 minutes, until deep golden.', isSafetyStep: false, techniqueName: 'Sear chicken' },
-    { instruction: 'Flip, add the butter, and cook 5 minutes more, until it reads 165°F inside.', isSafetyStep: true },
-    { instruction: 'Rest for 5 minutes before slicing.', isSafetyStep: false },
+    { instruction: 'Flip, add the butter, and cook about 5 minutes more, until a thermometer in the thickest part reads 165°F.', isSafetyStep: true, whyItMatters: '165°F is the safe temperature for chicken. Color alone can fool you.' },
+    { instruction: 'Rest the chicken for 5 minutes so the juices settle.', isSafetyStep: false },
+    { instruction: 'Slice it with a sharp knife on a clean board, not the one the raw chicken touched.', isSafetyStep: true },
   ]),
   9: r('Simple Vegetable Soup', 40, [['1', 'onion, diced'], ['2', 'carrots, diced'], ['2 stalks', 'celery, diced'], ['2 cloves', 'garlic'], ['4 cups', 'vegetable broth'], ['1 can', 'diced tomatoes'], ['2 tbsp', 'olive oil']], [
     { instruction: 'Dice the onion, carrots and celery the same size.', isSafetyStep: true, techniqueName: 'Dice an onion' },
@@ -170,11 +171,13 @@ export const RECIPES: Record<number, Recipe> = {
   ]),
   10: r('Roast Chicken with Lemon', 80, [['1', 'whole chicken (4 lb)'], ['1', 'lemon'], ['1 head', 'garlic']], [
     { instruction: 'Heat the oven to 425°F with a rack in the middle.', isSafetyStep: true },
-    { instruction: 'Pat the chicken dry with paper towels, then wash your hands and the board.', isSafetyStep: true },
+    { instruction: 'With a sharp knife, halve the lemon and the garlic head crosswise. Curl your fingertips into a claw.', isSafetyStep: true },
+    { instruction: 'Pat the chicken dry with paper towels (don’t rinse it), then wash your hands and the board.', isSafetyStep: true, whyItMatters: 'Rinsing raw chicken splashes bacteria around the sink. Patting it dry is safer and browns better.' },
     { instruction: 'Rub with oil, then salt and pepper generously, inside and out.', isSafetyStep: false },
-    { instruction: 'Halve the lemon and garlic head and tuck them inside.', isSafetyStep: false },
-    { instruction: 'Roast for 60 minutes, until the thickest part of the thigh reads 165°F. Use oven mitts.', isSafetyStep: true, techniqueName: 'Check chicken temperature' },
-    { instruction: 'Rest 15 minutes before you carve, so the juices settle.', isSafetyStep: false },
+    { instruction: 'Tuck the lemon and garlic halves inside the chicken.', isSafetyStep: false },
+    { instruction: 'Roast for about 60 minutes, until a thermometer in the thickest part of the thigh reads 165°F. Use oven mitts.', isSafetyStep: true, techniqueName: 'Check chicken temperature' },
+    { instruction: 'Rest the chicken for 15 minutes so the juices settle.', isSafetyStep: false },
+    { instruction: 'Carve with a sharp knife on a clean board, holding the bird steady with a fork.', isSafetyStep: true },
   ]),
 };
 

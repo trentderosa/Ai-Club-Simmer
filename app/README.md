@@ -15,7 +15,7 @@ npm run web:mock        # fake data in the browser, no Supabase or ai-server nee
 npm run start:mock      # same, for Expo Go / a simulator (press i / a, or scan the QR code)
 ```
 
-In mock mode any email works. **Sign in** loads a demo cook (Jordan, 3 of 10 dishes done, 239 XP, three recipes in the book, three badges). Sign in as `mastery@simmer.test` (any password) loads a second canned user (Riley, 9 of 10 done, 917 XP) already at the Roast Chicken mastery challenge. **Create account** starts a fresh user who goes through onboarding. Mock state lives in memory and resets on reload.
+In mock mode any email works. **Sign in** loads a demo cook (Jordan, 3 of 10 dishes done, 239 XP, three recipes in the book, three badges). Sign in as `mastery@simmer.test` (any password) loads a second canned user (Riley, 9 of 10 done, 917 XP) already at the Roast Chicken mastery challenge. **Create account** starts a fresh user who goes through onboarding. Mock state lives in memory and resets on reload. The ten canned path recipes follow the same food-safety rules as generated ones: raw chicken is patted dry, never rinsed; both chicken dishes give 165°F in the thickest part; and every knife step is a safety step, so it stays visible in the mastery challenge. The mock Roast Chicken has 8 steps with 3 hidden.
 
 Against the real backend:
 
