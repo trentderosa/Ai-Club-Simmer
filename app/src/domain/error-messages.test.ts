@@ -2,14 +2,15 @@ import { ApiError } from '../api/errors';
 import { errorCopy, isAiServerOutage } from './error-messages';
 
 describe('errorCopy outage messages', () => {
-  it('keeps the existing unreachable message and a retry', () => {
+  it('tells an unreachable caller that the laptop and tunnel have to be running', () => {
     const copy = errorCopy(new ApiError('network', "Can't reach the AI server. TypeError: Failed to fetch"));
     expect(copy).toEqual({
       title: 'Can’t reach the kitchen',
-      body: 'Check your connection. Recipes come from the AI server laptop, so it has to be running and on the same network.',
+      body: 'Check your connection. The AI server laptop and its tunnel have to be running.',
       action: 'retry',
     });
     expect(copy.body).not.toContain('TypeError');
+    expect(copy.body).not.toContain('same network');
   });
 
   it('uses a timeout message instead of the unreachable one', () => {
@@ -29,10 +30,17 @@ describe('errorCopy outage messages', () => {
     });
   });
 
-  it('keeps the sign-in message for an auth 503', () => {
-    const copy = errorCopy(new ApiError('unavailable', 'Authentication service temporarily unavailable', 503));
-    expect(copy.title).toBe('Sign-in service is down');
-    expect(copy.action).toBe('retry');
+  it('keeps the sign-in message for the server’s exact auth 503 text', () => {
+    // These 503s have no `code`. Check-in, mastery, and dish photos say the first;
+    // recipe and Cook anything say the second.
+    const messages = ['Authentication service unavailable', 'Authentication service temporarily unavailable'];
+    for (const message of messages) {
+      expect(errorCopy(new ApiError('unavailable', message, 503))).toEqual({
+        title: 'Sign-in service is down',
+        body: 'The server couldn’t check your login just now. Try again in a moment.',
+        action: 'retry',
+      });
+    }
   });
 
   it('says the kitchen is unavailable for a plain 503', () => {

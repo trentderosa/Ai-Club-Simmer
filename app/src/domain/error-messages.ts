@@ -25,7 +25,7 @@ const COPY: Record<ApiErrorKind, ErrorCopy> = {
   unavailable: { title: 'Sign-in service is down', body: 'The server couldn’t check your login just now. Try again in a moment.', action: 'retry' },
   server: { title: 'Something went wrong', body: 'The server hit an error. Try again in a moment.', action: 'retry' },
   timeout: { title: 'This is taking too long', body: 'The AI server didn’t answer in time. Try again in a moment.', action: 'retry' },
-  network: { title: 'Can’t reach the kitchen', body: 'Check your connection. Recipes come from the AI server laptop, so it has to be running and on the same network.', action: 'retry' },
+  network: { title: 'Can’t reach the kitchen', body: 'Check your connection. The AI server laptop and its tunnel have to be running.', action: 'retry' },
   bad_response: { title: 'Unexpected answer', body: 'The server sent something the app didn’t understand. Try again, and tell the team if it keeps happening.', action: 'retry' },
   config: { title: 'App isn’t configured', body: 'Some EXPO_PUBLIC_* settings are missing. See app/README.md.', action: 'retry' },
 };
@@ -44,6 +44,12 @@ const NEW_RECIPES_PAUSED: ErrorCopy = {
   action: 'retry',
 };
 
+/**
+ * Auth 503s send no `code`. The AI server uses one of:
+ * "Authentication service unavailable" (check-in, mastery, dish photos)
+ * "Authentication service temporarily unavailable" (recipe, Cook anything).
+ * Match the wording until a code exists. Do not invent one here.
+ */
 function isAuthUnavailable(message: string): boolean {
   return /authentication/i.test(message);
 }
