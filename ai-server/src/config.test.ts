@@ -242,3 +242,28 @@ describe('loadConfig Ollama and rate-limit bounds', () => {
     expect(() => loadConfig()).toThrow(new RegExp(`^${name} must be a whole number from`));
   });
 });
+
+describe('PREAUTH_IP_RATE_LIMIT_MAX', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('defaults to 60 when unset or empty', () => {
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_MAX', '');
+    expect(loadConfig().preAuthIpRateLimitMax).toBe(60);
+  });
+
+  it('accepts the range edges', () => {
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_MAX', '1');
+    expect(loadConfig().preAuthIpRateLimitMax).toBe(1);
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_MAX', '10000');
+    expect(loadConfig().preAuthIpRateLimitMax).toBe(10000);
+  });
+
+  it('rejects out-of-range and non-integer values, naming the variable', () => {
+    for (const bad of ['0', '10001', '1.5', 'abc', '-1']) {
+      vi.stubEnv('PREAUTH_IP_RATE_LIMIT_MAX', bad);
+      expect(() => loadConfig()).toThrow('PREAUTH_IP_RATE_LIMIT_MAX must be a whole number from 1 to 10000');
+    }
+  });
+});

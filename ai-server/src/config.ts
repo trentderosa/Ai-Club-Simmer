@@ -17,6 +17,11 @@ export interface Config {
     windowMs: number;
     maxRequests: number;
   };
+  /**
+   * Per-IP cap (per rateLimit.windowMs) on check-ins and mastery, applied
+   * before auth. One campus NAT can put a whole room on one IP.
+   */
+  preAuthIpRateLimitMax: number;
   supabase: {
     url?: string;
     serviceRoleKey?: string;
@@ -79,6 +84,7 @@ export const OLLAMA_MAX_TOKENS = { default: 1500, min: 256, max: 8192 } as const
 export const OLLAMA_TIMEOUT_MS = { default: 60000, min: 5000, max: 600000 } as const;
 export const RATE_LIMIT_WINDOW_MS = { default: 60000, min: 1000, max: 3600000 } as const;
 export const RATE_LIMIT_MAX_REQUESTS = { default: 10, min: 1, max: 1000 } as const;
+export const PREAUTH_IP_RATE_LIMIT_MAX = { default: 60, min: 1, max: 10000 } as const;
 export const XP_AWARD_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
 export const YOUTUBE_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
 export const VIDEO_LOOKUP_BUDGET_MS = { default: 8000, min: 100, max: 60000 } as const;
@@ -230,6 +236,7 @@ export function loadConfig(): Config {
       windowMs: parseBoundedIntEnv(process.env, 'RATE_LIMIT_WINDOW_MS', RATE_LIMIT_WINDOW_MS.default, RATE_LIMIT_WINDOW_MS.min, RATE_LIMIT_WINDOW_MS.max),
       maxRequests: parseBoundedIntEnv(process.env, 'RATE_LIMIT_MAX_REQUESTS', RATE_LIMIT_MAX_REQUESTS.default, RATE_LIMIT_MAX_REQUESTS.min, RATE_LIMIT_MAX_REQUESTS.max),
     },
+    preAuthIpRateLimitMax: parseBoundedIntEnv(process.env, 'PREAUTH_IP_RATE_LIMIT_MAX', PREAUTH_IP_RATE_LIMIT_MAX.default, PREAUTH_IP_RATE_LIMIT_MAX.min, PREAUTH_IP_RATE_LIMIT_MAX.max),
     supabase: {
       url: process.env.SUPABASE_URL,
       serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,

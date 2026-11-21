@@ -342,6 +342,12 @@ app.use(
   })
 );
 
+// Per-IP pre-auth cap for check-ins and mastery (PREAUTH_IP_RATE_LIMIT_MAX).
+const preAuthIpRateLimit = {
+  windowMs: config.rateLimit.windowMs,
+  maxRequests: config.preAuthIpRateLimitMax,
+};
+
 // Mount check-in router if JWT verifier and check-in service are available
 if (services.jwtVerifier && services.checkInService) {
   const checkInRouter = createCheckInRouter(
@@ -351,6 +357,7 @@ if (services.jwtVerifier && services.checkInService) {
     },
     {
       rateLimit: config.rateLimit,
+      ipRateLimit: preAuthIpRateLimit,
     }
   );
   app.use('/api/check-ins', checkInRouter);
@@ -362,7 +369,10 @@ if (services.jwtVerifier && services.checkInService) {
 if (services.jwtVerifier && services.masteryRepository) {
   app.use(
     '/api/mastery',
-    createMasteryRouter({ jwtVerifier: services.jwtVerifier, masteryRepository: services.masteryRepository })
+    createMasteryRouter(
+      { jwtVerifier: services.jwtVerifier, masteryRepository: services.masteryRepository },
+      { ipRateLimit: preAuthIpRateLimit }
+    )
   );
   console.info('Mastery route: ENABLED');
 } else {
@@ -420,13 +430,17 @@ const server = app.listen(config.port, config.host, () => {
 const SHUTDOWN_FORCE_EXIT_MS = 10_000;
 let shuttingDown = false;
 function shutdown(signal: string): void {
-  if (shuttingDown) return;
+  if (shuttingDown) {
+    console.warn(`${signal} received again, exiting now`);
+    process.exit(1);
+  }
   shuttingDown = true;
   console.info(`${signal} received, shutting down`);
   if (reconcileScheduler.enabled) reconcileScheduler.stop();
   const forceTimer = setTimeout(() => process.exit(1), SHUTDOWN_FORCE_EXIT_MS);
   forceTimer.unref();
   server.close(() => process.exit(0));
+  server.closeIdleConnections?.();
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));

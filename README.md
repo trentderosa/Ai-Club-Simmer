@@ -129,7 +129,7 @@ Slot 10 recipe generation retries unless the recipe has at least 3 non-safety (h
 
 Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Placeholders only — no real keys or production URLs belong in the repo.
 
-The AI server answers errors in JSON, never HTML or a stack trace. A request body that is not valid JSON returns `400` with code `INVALID_JSON`, a body over 100kb returns `413` with code `PAYLOAD_TOO_LARGE`, an unknown route returns `404 { error: "Not found" }`, and an unexpected failure returns `500 { error: "Internal server error" }`. `POST /api/check-ins` and the `/api/mastery` routes also have a per-IP limit (60 per minute) that runs before auth. On SIGTERM or SIGINT the server stops the XP reconcile timer, closes the listener, and force-exits after 10 seconds.
+Error responses from the AI server are JSON, never HTML or a stack trace, except when a response has already started streaming (the connection is then closed instead). A request body that is not valid JSON returns `400` with code `INVALID_JSON`, a body over 100kb returns `413` with code `PAYLOAD_TOO_LARGE`, an unsupported charset or `Content-Encoding` returns `415` with code `UNSUPPORTED_MEDIA_TYPE`, any other client body error (for example an aborted request) returns its `4xx` with code `BAD_REQUEST`, an unknown route returns `404 { error: "Not found" }`, and an unexpected failure returns `500 { error: "Internal server error" }`. `POST /api/check-ins` and the `/api/mastery` routes also have a per-IP limit that runs before auth (default 60 per window, set with `PREAUTH_IP_RATE_LIMIT_MAX`). On SIGTERM or SIGINT the server stops the XP reconcile timer, closes the listener, and force-exits after 10 seconds.
 
 | Variable | Purpose |
 | --- | --- |
@@ -141,6 +141,7 @@ The AI server answers errors in JSON, never HTML or a stack trace. A request bod
 | `HOST` | Bind address (default `127.0.0.1`) |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the AI server (Expo web). Default: `http://localhost:8081`, `http://127.0.0.1:8081`, `http://localhost:19006`, `http://127.0.0.1:19006`. Never `*`. |
 | `RATE_LIMIT_WINDOW_MS` | Rate-limit window (default `60000`, range `1000`–`3600000`) |
+| `PREAUTH_IP_RATE_LIMIT_MAX` | Per-IP cap on `POST /api/check-ins` and the `/api/mastery` routes, checked before auth, per `RATE_LIMIT_WINDOW_MS` window (default `60`, range `1`–`10000`). Raise it when a whole room shares one campus NAT IP. A value that is not a whole number in range stops the server at startup, naming the variable. |
 | `RATE_LIMIT_MAX_REQUESTS` | Max requests per window (default `10`, range `1`–`1000`). A value that is not a whole number in range stops the server at startup, naming the variable. |
 | `COOK_ANYTHING_MAX_DISH_LENGTH` | Max length of a Cook anything dish name (default `80`, range `10`–`200`) |
 | `COOK_ANYTHING_RATE_LIMIT_WINDOW_MS` | Per-user window for uncached Cook anything generations (default `3600000`, range `1000`–`86400000`). With Supabase configured, the count is stored in Postgres and survives a restart. |

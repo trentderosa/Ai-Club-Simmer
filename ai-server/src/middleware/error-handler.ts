@@ -6,10 +6,11 @@ export const notFoundHandler: RequestHandler = (_req: Request, res: Response): v
 };
 
 /**
- * Final error handler. Body-parser failures get a specific 4xx; everything
+ * Final error handler. Body-parser failures get a specific 4xx; any other
+ * exposable 4xx client error keeps its status with a generic body; everything
  * else is a generic 500. The response never carries a stack or error message,
- * and the log line has only the error name and message (no headers, body or
- * tokens).
+ * and the 500 log line has only the error name (and a string code), never the
+ * message, headers, body or tokens.
  */
 export const errorHandler: ErrorRequestHandler = (
   err: unknown,
@@ -22,19 +23,31 @@ export const errorHandler: ErrorRequestHandler = (
     return;
   }
 
-  const type = typeof err === 'object' && err !== null ? (err as { type?: unknown }).type : undefined;
-  if (type === 'entity.parse.failed') {
+  const fields = typeof err === 'object' && err !== null ? (err as Record<string, unknown>) : {};
+  if (fields.type === 'entity.parse.failed') {
     res.status(400).json({ error: 'Request body is not valid JSON', code: 'INVALID_JSON' });
     return;
   }
-  if (type === 'entity.too.large') {
+  if (fields.type === 'entity.too.large') {
     res.status(413).json({ error: 'Request body is too large', code: 'PAYLOAD_TOO_LARGE' });
     return;
   }
 
+  // Other body-parser client errors (unsupported charset or encoding, aborted
+  // request, bad length) are marked expose=true with a 4xx status.
+  const status = typeof fields.status === 'number' ? fields.status : fields.statusCode;
+  if (typeof status === 'number' && status >= 400 && status <= 499 && fields.expose === true) {
+    if (status === 415) {
+      res.status(415).json({ error: 'Unsupported request encoding', code: 'UNSUPPORTED_MEDIA_TYPE' });
+    } else {
+      res.status(status).json({ error: 'Bad request', code: 'BAD_REQUEST' });
+    }
+    return;
+  }
+
   const name = err instanceof Error ? err.name : 'NonError';
-  const message = err instanceof Error ? err.message : '';
-  console.error(`Unhandled error: ${name}: ${message}`);
+  const code = typeof fields.code === 'string' ? ` (${fields.code})` : '';
+  console.error(`Unhandled error: ${name}${code}`);
   res.status(500).json({ error: 'Internal server error' });
 };
 
