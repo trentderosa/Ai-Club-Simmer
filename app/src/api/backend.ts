@@ -22,6 +22,9 @@ import type {
   MasteryRevealResponse,
   MasteryStartResponse,
 } from './schemas';
+import type { AuthChange } from '../domain/password-reset';
+
+export type { AuthChange };
 
 export interface AppSession {
   userId: string;
@@ -45,10 +48,29 @@ export interface Backend {
   // Auth (F1)
   getSession(): Promise<AppSession | null>;
   /** Calls `listener` on sign-in, sign-out and token refresh. Returns unsubscribe. */
-  onSessionChange(listener: (session: AppSession | null) => void): () => void;
+  onSessionChange(listener: (session: AppSession | null, change: AuthChange) => void): () => void;
   signIn(email: string, password: string): Promise<void>;
   signUp(email: string, password: string, firstName: string): Promise<SignUpResult>;
   signOut(): Promise<void>;
+  /**
+   * Emails a reset link. Live mode calls Supabase. Full mock mode does not
+   * send mail and does not create a session.
+   */
+  requestPasswordReset(email: string): Promise<void>;
+  /** Sets a new password on the current recovery session. */
+  updatePassword(password: string): Promise<void>;
+  /** Loads a saved recovery and any link the app was opened with. Call before the first route. */
+  prepareAuth(): Promise<void>;
+  /** True when this signed-in user still has to choose a password. */
+  passwordRecoveryPending(): boolean;
+  /** True when the latest reset link failed. Do not update whatever session is already on the device. */
+  passwordRecoveryFailed(): boolean;
+  /** True when `userId` is the account the reset link belongs to. */
+  passwordResetOwns(userId: string | null): boolean;
+  /** Clears the recovery flag after the new password is saved, or the user leaves. */
+  clearPasswordRecovery(): void;
+  /** Drops a failed-link flag without signing out a different account. */
+  clearRecoveryFailure(): void;
 
   // Profile / onboarding (F1). RLS: own row only.
   getProfile(userId: string): Promise<Profile | null>;

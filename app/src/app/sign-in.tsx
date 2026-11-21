@@ -2,6 +2,7 @@
  * Sign in / create account (F1). Plain Supabase email + password.
  * A new account goes on to onboarding automatically (root guard).
  */
+import { useRouter, type Href } from 'expo-router';
 import { useState } from 'react';
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 
@@ -17,6 +18,7 @@ type Mode = 'sign_in' | 'sign_up';
 
 export default function SignIn() {
   const { backend } = useSession();
+  const router = useRouter();
   const [mode, setMode] = useState<Mode>('sign_up');
   const [firstName, setFirstName] = useState('');
   const [email, setEmail] = useState('');
@@ -109,6 +111,9 @@ export default function SignIn() {
             }}
             style={{ marginTop: space.s4 }}
           />
+          {mode === 'sign_in' ? (
+            <Button kind="quiet" label="Forgot your password?" onPress={() => router.push('/forgot-password' as Href)} />
+          ) : null}
           {backend.label === 'mock' ? (
             <T variant="caption" style={styles.mock}>
               Mock mode: any email works. Signing in loads a demo cook three dishes in; making an account starts fresh.

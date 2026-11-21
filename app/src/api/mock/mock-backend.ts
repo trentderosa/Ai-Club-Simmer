@@ -10,7 +10,7 @@
  * State resets when the app reloads.
  */
 import type { MockXpStatus } from '../config';
-import type { AppSession, Backend } from '../backend';
+import type { AppSession, AuthChange, Backend } from '../backend';
 import { ApiError } from '../errors';
 import {
   CheckInInputSchema,
@@ -108,7 +108,7 @@ export interface MockOptions {
 export function createMockBackend(opts: MockOptions = {}): Backend {
   const latency = opts.latency ?? 1;
   const delay = (ms: number) => wait(ms * latency);
-  const listeners = new Set<(s: AppSession | null) => void>();
+  const listeners = new Set<(s: AppSession | null, change: AuthChange) => void>();
 
   const state: MockState = {
     session: null,
@@ -126,9 +126,9 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     masterySessions: new Map(),
   };
 
-  function setSession(s: AppSession | null) {
+  function setSession(s: AppSession | null, change: AuthChange = s ? 'signed_in' : 'signed_out') {
     state.session = s;
-    listeners.forEach((l) => l(s));
+    listeners.forEach((l) => l(s, change));
   }
 
   function loadCannedUser(
@@ -272,6 +272,40 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
 
     async signOut() {
       setSession(null);
+    },
+
+    async requestPasswordReset(email) {
+      await delay(400);
+      // Practice mode: validate the address and stop. No session, no inbox.
+      if (!email.includes('@')) throw new ApiError('validation', 'Enter a valid email address.', 400);
+    },
+
+    async updatePassword(password) {
+      await delay(400);
+      requireSession();
+      if (password.length < 6) throw new ApiError('validation', 'Password should be at least 6 characters.', 400);
+    },
+
+    async prepareAuth() {},
+
+    passwordRecoveryPending() {
+      return false;
+    },
+
+    passwordRecoveryFailed() {
+      return false;
+    },
+
+    passwordResetOwns() {
+      return false;
+    },
+
+    clearPasswordRecovery() {
+      // Practice mode never starts a recovery session.
+    },
+
+    clearRecoveryFailure() {
+      // Practice mode has no recovery link to dismiss.
     },
 
     async getProfile(userId) {
