@@ -173,7 +173,7 @@ function NextUp({ slot, total, onOpen }: { slot: PlanSlot; total: number; onOpen
       style={({ pressed }) => [styles.next, pressed && { opacity: 0.85 }]}
     >
       <View style={styles.photo}>
-        <DishPhotoFill photo={photo} creditAt="top" />
+        <DishPhotoFill photo={photo} creditAt="top" creditStyle={styles.todayCredit} />
         <View style={styles.photoLabel}>
           <T variant="overline" color="ink">
             {slot.is_final ? 'Final recipe · Mastery challenge' : `Recipe ${slot.slot_order} of ${total}`}
@@ -232,6 +232,7 @@ const styles = StyleSheet.create({
   },
   photo: { height: 188, backgroundColor: color.paperDeep, justifyContent: 'flex-end' },
   photoLabel: { alignSelf: 'flex-start', margin: space.s3, backgroundColor: color.paper, paddingHorizontal: 10, paddingVertical: 5, borderRadius: radius.sm },
+  todayCredit: { maxWidth: '45%' },
   meta: { flexDirection: 'row', alignItems: 'flex-end', gap: space.s3, paddingHorizontal: space.s4, paddingVertical: space.s4 },
   nextTitle: { fontSize: 28, lineHeight: 32 },
   nextByline: { marginTop: space.s2 },
