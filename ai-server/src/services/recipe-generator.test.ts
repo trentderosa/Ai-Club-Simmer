@@ -675,6 +675,15 @@ describe('ensureSafetyFlags - raw protein rinse and poultry doneness', () => {
     expect(hasAffirmativeProteinRinse('Wash the shrimp.')).toBe(false);
   });
 
+  it('treats don\'t forget and never skip as an instruction to rinse', () => {
+    expect(hasAffirmativeProteinRinse("Don't forget to rinse the chicken.")).toBe(true);
+    expect(hasAffirmativeProteinRinse('Never skip rinsing the chicken.')).toBe(true);
+    expect(hasAffirmativeProteinRinse("Don't rinse the chicken.")).toBe(false);
+    expect(hasAffirmativeProteinRinse('Never rinse the chicken.')).toBe(false);
+    expect(hasAffirmativeProteinRinse('Do not rinse the chicken.')).toBe(false);
+    expect(hasAffirmativeProteinRinse('Avoid rinsing the chicken.')).toBe(false);
+  });
+
   it.each([
     'Rinse the rice in a strainer until the water runs clear.',
     'Rinse the beans.',
