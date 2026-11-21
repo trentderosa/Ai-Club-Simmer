@@ -125,8 +125,15 @@ describe('parseResponse: recipe', () => {
     });
 
     it('works when the response has no headers object', async () => {
-      const e = await busyError();
-      expect(e.retryAfterSeconds).toBeUndefined();
+      let caught: ApiError | undefined;
+      try {
+        // res() builds a response with no headers property at all.
+        await parseResponse(res(503, busyBody), RecipeResponseSchema, 'recipe');
+      } catch (e) {
+        caught = e as ApiError;
+      }
+      expect(caught?.kind).toBe('busy');
+      expect(caught?.retryAfterSeconds).toBeUndefined();
     });
   });
 
