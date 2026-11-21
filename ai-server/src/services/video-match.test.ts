@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { buildSearchQuery } from './video-finder.js';
 import {
   hasConflictingDishWords,
   isTechniqueDemoTitle,
@@ -41,6 +42,14 @@ describe('hasConflictingDishWords', () => {
 describe('short technique clips', () => {
   it('reads the technique out of the search query', () => {
     expect(techniqueSubjectFromQuery('how to dice an onion beginner cooking')).toBe('dice an onion');
+  });
+
+  it('reads back the technique from the query the finder really builds', () => {
+    // If buildSearchQuery's template changes, this fails instead of every
+    // title quietly needing "beginner" and "cooking".
+    for (const key of ['dice onion', 'pan toast', 'sear chicken', 'claw grip']) {
+      expect(techniqueSubjectFromQuery(buildSearchQuery(key))).toBe(key);
+    }
   });
 
   it('drops a very short clip unless the title is a technique demo', () => {

@@ -73,9 +73,12 @@ export function dishVideoSearchQuery(dishName: string): string {
   return `${dishName} recipe`;
 }
 
-/** True when the title names this dish and not a different one. */
+/**
+ * True when the title names this dish and not a different one. Dish words
+ * accept verb endings too, so "Roasted Chicken" names "roast chicken".
+ */
 export function dishVideoTitleMatches(title: string, dishName: string): boolean {
-  return titleSharesMeaningfulWords(title, dishName) && !hasConflictingDishWords(title, dishName);
+  return titleSharesMeaningfulWords(title, dishName, true) && !hasConflictingDishWords(title, dishName, true);
 }
 
 export interface DishVideoHit {

@@ -82,6 +82,11 @@ describe('selectDishVideos', () => {
     expect(dishVideoTitleMatches('Creamy chicken soup', 'chicken soup')).toBe(true);
     expect(dishVideoTitleMatches('Tomato basil soup', 'tomato soup')).toBe(true);
     expect(dishVideoTitleMatches('Chicken pho recipe', 'pho')).toBe(true);
+    expect(dishVideoTitleMatches('Roasted Chicken (Easy Whole Chicken)', 'roast chicken')).toBe(true);
+    expect(dishVideoTitleMatches('Perfect Roast Chicken Recipe', 'roast chicken')).toBe(true);
+    expect(dishVideoTitleMatches('Pan Seared Chicken Breast', 'seared chicken breast')).toBe(true);
+    expect(dishVideoTitleMatches('Roasted chicken noodle soup', 'roast chicken')).toBe(false);
+    expect(dishVideoTitleMatches('Roasted vegetables', 'roast chicken')).toBe(false);
 
     const hits: DishVideoHit[] = [
       { videoId: 'eggrice001', title: 'Scrambled eggs fried rice recipe', channelTitle: 'A' },
