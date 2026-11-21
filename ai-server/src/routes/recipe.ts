@@ -5,7 +5,7 @@ import { generateRecipe, PathSlot } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
-import type { RecipeVideos, VideoFinder, VideoLookupResult } from '../services/video-finder.js';
+import { storedTechniqueVideosMatch, type RecipeVideos, type VideoFinder, type VideoLookupResult } from '../services/video-finder.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
 import type { DishVideo, DishVideoFinder } from '../services/dish-video-finder.js';
 import { normalizeDishName } from '../cook-anything/dish-name.js';
@@ -304,10 +304,15 @@ export function createRecipeRouter(
         // null = never stored (or the last lookup was incomplete): look again.
         const mediaPromise = dishMedia(slot.dishName);
         const storedVideos = await deps.supabase.getSavedVideos(userId, slotId);
-        const [videos, media] = await Promise.all([
-          storedVideos ? Promise.resolve(storedVideos) : attachVideos(userId, slotId, existingRecipe),
-          mediaPromise,
-        ]);
+        // A saved map skips the shared-cache check. Drop a titled video that
+        // no longer names its technique and look the recipe up again. A video
+        // with no title stays. The column is replaced only when that lookup
+        // finishes; it is not cleared.
+        const videosPromise =
+          storedVideos && storedTechniqueVideosMatch(storedVideos)
+            ? Promise.resolve(storedVideos)
+            : attachVideos(userId, slotId, existingRecipe);
+        const [videos, media] = await Promise.all([videosPromise, mediaPromise]);
         // F8: the final slot's hidden steps are only served by a mastery reveal.
         res.json({
           recipe: slot.isFinal ? maskRecipeForMastery(existingRecipe) : existingRecipe,

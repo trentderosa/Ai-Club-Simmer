@@ -4,7 +4,7 @@ import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
 import type { DishVideo, DishVideoFinder } from '../services/dish-video-finder.js';
-import type { RecipeVideos, VideoFinder, VideoLookupResult } from '../services/video-finder.js';
+import { storedTechniqueVideosMatch, type RecipeVideos, type VideoFinder, type VideoLookupResult } from '../services/video-finder.js';
 import type { GeneratedRecipeRepository } from '../repositories/generated-recipe-repository.js';
 import { DishValidationError, validateDishQuery } from '../cook-anything/dish-name.js';
 import { clampRecipeCounts, computeFreeformXp } from '../cook-anything/clamp.js';
@@ -260,10 +260,15 @@ export function createCookAnythingRouter(
       );
       if (existing) {
         const storedVideos = existing.videos;
-        const [videos, photo, dishVideos] = await Promise.all([
-          storedVideos
+        // Same read check as path recipes: a titled video that does not name
+        // its technique is looked up again. Title-less entries stay. The
+        // column is not cleared.
+        const videosPromise =
+          storedVideos && storedTechniqueVideosMatch(storedVideos)
             ? Promise.resolve(storedVideos)
-            : attachVideos(existing.id, userId, existing.recipe),
+            : attachVideos(existing.id, userId, existing.recipe);
+        const [videos, photo, dishVideos] = await Promise.all([
+          videosPromise,
           attachPhoto(existing.id, userId, existing.normalizedDishName, existing.photo),
           attachDishVideos(existing.normalizedDishName),
         ]);
