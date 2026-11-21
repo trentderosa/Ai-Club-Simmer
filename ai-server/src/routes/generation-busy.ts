@@ -9,7 +9,7 @@ export function sendGenerationBusy(res: Response): void {
     .status(503)
     .set('Retry-After', String(GENERATION_BUSY_RETRY_AFTER_SECONDS))
     .json({
-      error: 'The kitchen is busy right now. Try again in a minute.',
+      error: `The kitchen is busy right now. Try again in about ${GENERATION_BUSY_RETRY_AFTER_SECONDS} seconds.`,
       code: 'GENERATION_BUSY',
     });
 }

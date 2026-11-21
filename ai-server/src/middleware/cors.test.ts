@@ -38,6 +38,22 @@ describe('CORS middleware', () => {
     expect(res.headers['access-control-allow-credentials']).toBeUndefined();
   });
 
+  it('exposes Retry-After (not *) to an allowed origin', async () => {
+    const res = await request(createApp())
+      .get('/health')
+      .set('Origin', ALLOWED);
+
+    expect(res.headers['access-control-expose-headers']).toBe('Retry-After');
+  });
+
+  it('does not expose any headers to a disallowed origin', async () => {
+    const res = await request(createApp())
+      .get('/health')
+      .set('Origin', DISALLOWED);
+
+    expect(res.headers['access-control-expose-headers']).toBeUndefined();
+  });
+
   it('gives a disallowed Origin no CORS allow headers; the request still runs', async () => {
     const res = await request(createApp())
       .get('/health')
