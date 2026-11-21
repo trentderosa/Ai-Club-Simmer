@@ -108,6 +108,20 @@ export function techniqueVideoTitleMatches(title: string, techniqueName: string)
   return titleSharesMeaningfulWords(title, techniqueName, true) && !hasConflictingDishWords(title, techniqueName, true);
 }
 
+/**
+ * True when a map already saved on a recipe still names each technique.
+ * A video with no title can't be checked without a YouTube call, so it stays.
+ * An off-target title makes this false; the caller looks the recipe up again
+ * and does not clear the stored column.
+ */
+export function storedTechniqueVideosMatch(videos: RecipeVideos): boolean {
+  for (const [name, video] of Object.entries(videos)) {
+    if (video.title === undefined) continue;
+    if (!techniqueVideoTitleMatches(video.title, normalizeTechniqueKey(name))) return false;
+  }
+  return true;
+}
+
 export class VideoFinder {
   private readonly budgetMs: number;
 

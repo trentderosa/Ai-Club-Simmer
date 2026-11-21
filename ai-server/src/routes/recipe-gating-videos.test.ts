@@ -149,6 +149,44 @@ describe('F4 technique videos', () => {
     expect(recipes.getAll()[0].videos).toEqual(res.body.videos);
   });
 
+  it('a stored off-target video is searched again and the saved map is replaced, not cleared', async () => {
+    const { app, recipes, search } = setup();
+    await recipes.save(USER_ID, 2, recipe);
+    await recipes.saveVideos(USER_ID, 2, {
+      'Whisk eggs': { videoId: 'soup0001', title: 'French onion soup recipe' },
+      'Low heat cooking': { videoId: 'heat001' },
+    });
+
+    const res = await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.cached).toBe(true);
+    expect(res.body.videos['Whisk eggs']).toEqual({ videoId: 'whisk01' });
+    expect(JSON.stringify(res.body.videos)).not.toContain('soup0001');
+    expect(recipes.getAll()[0].videos).toEqual({
+      'Whisk eggs': { videoId: 'whisk01' },
+      'Low heat cooking': { videoId: 'heat001' },
+    });
+    expect(search!.search).toHaveBeenCalled();
+  });
+
+  it('keeps a stored on-target video and a title-less video without searching', async () => {
+    const { app, recipes, search } = setup();
+    await recipes.save(USER_ID, 2, recipe);
+    await recipes.saveVideos(USER_ID, 2, {
+      'Whisk eggs': { videoId: 'whisk01', title: 'How to whisk eggs' },
+      'Low heat cooking': { videoId: 'heat001' },
+    });
+
+    const res = await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
+
+    expect(res.body.videos).toEqual({
+      'Whisk eggs': { videoId: 'whisk01', title: 'How to whisk eggs' },
+      'Low heat cooking': { videoId: 'heat001' },
+    });
+    expect(search!.search).not.toHaveBeenCalled();
+  });
+
   it('a cached recipe returns its stored videos without searching again', async () => {
     const { app, search } = setup();
     await request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);

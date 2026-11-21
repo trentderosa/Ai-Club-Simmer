@@ -84,6 +84,8 @@ describe('selectDishVideos', () => {
     expect(dishVideoTitleMatches('Chicken pho recipe', 'pho')).toBe(true);
     // Tightest window: "fried rice" sits on the last two words, not the first "rice".
     expect(dishVideoTitleMatches('Rice cooker hack: Chicken Fried Rice', 'fried rice')).toBe(true);
+    expect(dishVideoTitleMatches('Easy Egg Roll Recipe', 'egg roll')).toBe(true);
+    expect(dishVideoTitleMatches('Rolled Egg Omelette (Tamagoyaki)', 'egg roll')).toBe(false);
     expect(dishVideoTitleMatches('Roasted Chicken (Easy Whole Chicken)', 'roast chicken')).toBe(true);
     expect(dishVideoTitleMatches('Perfect Roast Chicken Recipe', 'roast chicken')).toBe(true);
     expect(dishVideoTitleMatches('Pan Seared Chicken Breast', 'seared chicken breast')).toBe(true);

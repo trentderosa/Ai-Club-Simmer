@@ -3,7 +3,8 @@
  *
  * A title matches when every meaningful word of the dish or technique
  * appears as its own word (plurals count; "pho" does not match "phone").
- * Technique names also accept common verb endings ("dice" / "diced").
+ * Cooking verbs also accept -ed and -ing ("roast" / "roasted", "dice" / "diced").
+ * Other words stay as written, so "roll" does not match "rolled".
  * A different dish is a protein or another dish name between those words,
  * or a known dish phrase that adds a word the query did not ask for
  * ("scrambled eggs fried rice" is not scrambled eggs).
@@ -62,6 +63,18 @@ const DIFFERENT_DISH_PHRASES: readonly (readonly string[])[] = [
   ['grilled', 'cheese'],
   ['fish', 'chips'],
 ];
+
+/**
+ * Query words that may match -ed or -ing in a title. Nouns are not in this
+ * set, so "egg roll" does not match "Rolled Egg Omelette", "corn" does not
+ * match "corned", and "pot" does not match "potted".
+ */
+const COOKING_VERBS = new Set([
+  'bake', 'boil', 'braise', 'broil', 'chop', 'cook', 'cut', 'dice', 'drain',
+  'fry', 'grate', 'grill', 'julienne', 'mash', 'mince', 'peel', 'poach', 'pull',
+  'roast', 'saute', 'sautee', 'scramble', 'sear', 'simmer', 'slice', 'smoke',
+  'steam', 'stir', 'toast', 'whisk',
+]);
 
 const WORD_ALIASES: Readonly<Record<string, readonly string[]>> = {
   mac: ['macaroni'],
@@ -206,7 +219,7 @@ function verbForms(word: string): Set<string> {
 }
 
 function matchesWord(titleWord: string, queryWord: string, inflectVerbs: boolean): boolean {
-  const forms = inflectVerbs ? verbForms(queryWord) : nounForms(queryWord);
+  const forms = inflectVerbs && COOKING_VERBS.has(queryWord) ? verbForms(queryWord) : nounForms(queryWord);
   return forms.has(titleWord);
 }
 

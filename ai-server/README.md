@@ -149,7 +149,9 @@ per normalized dish name (path slots and Cook anything). A follow-up `videos.lis
 keeps embeddable videos about 3–20 minutes long whose titles name that dish and not a
 different one ("fried chicken and rice" is not fried rice), and returns at most 3, highest
 view count first, as `dish_videos`. Title matching uses the tightest window of the dish's
-words, so "Rice cooker hack: Chicken Fried Rice" names fried rice. A rejected search is an
+words, so "Rice cooker hack: Chicken Fried Rice" names fried rice. Only cooking
+verbs take -ed or -ing, so "Roasted Chicken" names roast chicken and "Rolled Egg
+Omelette" does not name egg roll. A rejected search is an
 empty list. Results are cached in `dish_videos` (migration `20261117201646_dish_videos.sql`).
 Cached titles are checked again on read, with no YouTube call. Off-target videos are dropped,
 and when none survive the dish is searched again and the new result replaces the cache row. An empty result is
@@ -158,10 +160,13 @@ short per-dish cooldown, and a quota exhaustion pauses every dish search until m
 Pacific. `dish_videos` is `[]`, and the recipe still returns. Errors never include the
 request URL or the key.
 
-Results are stored in `user_recipes.video_ids` only when the lookup is complete, meaning every
+Results are stored in `user_recipes.video_ids` (Cook anything uses
+`user_generated_recipes.video_ids`) only when the lookup is complete, meaning every
 technique got a video or a genuine "no result". If any search failed, timed out, ran past the
 budget or was skipped by the cap, nothing is stored and the lookup runs again the next time
-the recipe loads. Video problems never fail the recipe. They are logged as
+the recipe loads. A saved map is checked on the next read. A titled video that does not name
+its technique is looked up again, still under the 6-search cap, and the column is replaced
+only when that lookup finishes. A saved video with no title is kept. The column is not cleared. Video problems never fail the recipe. They are logged as
 `video_search_failed`, `video_lookup_budget_exceeded`, `recipe_videos_incomplete`,
 `recipe_videos_save_failed` or `recipe_videos_failed`. The `video_ids` update aborts after
 5000 ms.

@@ -14,6 +14,7 @@ import {
   type DishPhotoSearchClient,
 } from '../services/dish-photo.js';
 import { DishVideoFinder, InMemoryDishVideoCache, type DishVideoSearchClient } from '../services/dish-video-finder.js';
+import { InMemoryTechniqueVideoCache, VideoFinder, type VideoSearchClient } from '../services/video-finder.js';
 import { computeFreeformXp } from '../cook-anything/clamp.js';
 import { FREEFORM_COUNT_BOUNDS } from '../cook-anything/constants.js';
 import { GenerationRateLimiter, type CookAnythingGenerationLimiter } from '../cook-anything/rate-limit.js';
@@ -91,6 +92,7 @@ function createApp(
   options?: {
     generationRateLimit?: { windowMs: number; maxGenerations: number };
     generationLimiter?: CookAnythingGenerationLimiter;
+    videoFinder?: VideoFinder | null;
   },
   photoFinder?: DishPhotoFinder | null,
   dishVideoFinder?: DishVideoFinder | null
@@ -100,7 +102,14 @@ function createApp(
   app.use(
     '/api/recipes',
     createCookAnythingRouter(
-      { ollamaClient: ollama, supabase, generatedRecipes: repo, photoFinder, dishVideoFinder },
+      {
+        ollamaClient: ollama,
+        supabase,
+        generatedRecipes: repo,
+        photoFinder,
+        dishVideoFinder,
+        videoFinder: options?.videoFinder,
+      },
       { rateLimit: { windowMs: 60_000, maxRequests: 100 }, ...options }
     )
   );
@@ -190,6 +199,38 @@ describe('POST /api/recipes/cook-anything', () => {
     expect(saved?.stepCount).toBe(maxCounts.steps);
     expect(saved?.ingredientCount).toBe(maxCounts.ingredients);
     expect(saved?.timeEstimateMinutes).toBe(maxCounts.minutes);
+  });
+
+  it('searches again when a stored technique video is off-target, and does not clear the column', async () => {
+    const repo = new InMemoryGeneratedRecipeRepository();
+    const { app: seedApp } = createApp(mockOllama(validRecipe), mockSupabase(), repo);
+    const seeded = await request(seedApp)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'Pad Thai' });
+    expect(seeded.status).toBe(200);
+    await repo.saveVideos(userId, seeded.body.generated_recipe_id as string, {
+      'Scramble eggs': { videoId: 'soup0001', title: 'French onion soup recipe' },
+    });
+    const search: VideoSearchClient = {
+      search: vi.fn().mockResolvedValue({ videoId: 'scram01', title: 'How to scramble eggs' }),
+    };
+    const videoFinder = new VideoFinder(new InMemoryTechniqueVideoCache(), search, { warn: vi.fn() });
+    const { app } = createApp(mockOllama(validRecipe), mockSupabase(), repo, { videoFinder });
+
+    const res = await request(app)
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer token')
+      .send({ dish: 'pad thai' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.cached).toBe(true);
+    expect(res.body.videos['Scramble eggs'].videoId).toBe('scram01');
+    expect(JSON.stringify(res.body.videos)).not.toContain('soup0001');
+    const saved = await repo.findByUserAndNormalizedName(userId, 'pad thai');
+    expect(saved?.videos?.['Scramble eggs']?.videoId).toBe('scram01');
+    expect(saved?.videos).not.toBeNull();
+    expect(search.search).toHaveBeenCalledTimes(1);
   });
 
   it('reuses the cached recipe for the same normalized dish and does not call Ollama again', async () => {
