@@ -63,7 +63,8 @@ export function createRecipePrewarmer(deps: RecipePrewarmerDeps): RecipePrewarme
     } catch (error) {
       logger.warn('recipe_prewarm_failed', {
         checked_in_slot_id: checkedInSlotId,
-        error: error instanceof Error ? `${error.name}: ${error.message}` : 'unknown error',
+        // Name only: messages can echo request values such as user ids.
+        error: error instanceof Error ? error.name : 'unknown error',
       });
     }
   }

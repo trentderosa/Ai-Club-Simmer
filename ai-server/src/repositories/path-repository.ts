@@ -141,7 +141,9 @@ export class SupabasePathRepository implements PathRepository {
     const { slot_order } = OrderRowSchema.parse(current[0]);
     const rows = await this.rest.select<unknown>('path_slots', {
       select: 'id,dish_name,technique_focus,is_final',
-      slot_order: `eq.${slot_order + 1}`,
+      slot_order: `gt.${slot_order}`,
+      order: 'slot_order.asc',
+      limit: '1',
     });
     if (rows.length === 0) return null;
     const row = SlotRowSchema.parse(rows[0]);

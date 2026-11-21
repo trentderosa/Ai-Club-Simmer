@@ -61,10 +61,11 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
     userId: string,
     slot: PathSlot,
     userProfile: UserProfile,
-    generationOptions: PathGenerationOptions
+    generationOptions: PathGenerationOptions,
+    budget: OllamaBudget | undefined = deps.generationBudget
   ): Promise<PathGenerationResult | PathGenerationError> {
     const result = await generateRecipe(deps.ollamaClient, slot, userProfile, {
-      budget: deps.generationBudget,
+      budget,
       ...generationOptions,
     });
 
@@ -122,19 +123,47 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
     generationOptions: PathGenerationOptions = {}
   ): Promise<PathGenerationResult | PathGenerationError> {
     const key = `${userId}:${slot.id}`;
+    const startedAt = (deps.generationBudget?.now ?? Date.now)();
 
     const inFlight = inFlightGenerations.get(key);
     if (inFlight) {
-      return inFlight;
+      const shared = await inFlight;
+      // A prewarm that was cancelled for a real request must not strand a
+      // joiner: the joiner runs its own foreground generation with whatever
+      // is left of its budget. A background caller just stops.
+      if (shared.success || shared.error.type !== 'preempted' || generationOptions.immediateOnly) {
+        return shared;
+      }
+      if (inFlightGenerations.get(key) === inFlight) inFlightGenerations.delete(key);
+      const budget = deps.generationBudget && {
+        ...deps.generationBudget,
+        budgetMs: deps.generationBudget.budgetMs - ((deps.generationBudget.now ?? Date.now)() - startedAt),
+      };
+      return run(userId, slot, userProfile, generationOptions, budget);
     }
 
-    const generationPromise = generateAndSave(userId, slot, userProfile, generationOptions);
+    return run(userId, slot, userProfile, generationOptions, deps.generationBudget);
+  }
+
+  async function run(
+    userId: string,
+    slot: PathSlot,
+    userProfile: UserProfile,
+    generationOptions: PathGenerationOptions,
+    budget: OllamaBudget | undefined
+  ): Promise<PathGenerationResult | PathGenerationError> {
+    const key = `${userId}:${slot.id}`;
+    // Another joiner may already have started the replacement generation.
+    const existing = inFlightGenerations.get(key);
+    if (existing) return existing;
+
+    const generationPromise = generateAndSave(userId, slot, userProfile, generationOptions, budget);
     inFlightGenerations.set(key, generationPromise);
 
     try {
       return await generationPromise;
     } finally {
-      inFlightGenerations.delete(key);
+      if (inFlightGenerations.get(key) === generationPromise) inFlightGenerations.delete(key);
     }
   }
 

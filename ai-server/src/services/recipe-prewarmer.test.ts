@@ -86,8 +86,9 @@ describe('RecipePrewarmer', () => {
     await expect(createRecipePrewarmer(deps).prewarm(USER, 21)).resolves.toBeUndefined();
     expect(logger.warn).toHaveBeenCalledWith(
       'recipe_prewarm_failed',
-      expect.objectContaining({ error: 'Error: db down' })
+      expect.objectContaining({ error: 'Error' })
     );
+    expect(JSON.stringify(logger.warn.mock.calls)).not.toContain('db down');
   });
 
   it('logs a failed generation result', async () => {

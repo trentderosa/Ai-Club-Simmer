@@ -83,7 +83,7 @@ describe('CheckInService recipe prewarm', () => {
     const throwing = { prewarm: vi.fn().mockImplementation(() => { throw new Error('sync'); }) };
     logger.error.mockClear();
     await expect(service(throwing).processCheckIn(userId, input)).resolves.toMatchObject({ coach_note: 'Nice.' });
-    await vi.waitFor(() => expect(logger.error).toHaveBeenCalledWith('recipe_prewarm_failed', { slot_id: 1, error: 'Error: sync' }));
+    await vi.waitFor(() => expect(logger.error).toHaveBeenCalledWith('recipe_prewarm_failed', { slot_id: 1, error: 'Error' }));
   });
 
   it('works with no prewarmer (disabled)', async () => {

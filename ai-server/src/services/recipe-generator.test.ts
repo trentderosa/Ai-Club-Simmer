@@ -1286,7 +1286,7 @@ describe('generateRecipe - shouldRetry and immediateOnly', () => {
     await vi.runAllTimersAsync();
     await pending;
     expect(client.generate).toHaveBeenCalledTimes(3);
-    for (const call of client.generate.mock.calls) expect(call[2]).toEqual({ queueTimeoutMs: 0 });
+    for (const call of client.generate.mock.calls) expect(call[2]).toEqual({ queueTimeoutMs: 0, background: true });
   });
 
   it('returns busy without retrying when an immediateOnly call is refused', async () => {

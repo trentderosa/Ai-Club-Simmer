@@ -63,7 +63,20 @@ describe('SupabasePathRepository', () => {
       const slot = await repo.getNextPathSlot(37);
       expect(slot).toEqual({ id: 41, dishName: 'Pasta', techniqueFocus: 'Boiling', isFinal: false });
       expect(calledUrl(0).searchParams.get('id')).toBe('eq.37');
-      expect(calledUrl(1).searchParams.get('slot_order')).toBe('eq.5');
+      expect(calledUrl(1).searchParams.get('slot_order')).toBe('gt.4');
+      expect(calledUrl(1).searchParams.get('order')).toBe('slot_order.asc');
+      expect(calledUrl(1).searchParams.get('limit')).toBe('1');
+    });
+
+    it('skips a gap in slot_order (3 to 5) by taking the next higher slot', async () => {
+      mockFetch
+        .mockResolvedValueOnce(ok([{ slot_order: 3 }]))
+        .mockResolvedValueOnce(
+          ok([{ id: 55, dish_name: 'Soup', technique_focus: 'Simmering', is_final: false }])
+        );
+      const slot = await repo.getNextPathSlot(33);
+      expect(slot?.id).toBe(55);
+      expect(calledUrl(1).searchParams.get('slot_order')).toBe('gt.3');
     });
 
     it('returns null after the last slot or for an unknown slot', async () => {

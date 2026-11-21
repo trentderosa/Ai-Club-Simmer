@@ -4,7 +4,7 @@ import { UserProfile } from '../schemas/user.js';
 import type { OllamaClient } from './ollama-client.js';
 import { countedHiddenStepCount, MASTERY_MIN_HIDDEN_STEPS, MASTERY_MIN_STEPS } from '../mastery/mask.js';
 import { logGenerationFailure } from './generation-failure.js';
-import { OllamaBusyError } from './ollama-gate.js';
+import { OllamaBusyError, OllamaPreemptedError } from './ollama-gate.js';
 import { startDeadline, type OllamaBudget } from './ollama-budget.js';
 
 export interface RecipeGenerationResult {
@@ -15,8 +15,11 @@ export interface RecipeGenerationResult {
 export interface RecipeGenerationError {
   success: false;
   error: {
-    /** busy: the shared model queue refused the call. Never retried. */
-    type: 'validation_failed' | 'generation_failed' | 'busy';
+    /**
+     * busy: the shared model queue refused the call. Never retried.
+     * preempted: a background call was cancelled for a real request. Never retried.
+     */
+    type: 'validation_failed' | 'generation_failed' | 'busy' | 'preempted';
     message: string;
     attempts: number;
   };
@@ -676,13 +679,18 @@ export async function generateRecipe(
       }
     }
     if (options.immediateOnly) queueTimeoutMs = 0;
+    // Never-queueing calls are background work: a real request may cancel them.
+    const callOptions = options.immediateOnly
+      ? { queueTimeoutMs, background: true }
+      : queueTimeoutMs === undefined
+        ? undefined
+        : { queueTimeoutMs };
 
     try {
       // Call Ollama with structured JSON output format
-      const responseText =
-        queueTimeoutMs === undefined
-          ? await client.generate(prompt, jsonSchema)
-          : await client.generate(prompt, jsonSchema, { queueTimeoutMs });
+      const responseText = callOptions
+        ? await client.generate(prompt, jsonSchema, callOptions)
+        : await client.generate(prompt, jsonSchema);
 
       // Step 1: Parse as JSON. LLMs sometimes output malformed JSON despite schema.
       let parsed: unknown;
@@ -760,6 +768,13 @@ export async function generateRecipe(
       // Intentional fail-safe: this also discards an earlier flagged rinse
       // fallback (lastUnsafeRecipe). A busy answer is never turned into a
       // recipe that may tell the cook to rinse raw meat.
+      // A preempted background call is dropped for the same reason: never retried.
+      if (error instanceof OllamaPreemptedError) {
+        return {
+          success: false,
+          error: { type: 'preempted', message: 'Preempted by a real request', attempts: attempt },
+        };
+      }
       if (error instanceof OllamaBusyError) {
         return {
           success: false,

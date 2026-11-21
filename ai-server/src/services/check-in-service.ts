@@ -133,7 +133,8 @@ export class CheckInService {
       .catch((error: unknown) => {
         this.logger.error('recipe_prewarm_failed', {
           slot_id: slotId,
-          error: error instanceof Error ? `${error.name}: ${error.message}` : 'unknown error',
+          // Name only: messages can echo request values such as user ids.
+          error: error instanceof Error ? error.name : 'unknown error',
         });
       });
   }
