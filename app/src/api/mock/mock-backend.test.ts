@@ -358,6 +358,24 @@ describe('mock mastery account and check-in payload', () => {
     expect(next.session_id).not.toBe(session.session_id);
   });
 
+  it('requests a password reset without a session and without sending mail', async () => {
+    const b = createMockBackend({ latency: 0 });
+    await b.requestPasswordReset('person@simmer.test');
+    expect(await b.getSession()).toBeNull();
+    expect(b.passwordRecoveryPending()).toBe(false);
+    await expect(b.requestPasswordReset('not-an-email')).rejects.toMatchObject({ kind: 'validation' });
+    await expect(b.requestPasswordReset('a@b')).rejects.toMatchObject({ kind: 'validation' });
+    await expect(b.updatePassword('secret1')).rejects.toMatchObject({ kind: 'unauthorized' });
+  });
+
+  it('lets a signed-in practice user set a password without changing who is signed in', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    const before = (await b.getSession())?.userId;
+    await b.updatePassword('secret1');
+    expect((await b.getSession())?.userId).toBe(before);
+    await expect(b.updatePassword('short')).rejects.toMatchObject({ kind: 'validation' });
+  });
+
   it('rejects a mastery session on a non-final slot', async () => {
     const b = createMockBackend({ latency: 0, startSignedIn: true });
     await b.generateRecipe(4, 't');

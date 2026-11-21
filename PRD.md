@@ -2,7 +2,7 @@
 
 *Learn to cook, one dish at a time.*
 JMU AI Club · Fall 2026 · Team: Trent DeRosa, Ezzeldin Mallek, Nathan Biru, Ian Bullette, Matthew Munoz
-Status: **Draft** · Last updated: 2026-11-20 · Target demo: ~early January 2027 (2 months)
+Status: **Draft** · Last updated: 2026-11-21 · Target demo: ~early January 2027 (2 months)
 
 ---
 
@@ -37,12 +37,15 @@ New users create an account and answer a short onboarding form: cooking goals, e
 
 **Acceptance criteria**
 - [ ] A user can sign up, log in, and log out using Supabase Auth (email + password).
+- [ ] A signed-out user can request a password-reset email and, from that link, set a new password in the app.
 - [ ] After first sign-up, the user is taken through onboarding before seeing the rest of the app.
 - [ ] Onboarding collects: goals, experience level (e.g., never cooked / a little / comfortable), equipment (multi-select checklist), budget (low / medium / high), and schedule (days per week and minutes per session).
 - [ ] Answers are saved to the user's profile in Supabase and can be edited later from a settings or profile screen.
 - [ ] A returning user who has finished onboarding goes straight to their plan.
 
 *Client (`app/`, UI Direction A):* sign up and sign in are on one screen (email + password). The first name is saved in auth `user_metadata.first_name` for the greeting and the profile, since `profiles` has no name column. Onboarding is steps 2–4 of 4 (about you, your kitchen, your week) and upserts the user's own `profiles` row with `onboarding_completed: true`. The diet question from the mockups is left out because there's no column for it. Users with `onboarding_completed` not `true` are routed to onboarding; everyone else goes straight to Today. The profile shows those answers and can edit them with the same steps and columns. Sign-out is on the profile.
+
+*Password reset (`app/`, UI Direction A):* From sign-in, Forgot your password asks for an email and calls `supabase.auth.resetPasswordForEmail`. The redirect is the current web origin plus the Expo base path (GitHub Pages `/Ai-Club-Simmer`, or the local origin) and `/reset-password`, the same allow-list as the other auth redirects. The recovery session opens a set-new-password screen (`updateUser`) before Today or onboarding. Full mock mode shows the same confirmation, says it is practice mode, and does not call Supabase or send email. If the auth service has already sent its hourly email limit, the request says to try again in an hour. There is no account deletion.
 
 ### F2. Personalized plan (one fixed path)
 Every user gets the same path, **"Weeknight basics"**: 10 dish slots in a fixed order (e.g., knife basics, eggs, pasta, stir-fry, …, roast chicken as the final mastery challenge). Personalization comes from how the recipes are written for the user (F3) and from a suggested cooking schedule.
