@@ -333,46 +333,101 @@ export function hasAffirmativeProteinRinse(instruction: string): boolean {
   });
 }
 
-// Coach notes also reject these red-meat names. Fish and shrimp stay out.
-const COACH_NOTE_PROTEIN_RE =
-  /\b(?:chickens?|poultry|meats?|birds?|turkeys?|ducks?|hens?|thighs?|pork|beef|lamb|steaks?|chops?)\b/i;
-// A later "then" or "after" is a new clause, so the rinse object stops there.
-const RINSE_CLAUSE_BOUNDARY_SOURCE = String.raw`[,:]|\b(?:then|after|before|once|when|while)\b`;
+// "chops" is the cut. The verb "chop" is not. Fish and shrimp stay out.
+const COACH_NOTE_PROTEIN_SOURCE =
+  String.raw`chickens?|poultry|meats?|birds?|turkeys?|ducks?|hens?|thighs?|pork|beef|lamb|steaks?|(?:pork|lamb)\s+chops?|chops`;
+const COACH_NOTE_PROTEIN_RE = new RegExp(String.raw`\b(?:${COACH_NOTE_PROTEIN_SOURCE})\b`, 'i');
+const COACH_NOTE_NEGATION_RE =
+  /\b(?:do not|don['’]?t|dont|never|avoid|no need to|skip|instead of|without|stop)\b/i;
+const COACH_KEPT_OBJECT_RE =
+  /\b(?:hands?|fingers?|cutting\s+boards?|boards?|knives|knife|counters?|countertops?|surfaces?|surface|sinks?|utensils?|thermometers?)\b/i;
+const COACH_SAFE_FOOD_RE =
+  /\b(?:rice|beans?|lentils?|grains?|quinoa|farro|barley|vegetables?|lettuce|greens?|herbs?|fruit|berries|pasta|noodles?|fish|shrimp|parsley)\b/i;
+// The rinse object stops at a new clause, so "because raw chicken" is not the object.
+const RINSE_CLAUSE_BOUNDARY_SOURCE =
+  String.raw`[,:;]|\b(?:then|after|before|once|when|while|because|since|so)\b`;
 
-function rinseClause(sentence: string, verbStart: number, verbEnd: number): string {
+function clauseEdge(sentence: string, verbStart: number, verbEnd: number): { before: string; after: string } {
   const boundary = new RegExp(RINSE_CLAUSE_BOUNDARY_SOURCE, 'gi');
   let start = 0;
   let end = sentence.length;
   let match: RegExpExecArray | null;
   while ((match = boundary.exec(sentence)) !== null) {
     const matchEnd = match.index + match[0].length;
-    if (matchEnd <= verbStart) {
-      start = matchEnd;
-    } else if (match.index >= verbEnd) {
+    if (matchEnd <= verbStart) start = matchEnd;
+    else if (match.index >= verbEnd) {
       end = match.index;
       break;
     }
   }
-  return sentence.slice(start, end);
+  return { before: sentence.slice(start, verbStart), after: sentence.slice(verbEnd, end) };
+}
+
+function coachRinseIsNegated(sentence: string, verbStart: number): boolean {
+  const before = sentence.slice(0, verbStart);
+  const clauseStart = Math.max(before.lastIndexOf(','), before.lastIndexOf(':'), before.lastIndexOf(';'));
+  return COACH_NOTE_NEGATION_RE.test(before.slice(clauseStart + 1));
+}
+
+/** "rinsing raw chicken spreads" is a warning, not an instruction to rinse. */
+function isGerundWarning(verb: string, after: string): boolean {
+  if (!/ing$/i.test(verb)) return false;
+  const warning = new RegExp(
+    String.raw`^\s+(?:(?:the|a|an|your|raw)\s+)*(?:${COACH_NOTE_PROTEIN_SOURCE})\b(?:\s+\w+){0,4}?\s+(?:spreads|splashes|is|can)\b`,
+    'i'
+  );
+  return warning.test(after);
+}
+
+function rinseObjectPhrases(before: string, after: string): string[] {
+  const given = before.match(/\bgive\s+(.+?)\s+an?\s+$/i);
+  if (given) return [given[1]];
+  const rest = after.trim();
+  const lead = rest.match(/^and\s+(?:chop|slice|dice|mince)\s+(.+)$/i);
+  if (lead) return [lead[1]];
+  if (!rest) return [];
+  const phrases: string[] = [];
+  for (const part of rest.split(/\band\b/i)) {
+    const phrase = part.trim();
+    if (!phrase) continue;
+    if (/^(?:pat|sear|cook|dry|heat|roast|slice|chop|dice|mince|drain|rest)\b/i.test(phrase)) break;
+    phrases.push(phrase);
+  }
+  return phrases;
+}
+
+function classifyRinseObject(phrase: string): 'safe' | 'danger' | 'fallback' {
+  const core = phrase.split(/\b(?:under|in|with|into|over|from|for|on|well|thoroughly)\b/i)[0]?.trim() ?? '';
+  if (!core) return 'fallback';
+  const text = core.replace(/\bmeat\s+(?=thermometers?\b)/gi, '');
+  const dangerous = COACH_NOTE_PROTEIN_RE.test(text);
+  const kept = COACH_KEPT_OBJECT_RE.test(text);
+  if (dangerous) return 'danger';
+  if (kept) return 'safe';
+  if (COACH_SAFE_FOOD_RE.test(text)) return 'safe';
+  return 'fallback';
 }
 
 /**
- * Check-in coach note only. A rinse or wash counts when its own clause names
- * chicken, poultry, meat, bird, pork, beef, lamb, steak, or chops.
- * Hands, a board, a surface, or a utensil in that clause do not count, and
- * neither do rice, fish, or shrimp. "Rinse the rice, then sear the chicken"
- * stays because the rinse object is the rice.
+ * Check-in coach note only. The direct object of rinse or wash decides.
+ * Hands, a board, a surface, a counter, a sink, a knife, a utensil, or a
+ * thermometer stays. Rice, fish, shrimp, and a warning ("no need to rinse",
+ * "rinsing spreads") stay. A pronoun, or an object that names no food, falls
+ * back to the whole sentence, so "rinse it" still counts when that sentence
+ * names chicken or other raw meat. Recipe steps keep the sentence check.
  */
 export function coachNoteTextRinsesRawProtein(text: string): boolean {
   return sentencesOf(text).some((sentence) => {
     const re = new RegExp(RINSE_OR_WASH_SOURCE, 'gi');
     let match: RegExpExecArray | null;
     while ((match = re.exec(sentence)) !== null) {
-      const before = sentence.slice(0, match.index);
-      const clauseStart = Math.max(before.lastIndexOf(','), before.lastIndexOf(':'));
-      if (NEGATION_RE.test(before.slice(clauseStart + 1))) continue;
-      const clause = rinseClause(sentence, match.index, match.index + match[0].length);
-      if (COACH_NOTE_PROTEIN_RE.test(clause)) return true;
+      if (coachRinseIsNegated(sentence, match.index)) continue;
+      const edge = clauseEdge(sentence, match.index, match.index + match[0].length);
+      if (isGerundWarning(match[0], edge.after)) continue;
+      const phrases = rinseObjectPhrases(edge.before, edge.after);
+      if (phrases.some((phrase) => classifyRinseObject(phrase) === 'danger')) return true;
+      if (phrases.length > 0 && phrases.every((phrase) => classifyRinseObject(phrase) === 'safe')) continue;
+      if (COACH_NOTE_PROTEIN_RE.test(sentence.replace(/\bmeat\s+(?=thermometers?\b)/gi, ''))) return true;
     }
     return false;
   });

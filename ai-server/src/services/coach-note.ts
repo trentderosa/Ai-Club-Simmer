@@ -121,8 +121,9 @@ export interface CoachNoteGenerator {
 /**
  * True when the note or its focus line tells the cook to rinse or wash
  * raw chicken, poultry, meat, pork, beef, lamb, steak, or chops.
- * A rinse whose object is hands, a board, a surface, a utensil, rice,
- * fish, or shrimp does not count.
+ * A rinse whose object is hands, a board, a surface, a knife, a utensil,
+ * a thermometer, rice, fish, or shrimp does not count, and neither does a
+ * warning not to rinse. "Rinse it" still counts when the sentence names the protein.
  */
 export function coachNoteRinsesRawProtein(note: CoachNote): boolean {
   if (coachNoteTextRinsesRawProtein(note.note)) return true;

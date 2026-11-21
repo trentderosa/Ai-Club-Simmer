@@ -263,6 +263,13 @@ describe('coach note raw-protein rinse', () => {
     'Give the steak a rinse',
     'Rinse the rice and the chicken',
     'Wash your hands, then rinse the chicken',
+    'Rinse the chicken.',
+    'Before you sear the chicken, rinse it under cold water.',
+    'After thawing the chicken, rinse it and pat it dry.',
+    'Once the chicken thaws, wash it well.',
+    'When you unwrap the chicken, give it a rinse.',
+    'Rinse the pork chop',
+    'Rinse the lamb chops',
   ])('rejects %s', (text) => {
     expect(coachNoteRinsesRawProtein(note(text))).toBe(true);
   });
@@ -285,6 +292,15 @@ describe('coach note raw-protein rinse', () => {
     'Rinse the fish, then sear the chicken.',
     'The chicken is raw. Do not rinse the rice.',
     'Nice work on the timing.',
+    'Wash your hands because raw chicken carries bacteria.',
+    'Wash your hands and the board since they touched raw chicken.',
+    'Remember, rinsing raw chicken spreads bacteria, so pat it dry.',
+    'No need to rinse the chicken; just pat it dry.',
+    'Skip rinsing the chicken and pat it dry instead.',
+    'Instead of rinsing the chicken, pat it dry.',
+    'Rinse and chop the parsley',
+    'Wash and chop the lettuce',
+    'Wash the meat thermometer',
   ])('keeps %s', (text) => {
     expect(coachNoteRinsesRawProtein(note(text))).toBe(false);
   });

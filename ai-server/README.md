@@ -37,8 +37,9 @@ check-in: `getPathSlot` for a path slot, or a `user_generated_recipes` read scop
 user_id for Cook anything; a failed lookup is logged and the note is written without it).
 A note that tells the cook to rinse or wash raw chicken, poultry, meat, pork, beef, lamb,
 steak, or chops is rejected and retried within the same attempts; if every attempt still
-says so, the note is rewritten to pat it dry with paper towels. Washing hands, a board, a
-surface, or a utensil stays, and so does rinsing rice, fish, or shrimp. The Ollama timeout
+says so, the note is rewritten to pat it dry with paper towels. Washing hands, a board, a surface, a knife, a utensil, or a thermometer stays, and so does
+rinsing rice, fish, or shrimp, or a warning not to rinse. Rinsing "it" still counts when
+that sentence names the protein. The Ollama timeout
 and the attempt limit are unchanged.
 A JSON parse failure is logged and returned only as `invalid_json`, because the parser's
 error text quotes the model's output.
