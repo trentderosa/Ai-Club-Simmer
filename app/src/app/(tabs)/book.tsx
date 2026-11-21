@@ -150,7 +150,7 @@ function BookBody({
   onOpen: (entry: RecipeBookEntry) => void;
   onClear: () => void;
 }) {
-  const photos = useDishPhotos(visible.map((entry) => entry.dish_name));
+  const { photos } = useDishPhotos(visible.map((entry) => entry.dish_name));
   if (book.length === 0) {
     return <EmptyState title="Your book is empty" body={EMPTY_BOOK_COPY} />;
   }

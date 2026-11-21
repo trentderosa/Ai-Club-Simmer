@@ -12,9 +12,10 @@ export type ApiErrorKind =
   | 'invalid_recipe' // 400 INVALID_RECIPE
   | 'validation' // 400 VALIDATION_ERROR / other 400s
   | 'mastery_session_used' // 409 MASTERY_SESSION_USED: that cook is already checked in
-  | 'unavailable' // 503 auth service down (not GENERATION_RATE_LIMIT_UNAVAILABLE)
-  | 'server' // other 5xx
-  | 'network' // fetch failed or timed out
+  | 'unavailable' // 503: auth service down, or the AI server cannot take the request
+  | 'server' // other 5xx, including GENERATION_RATE_LIMIT_UNAVAILABLE
+  | 'timeout' // the AI server did not answer before the client gave up
+  | 'network' // fetch failed: the AI server was unreachable
   | 'bad_response' // response didn't match the contract
   | 'config'; // missing env vars
 

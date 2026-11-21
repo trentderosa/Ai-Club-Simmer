@@ -155,13 +155,12 @@ describe('ai-server timeouts', () => {
     expect(CHECK_IN_TIMEOUT_MS).toBeGreaterThanOrEqual(3 * 60_000);
   });
 
-  it('turns an aborted fetch into a network timeout error', async () => {
+  it('turns a failed fetch that is not our abort into an unreachable error', async () => {
     const client = createAiServerClient(
       'http://x',
       (async (_url: string, init?: RequestInit) => {
         const err = new Error('aborted');
         err.name = 'AbortError';
-        // If a signal is provided, mark the same abort path the real client uses.
         if (init?.signal?.aborted) throw err;
         throw err;
       }) as unknown as typeof fetch,
@@ -169,5 +168,40 @@ describe('ai-server timeouts', () => {
     const e = await client.generateRecipe(1, 't').catch((err: unknown) => err);
     expect(e).toBeInstanceOf(ApiError);
     expect((e as ApiError).kind).toBe('network');
+  });
+
+  it('turns our own abort into a timeout error', async () => {
+    jest.useFakeTimers();
+    try {
+      const client = createAiServerClient(
+        'http://x',
+        ((_url: string, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            const signal = init?.signal;
+            if (!signal) {
+              reject(new Error('missing signal'));
+              return;
+            }
+            signal.addEventListener('abort', () => {
+              const err = new Error('The operation was aborted');
+              err.name = 'AbortError';
+              reject(err);
+            });
+          })) as unknown as typeof fetch,
+      );
+      const pending = client.dishPhotos(['eggs'], 't').then(
+        () => {
+          throw new Error('expected a timeout');
+        },
+        (err: unknown) => err,
+      );
+      await jest.advanceTimersByTimeAsync(8_000);
+      const e = await pending;
+      expect(e).toBeInstanceOf(ApiError);
+      expect((e as ApiError).kind).toBe('timeout');
+      expect((e as ApiError).message).toBe('The AI server took too long to answer.');
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

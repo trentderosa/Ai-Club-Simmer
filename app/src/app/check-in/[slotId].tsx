@@ -128,7 +128,7 @@ function CheckInForm({ slot, onBack, onDone }: { slot: PlanSlot; onBack: () => v
         void signOut();
         return;
       }
-      if (isApiError(e) && e.kind === 'network') {
+      if (isApiError(e) && (e.kind === 'network' || e.kind === 'timeout')) {
         const recovered = await recoverIfLanded(idempotencyKey, rating, summaryBefore);
         if (recovered) return;
       }
