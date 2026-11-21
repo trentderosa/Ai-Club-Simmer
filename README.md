@@ -135,7 +135,7 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `OLLAMA_MODEL` | Model name (default `llama3.2`) |
 | `OLLAMA_MAX_TOKENS` | Max generation tokens (default `1500`) |
 | `OLLAMA_TIMEOUT_MS` | Ollama timeout in ms (default `60000`) |
-| `PORT` | AI server port (default `3001`) |
+| `PORT` | AI server port (default `3001`). If it is already in use the server prints one `Server error: port ... is already in use (EADDRINUSE)` line and exits 1. |
 | `HOST` | Bind address (default `127.0.0.1`) |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the AI server (Expo web). Default: `http://localhost:8081`, `http://127.0.0.1:8081`, `http://localhost:19006`, `http://127.0.0.1:19006`. Never `*`. |
 | `RATE_LIMIT_WINDOW_MS` | Rate-limit window (default `60000`) |

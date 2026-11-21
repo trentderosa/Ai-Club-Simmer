@@ -60,6 +60,7 @@ import {
 } from './cook-anything/rate-limit.js';
 import { SupabaseGenerationRateLimiter } from './cook-anything/supabase-rate-limit.js';
 import { mountHealthRoutes } from './health.js';
+import { boundPort, handleListenError } from './listen-errors.js';
 import { startReconcileScheduler } from './jobs/reconcile-scheduler.js';
 import type { GeneratedRecipeRepository } from './repositories/generated-recipe-repository.js';
 
@@ -378,8 +379,8 @@ mountHealthRoutes(app, {
 // Retry failed XP awards on a timer (same job as npm run reconcile:xp).
 const reconcileScheduler = startReconcileScheduler(process.env, { stubAuth: isStubAuthAllowed() });
 
-app.listen(config.port, config.host, () => {
-  console.info(`Simmer AI Server running on http://${config.host}:${config.port}`);
+const server = app.listen(config.port, config.host, () => {
+  console.info(`Simmer AI Server running on http://${config.host}:${boundPort(server, config.port)}`);
   console.info(`Ollama endpoint: ${config.ollama.baseUrl}`);
   console.info(`Model: ${config.ollama.model}`);
   console.info(`Preview route: ${config.enablePreviewRoute ? 'ENABLED' : 'disabled'}`);
@@ -408,3 +409,4 @@ app.listen(config.port, config.host, () => {
   );
   console.info(`CORS origins: ${config.allowedOrigins.join(', ')}`);
 });
+server.on('error', (err) => handleListenError(err, config.host, config.port));
