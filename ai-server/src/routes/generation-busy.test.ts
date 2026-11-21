@@ -157,6 +157,24 @@ describe('GENERATION_BUSY', () => {
     expect(client.generate).not.toHaveBeenCalled();
   });
 
+  it('POST /cook-anything refuses without calling the model when the queue fills during allow()', async () => {
+    let saturated = false;
+    const client = Object.assign(busyClient(), { isSaturated: () => saturated });
+    const allow = vi.fn().mockImplementation(() => {
+      saturated = true;
+      return Promise.resolve(true);
+    });
+    const res = await request(cookApp(client, { allow }))
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer t')
+      .send({ dish: 'Pad Thai' });
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual(BUSY_BODY);
+    expect(res.headers['retry-after']).toBe('30');
+    expect(allow).toHaveBeenCalledTimes(1);
+    expect(client.generate).not.toHaveBeenCalled();
+  });
+
   it('POST /cook-anything joined requests get the same busy result', async () => {
     const client = Object.assign(busyClient(), { isSaturated: () => false });
     let release: () => void = () => undefined;
