@@ -352,7 +352,7 @@ const COACH_NOTE_PROTEIN_SOURCE =
   String.raw`chickens?|poultry|meats?|birds?|turkeys?|ducks?|hens?|thighs?|drumsticks?|wings?|breasts?|bacons?|sausages?|pork|beef|lamb|steaks?|(?:pork|lamb)\s+chops?|chops`;
 const COACH_NOTE_PROTEIN_RE = new RegExp(String.raw`\b(?:${COACH_NOTE_PROTEIN_SOURCE})\b`, 'i');
 const COACH_NOTE_NEGATION_SOURCE =
-  String.raw`do not|don['’]?t|dont|never|avoid|no need to|skip|instead of|without|stop`;
+  String.raw`do not|don['’]?t|dont|never|avoid|no need to|skip|instead of|without|stop|rather than|not necessary to`;
 const COACH_KEPT_OBJECT_RE =
   /\b(?:hands?|fingers?|cutting\s+boards?|boards?|knives|knife|counters?|countertops?|surfaces?|surface|sinks?|utensils?|thermometers?)\b/i;
 const COACH_SAFE_FOOD_RE =
@@ -378,21 +378,24 @@ function clauseEdge(sentence: string, verbStart: number, verbEnd: number): { bef
 }
 
 /**
- * A negation counts only in the same "and" clause, and only when it sits
- * directly before the rinse verb. "Skip the salt and rinse" is still a rinse.
- * "Don't forget" and "never skip" are instructions to rinse, not negations.
+ * A negation counts only in the same "and" clause, directly before the verb.
+ * "ever", "really", "need to", "have to", or "bother to" may sit in between,
+ * and a second rinse or wash joined by "or" keeps the first verb's negation.
+ * "Skip the salt and rinse" is still a rinse. "Don't forget" and "never skip"
+ * are instructions to rinse, not negations.
  */
 function coachRinseIsNegated(sentence: string, verbStart: number): boolean {
   const before = sentence.slice(0, verbStart);
   const clauseStart = Math.max(before.lastIndexOf(','), before.lastIndexOf(':'), before.lastIndexOf(';'));
   const clause = before.slice(clauseStart + 1);
   const segments = clause.split(/\band\b/i);
-  const immediate = (segments[segments.length - 1] ?? '').replace(
+  let immediate = (segments[segments.length - 1] ?? '').replace(
     /\b(?:don['’]?t|dont|never)\s+(?:forget|skip)\b/gi,
     ' '
   );
+  immediate = immediate.replace(/\b(?:rins\w*|wash\w*)\s+or\s+$/i, ' ');
   const direct = new RegExp(
-    String.raw`\b(?:${COACH_NOTE_NEGATION_SOURCE})\b(?:\s+(?:a|an|the|your|raw)\b)*\s*$`,
+    String.raw`\b(?:(?:${COACH_NOTE_NEGATION_SOURCE})|(?:don['’]?t|dont|never|no)\s+(?:\w+\s+)?need\s+to)\b(?:\s+(?:ever|really|need\s+to|have\s+to|bother(?:\s+to)?)\b)?(?:\s+(?:a|an|the|your|raw)\b)*\s*$`,
     'i'
   );
   return direct.test(immediate);
@@ -402,7 +405,7 @@ function coachRinseIsNegated(sentence: string, verbStart: number): boolean {
 function isGerundWarning(verb: string, after: string): boolean {
   if (!/ing$/i.test(verb)) return false;
   const warning = new RegExp(
-    String.raw`^\s+(?:(?:the|a|an|your|raw)\s+)*(?:${COACH_NOTE_PROTEIN_SOURCE})\b(?:\s+\w+){0,4}?\s+(?:spreads|splashes|splatters|can\s+spread|is\s+(?:risky|unsafe|unnecessary|not\s+(?:safe|needed)))\b`,
+    String.raw`^\s+(?:(?:the|a|an|your|raw)\s+)*(?:${COACH_NOTE_PROTEIN_SOURCE})\b(?:\s+\w+){0,4}?\s+(?:spreads|splashes|splatters|can\s+(?:spread|splash|splatter)|is\s+(?:risky|unsafe|unnecessary|a\s+bad\s+idea|not\s+(?:safe|needed))|isn['’]?t\s+(?:necessary|needed|safe))\b`,
     'i'
   );
   return warning.test(after);
@@ -441,10 +444,11 @@ function classifyRinseObject(phrase: string): 'safe' | 'danger' | 'fallback' {
  * Check-in coach note only. The direct object of rinse or wash decides.
  * Hands, a board, a surface, a counter, a sink, a knife, a utensil, or a
  * thermometer stays. Rice, fish, shrimp, and a warning ("no need to rinse",
- * "rinsing spreads", "can spread", "is risky") stay. A negation of something
- * else does not hide a later rinse, and "don't forget" or "never skip" does
- * not either. A pronoun, or an object that names no food, falls back to the
- * whole sentence, so "rinse it" still counts when that sentence names chicken,
+ * "don't rinse or wash", "rather than rinsing", "rinsing spreads", "can splash",
+ * "isn't necessary") stay. A negation of something else does not hide a later
+ * rinse, and "don't forget" or "never skip" does not either. A pronoun, or an
+ * object that names no food, falls back to the whole sentence, so "rinse it"
+ * still counts when that sentence names chicken,
  * pork, beef, lamb, steak, chops, drumsticks, wings, breasts, bacon, or
  * sausage. Recipe steps keep the sentence check.
  */

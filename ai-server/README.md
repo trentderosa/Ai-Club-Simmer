@@ -38,7 +38,7 @@ user_id for Cook anything; a failed lookup is logged and the note is written wit
 A note that tells the cook to rinse or wash raw chicken, poultry, meat, pork, beef, lamb,
 steak, chops, drumsticks, wings, breasts, bacon, or sausage is rejected and retried within the same attempts; if every attempt still
 says so, the note is rewritten to pat it dry with paper towels. Washing hands, a board, a surface, a knife, a utensil, or a thermometer stays, and so does
-rinsing rice, fish, or shrimp, or a warning not to rinse. Rinsing "it" still counts when
+rinsing rice, fish, or shrimp, or a warning not to rinse, including "don't rinse or wash" and "rather than rinsing". Rinsing "it" still counts when
 that sentence names the protein. A negation of something else, and "don't forget" or "never skip", does not hide that rinse. The Ollama timeout
 and the attempt limit are unchanged.
 A JSON parse failure is logged and returned only as `invalid_json`, because the parser's
