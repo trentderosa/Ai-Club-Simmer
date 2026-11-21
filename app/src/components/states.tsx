@@ -38,16 +38,19 @@ export function ErrorState({
   error,
   onAction,
   secondary,
+  compact,
 }: {
   error: unknown;
   /** Called with the error's suggested action (retry, sign_in, onboarding, back). */
   onAction: (action: ErrorAction) => void;
   secondary?: { label: string; onPress: () => void };
+  /** Keeps the same copy and button, without taking over a screen that still has its content. */
+  compact?: boolean;
 }) {
   const copy = errorCopy(error);
   const label = { retry: 'Try again', sign_in: 'Sign in', onboarding: 'Finish setup', back: 'Back to my path' }[copy.action];
   return (
-    <View style={styles.wrap} accessibilityRole="alert">
+    <View style={[styles.wrap, compact && styles.compact]} accessibilityRole="alert">
       <Icon name="alert" color={color.tomatoDeep} size={28} />
       <T variant="h2" style={styles.title}>
         {copy.title}

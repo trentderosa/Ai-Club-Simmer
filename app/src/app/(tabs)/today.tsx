@@ -8,7 +8,7 @@ import { useCallback, useRef } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import type { PlanSlot, PlanSummary } from '../../api';
+import type { DishPhoto, PlanSlot, PlanSummary } from '../../api';
 import { DishPhotoFill } from '../../components/dish-photo';
 import { Icon } from '../../components/icon';
 import { gutter, pageColumn } from '../../components/layout';
@@ -91,10 +91,13 @@ export default function Today() {
 }
 
 function PlanBody({ plan, summary, onOpen, onCookAnything }: { plan: PlanSlot[]; summary: PlanSummary; onOpen: (s: PlanSlot) => void; onCookAnything: () => void }) {
+  const current = plan.find((s) => s.status === 'current') ?? null;
+  const dishPhotos = useDishPhotos(current ? [current.dish_name] : []);
+  const onPhotoOutage = useErrorAction(dishPhotos.retry);
   if (plan.length === 0) {
     return <EmptyState title="No path yet" body="The path’s dishes haven’t been set up on the server. Ask the team to run the migrations." />;
   }
-  const current = plan.find((s) => s.status === 'current') ?? null;
+  const photo = current ? (dishPhotos.photos[normalizeDishName(current.dish_name)] ?? null) : null;
   return (
     <>
       <View style={[styles.rule, gutter]}>
@@ -104,7 +107,9 @@ function PlanBody({ plan, summary, onOpen, onCookAnything }: { plan: PlanSlot[];
         </T>
       </View>
 
-      {current ? <NextUp slot={current} total={summary.total_slots} onOpen={() => onOpen(current)} /> : <PathDone summary={summary} />}
+      {dishPhotos.outage ? <ErrorState compact error={dishPhotos.outage} onAction={onPhotoOutage} /> : null}
+
+      {current ? <NextUp slot={current} total={summary.total_slots} photo={photo} onOpen={() => onOpen(current)} /> : <PathDone summary={summary} />}
 
       <CookAnythingCard onOpen={onCookAnything} />
 
@@ -162,9 +167,7 @@ function scheduleLine(s: PlanSummary): string {
   return `Suggested pace: ${n} ${n === 1 ? 'session' : 'sessions'} a week, from your ${s.days_per_week} days × ${s.minutes_per_session} min.`;
 }
 
-function NextUp({ slot, total, onOpen }: { slot: PlanSlot; total: number; onOpen: () => void }) {
-  const photos = useDishPhotos([slot.dish_name]);
-  const photo = photos[normalizeDishName(slot.dish_name)] ?? null;
+function NextUp({ slot, total, photo, onOpen }: { slot: PlanSlot; total: number; photo: DishPhoto | null; onOpen: () => void }) {
   return (
     <Pressable
       onPress={onOpen}

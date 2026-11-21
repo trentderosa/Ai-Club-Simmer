@@ -63,7 +63,10 @@ export function createAiServerClient(baseUrl: string, fetchFn: FetchFn = fetch):
       });
     } catch (e) {
       const timedOut = controller.signal.aborted;
-      throw new ApiError('network', timedOut ? 'The AI server took too long to answer.' : `Can't reach the AI server. ${String(e)}`);
+      throw new ApiError(
+        timedOut ? 'timeout' : 'network',
+        timedOut ? 'The AI server took too long to answer.' : `Can't reach the AI server. ${String(e)}`,
+      );
     } finally {
       clearTimeout(timer);
     }
