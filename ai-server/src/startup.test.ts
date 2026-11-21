@@ -2,7 +2,6 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { PRODUCTION_LOOPBACK_TUNNEL_MESSAGE } from './config.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -90,50 +89,7 @@ describe('Server Startup (B2 fix)', () => {
     expect(body.status).toBe('ok');
   }, 20000);
 
-  it('production exits when HOST is loopback and TRUST_PROXY is set', async () => {
-    const output = await new Promise<string>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        reject(new Error('Server did not exit'));
-      }, 15000);
-
-      serverProcess = spawn('npx', ['tsx', path.join(__dirname, 'index.ts')], {
-        env: serverEnv({
-          PORT: '3311',
-          HOST: '127.0.0.1',
-          NODE_ENV: 'production',
-          TRUST_PROXY: 'true',
-        }),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-
-      let collected = '';
-      const onData = (data: Buffer): void => {
-        collected += data.toString();
-      };
-      serverProcess.stdout?.on('data', onData);
-      serverProcess.stderr?.on('data', onData);
-
-      serverProcess.on('error', (err) => {
-        clearTimeout(timeout);
-        reject(err);
-      });
-
-      serverProcess.on('close', (code) => {
-        clearTimeout(timeout);
-        if (code === 0) {
-          reject(new Error('Server exited 0'));
-          return;
-        }
-        resolve(collected);
-      });
-    });
-
-    expect(output).toContain(PRODUCTION_LOOPBACK_TUNNEL_MESSAGE);
-    expect(output).not.toContain('Simmer AI Server running');
-    expect(output).not.toContain('placeholder-service-role');
-  }, 20000);
-
-  it('production boots on 0.0.0.0 when TRUST_PROXY is set', async () => {
+  it('production boots on loopback when TRUST_PROXY is set', async () => {
     const port = 3400 + Math.floor(Math.random() * 200);
 
     await new Promise<void>((resolve, reject) => {
@@ -144,7 +100,7 @@ describe('Server Startup (B2 fix)', () => {
       serverProcess = spawn('npx', ['tsx', path.join(__dirname, 'index.ts')], {
         env: serverEnv({
           PORT: String(port),
-          HOST: '0.0.0.0',
+          HOST: '127.0.0.1',
           NODE_ENV: 'production',
           TRUST_PROXY: 'true',
           ALLOWED_ORIGINS: 'https://trentderosa.github.io',

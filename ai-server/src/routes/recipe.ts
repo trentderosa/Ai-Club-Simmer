@@ -89,9 +89,9 @@ export function createRecipeRouter(
   const inFlightGenerations = new Map<string, Promise<GenerationResult | GenerationError>>();
 
   // IP-based rate limiter to prevent LLM resource exhaustion.
-  // NOTE: Behind a reverse proxy, set app.set('trust proxy', 1) in index.ts
-  // so req.ip reflects the real client IP, not the proxy's IP. Without this,
-  // all users behind the proxy share one bucket.
+  // NOTE: Behind a tunnel, set TRUST_PROXY=true. index.ts then trusts
+  // X-Forwarded-For only from a loopback peer, so req.ip is the client the
+  // tunnel forwarded. Without it, everyone behind the tunnel shares one bucket.
   const ipLimiter = rateLimit({
     windowMs: options.rateLimit?.windowMs ?? 60000,
     max: options.rateLimit?.maxRequests ?? 10,

@@ -43,7 +43,7 @@ export function createDishPhotoRouter(
 
   // Per-IP, BEFORE auth, so unauthenticated floods and token-verification
   // calls are bounded too. NOTE: behind a reverse proxy, set TRUST_PROXY=true
-  // (index.ts then calls app.set('trust proxy', 1)) so req.ip is the real
+  // (index.ts then sets trust proxy to loopback) so req.ip is the real
   // client IP; otherwise all users share the proxy's IP and one bucket.
   // The default is looser than the per-user cap because campus NAT can put
   // many students behind one IP.

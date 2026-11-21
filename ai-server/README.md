@@ -57,43 +57,31 @@ The Pages origin is not in the default list.
 
 ## Phone-reachable demo
 
-A phone running the GitHub Pages app cannot call `127.0.0.1`. On the demo laptop, with Ollama already running and the model pulled, boot production like this. Real values stay in `ai-server/.env` on that laptop. The repo keeps placeholders only.
+A phone running the GitHub Pages app cannot call `127.0.0.1` on the laptop. Run a tunnel on that laptop. It connects to the server on loopback and gives the phone an https URL. Put real values only in `ai-server/.env`. Copy the example only when that file is not already there, so you do not replace keys that are already filled in:
 
 ```bash
 cd ai-server
-cp .env.example .env
+[ -f .env ] || cp .env.example .env
 npm ci
 npm run build
-NODE_ENV=production \
-  HOST=0.0.0.0 \
-  TRUST_PROXY=true \
-  PORT=3001 \
-  OLLAMA_BASE_URL=http://localhost:11434 \
-  OLLAMA_MODEL=llama3.2 \
-  SUPABASE_URL=https://<project-ref>.supabase.co \
-  SUPABASE_SERVICE_ROLE_KEY=<service-role-key-placeholder> \
-  SUPABASE_JWKS_URI=https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json \
-  ALLOWED_ORIGINS=http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006,https://trentderosa.github.io \
-  npm start
+NODE_ENV=production HOST=127.0.0.1 TRUST_PROXY=true npm start
 ```
 
-Shell variables already set win over `.env`. `SUPABASE_JWT_SECRET` can stand in for `SUPABASE_JWKS_URI` on an HS256 project. This project's tokens are ES256, so use the JWKS URL.
+`npm start` loads `.env`. Do not put `SUPABASE_SERVICE_ROLE_KEY`, or any other secret, on the command line. Shell variables that are already set win over `.env`. `SUPABASE_JWT_SECRET` can stand in for `SUPABASE_JWKS_URI` on an HS256 project. This project's tokens are ES256, so use the JWKS URL.
 
-| Variable | Demo boot |
+| Variable | In `.env` |
 | --- | --- |
 | `SUPABASE_URL` | Project URL. Required when `NODE_ENV=production`. |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. Server only. Required in production. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Service-role key. Server only. Required in production. Never on the command line. |
 | `SUPABASE_JWKS_URI` or `SUPABASE_JWT_SECRET` | One of these. Required in production. Prefer the JWKS URL. |
 | `OLLAMA_BASE_URL` | Default `http://localhost:11434`. |
 | `OLLAMA_MODEL` | Default `llama3.2`. Must match a pulled model. |
-| `HOST` | `0.0.0.0` so the tunnel and the laptop network can connect. The default `127.0.0.1` is local only. |
-| `TRUST_PROXY` | Exactly `true` behind Cloudflare Tunnel or ngrok, so per-IP rate limits use the client address the tunnel forwards. |
+| `HOST` | `127.0.0.1` for the tunnel (the command above). `0.0.0.0` is only for phones on the same Wi-Fi, with no tunnel. |
+| `TRUST_PROXY` | Exactly `true` for the tunnel. Express then trusts `X-Forwarded-For` only when the direct peer is loopback. A LAN client cannot spoof `req.ip`, so `HOST=0.0.0.0` is safe with this setting. |
 | `ALLOWED_ORIGINS` | Include `https://trentderosa.github.io` (scheme and host only; `/Ai-Club-Simmer` is not part of the origin). Setting `ALLOWED_ORIGINS` replaces the localhost defaults, so list any dev origins you still want. The Pages origin is not in the default list. |
 | `PORT` | Default `3001`. |
 
-Point a tunnel at this process, for example `cloudflared tunnel --url http://127.0.0.1:3001` or `ngrok http 3001`, and set the app's `EXPO_PUBLIC_AI_SERVER_URL` to that https URL. `HOST=0.0.0.0` also accepts LAN connections. Phones should use the tunnel. Auth is unchanged: production still requires the Supabase settings above, stub auth stays off, and the unauthenticated preview route stays off.
-
-`NODE_ENV=production` with `TRUST_PROXY=true` and a loopback `HOST` (`127.0.0.1`, `localhost`, `::1`, any `127.x.x.x` address, or an unset `HOST`) exits before listen. The log says HOST is a loopback address while `TRUST_PROXY=true`, and to set `HOST=0.0.0.0` or leave `TRUST_PROXY` unset. A local-only production process, including the e2e suite, keeps `HOST=127.0.0.1` and does not set `TRUST_PROXY`.
+Point the tunnel at loopback, for example `cloudflared tunnel --url http://127.0.0.1:3001` or `ngrok http 3001`, and set the app's `EXPO_PUBLIC_AI_SERVER_URL` to that https URL. Auth is unchanged: production still requires the Supabase settings above, stub auth stays off, and the unauthenticated preview route stays off.
 
 Cook anything's persistent per-user limit needs migration `20261120150000_cook_anything_generation_limits.sql` already applied by a person. This server does not apply migrations. Do not apply that file from here. Until it is applied, an uncached Cook anything generation fails closed (`503`, `GENERATION_RATE_LIMIT_UNAVAILABLE`) and does not call Ollama. Saved dishes still load. Timeouts, caches, and rate limits stay as they are, including the default 5 uncached generations per hour, the per-IP request limits, and the Ollama, YouTube, dish-photo, and XP timeouts.
 
@@ -115,7 +103,7 @@ Set these in the server's environment (never in the repo, chat, or logs):
 | `DISH_PHOTO_LOOKUP_TIMEOUT_MS` | Optional. Timeout for one Wikimedia Commons dish-photo lookup (default `2500` ms, range `500`–`10000`). A timeout or failure returns `photo: null`. No API key. |
 | `VIDEO_LOOKUP_BUDGET_MS` | Optional. Time budget for all of one recipe's searches together (default `8000` ms, range `100`–`60000`). An invalid value stops startup |
 
-With `NODE_ENV=production`, the server exits at startup and names any missing variable. It also exits when `TRUST_PROXY=true` and `HOST` is a loopback address. See [Phone-reachable demo](#phone-reachable-demo).
+With `NODE_ENV=production`, the server exits at startup and names any missing variable. `TRUST_PROXY=true` trusts `X-Forwarded-For` only from a loopback peer, for both the tunnel (`HOST=127.0.0.1`) and same-Wi-Fi (`HOST=0.0.0.0`). See [Phone-reachable demo](#phone-reachable-demo).
 
 `ENABLE_PREVIEW_ROUTE=true` mounts the unauthenticated `POST /api/recipes/generate-preview` route in development only. Production ignores that flag, leaves the route off, and logs a startup warning if the flag is set.
 
