@@ -308,8 +308,8 @@ export function createCookAnythingRouter(
       // request for this dish must join this promise instead of spending
       // another generation and starting another model call.
       const work = (async (): Promise<GenerationWorkResult> => {
-        // A full queue is refused before allow(), so an overloaded model
-        // never costs the user one of their generations.
+        // A queue that is already full is refused before allow(), so it never
+        // costs the user one of their generations.
         if (deps.ollamaClient.isSaturated?.()) {
           return { error: { type: 'busy', message: 'Model is busy', attempts: 0 } };
         }
@@ -324,6 +324,11 @@ export function createCookAnythingRouter(
         }
         if (!allowed) {
           return { limit: 'rate_limited' };
+        }
+        // The queue can fill during the allow() round trip. The hit is already
+        // charged (accepted), but the model is not called.
+        if (deps.ollamaClient.isSaturated?.()) {
+          return { error: { type: 'busy', message: 'Model is busy', attempts: 0 } };
         }
 
         const result = await generateCookAnythingRecipe(
