@@ -130,19 +130,27 @@ Otherwise the server first calls `is_slot_unlocked` and answers `403 SLOT_LOCKED
 for a locked slot.
 
 With `YOUTUBE_API_KEY` set, `src/services/video-finder.ts` runs one YouTube search per
-distinct technique in a new recipe and caches it in `technique_videos`. It caches misses for
-7 days and makes at most 6 new searches per recipe. The searches run concurrently under one
+distinct technique in a new recipe and caches it in `technique_videos`. The search looks at
+up to 5 results and, when a title shares the technique's words, one `videos.list` call for
+duration. It keeps the first hit that names the technique. A clip under 60 seconds, or a
+title marked Shorts, is kept only when it reads as a technique demo, and a title that names
+a different dish is dropped. If every hit is rejected, that technique is cached as "no
+result" and the recipe still returns with no video for the step. Misses are cached for
+7 days and a recipe makes at most 6 new searches. The searches run concurrently under one
 time budget (`VIDEO_LOOKUP_BUDGET_MS`, default 8000 ms); a search that finishes after the
-budget still writes the shared cache. The response has `videos[techniqueName]`.
+budget still writes the shared cache. The response has `videos[techniqueName]`. Safe search,
+the embeddable filter, the watch-URL allowlist, the timeout, and the quota cooldown are unchanged.
 
 The same key is used by `src/services/dish-video-finder.ts` for one "{dish} recipe" search
 per normalized dish name (path slots and Cook anything). A follow-up `videos.list` call
-keeps embeddable videos about 3–20 minutes long and returns at most 3, highest view count
-first, as `dish_videos`. Results are cached in `dish_videos` (migration
-`20261117201646_dish_videos.sql`). An empty result is retried after 7 days. Quota and
-network failures are not cached; a failed search uses a short per-dish cooldown, and a
-quota exhaustion pauses every dish search until midnight Pacific. `dish_videos` is `[]`,
-and the recipe still returns. Errors never include the request URL or the key.
+keeps embeddable videos about 3–20 minutes long whose titles name that dish and not a
+different one ("fried chicken and rice" is not fried rice), and returns at most 3, highest
+view count first, as `dish_videos`. A rejected search is an empty list. Results are cached
+in `dish_videos` (migration `20261117201646_dish_videos.sql`). An empty result is
+retried after 7 days. Quota and network failures are not cached; a failed search uses a
+short per-dish cooldown, and a quota exhaustion pauses every dish search until midnight
+Pacific. `dish_videos` is `[]`, and the recipe still returns. Errors never include the
+request URL or the key.
 
 Results are stored in `user_recipes.video_ids` only when the lookup is complete, meaning every
 technique got a video or a genuine "no result". If any search failed, timed out, ran past the

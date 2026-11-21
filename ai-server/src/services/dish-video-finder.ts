@@ -4,8 +4,9 @@
  * One YouTube search per normalized dish name ("{dish} recipe"), then a
  * videos.list call for duration and view count. Keep 1–3 embeddable videos
  * that are about 3–20 minutes, prefer higher view counts, and require the
- * title to name the dish so a technique video ("how to boil water") is not
- * shown as the dish.
+ * title to share the dish's meaningful words. A different dish ("fried
+ * chicken and rice" for fried rice, "scrambled eggs fried rice" for
+ * scrambled eggs) is dropped. A rejected search returns no videos.
  *
  * Results, including a genuine empty set, are cached in dish_videos. A
  * failure (no key, quota, network, timeout) is not cached and the section
@@ -19,6 +20,9 @@ import { normalizeDishName } from '../cook-anything/dish-name.js';
 import { isYouTubeVideoId, youtubeWatchUrl } from '../cook-anything/youtube-url.js';
 import { rememberUntil } from './cooldown-map.js';
 import { SupabaseRest, type SupabaseRestConfig } from './supabase-rest.js';
+import { hasConflictingDishWords, parseIsoDuration, titleSharesMeaningfulWords } from './video-match.js';
+
+export { parseIsoDuration };
 
 export interface DishVideo {
   videoId: string;
@@ -63,32 +67,15 @@ export const DISH_VIDEO_SEARCH_COUNT = 10;
 export const DISH_VIDEO_NEGATIVE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** In-memory pause after a non-quota failure so a cached-recipe open doesn't search again immediately. */
 export const DISH_VIDEO_ERROR_COOLDOWN_MS = 60_000;
-const TITLE_SKIP_TOKENS = new Set(['and', 'with', 'the', 'for']);
 const MAX_TITLE_LENGTH = 200;
 
 export function dishVideoSearchQuery(dishName: string): string {
   return `${dishName} recipe`;
 }
 
-/** ISO-8601 duration from YouTube contentDetails (PT#H#M#S). */
-export function parseIsoDuration(value: string): number | null {
-  const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(value);
-  if (!match) return null;
-  if (!match[1] && !match[2] && !match[3]) return null;
-  const hours = Number(match[1] ?? 0);
-  const minutes = Number(match[2] ?? 0);
-  const seconds = Number(match[3] ?? 0);
-  return hours * 3600 + minutes * 60 + seconds;
-}
-
+/** True when the title names this dish and not a different one. */
 export function dishVideoTitleMatches(title: string, dishName: string): boolean {
-  const tokens = dishName
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((token) => token.length >= 2 && !TITLE_SKIP_TOKENS.has(token));
-  if (tokens.length === 0) return false;
-  const folded = title.toLowerCase();
-  return tokens.every((token) => folded.includes(token));
+  return titleSharesMeaningfulWords(title, dishName) && !hasConflictingDishWords(title, dishName);
 }
 
 export interface DishVideoHit {

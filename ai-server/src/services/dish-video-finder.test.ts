@@ -67,6 +67,32 @@ describe('selectDishVideos', () => {
       ['boilwater01', { durationSeconds: 600, viewCount: 10_000_000, embeddable: true }],
     ])).map((video) => video.videoId)).toEqual(['parm000001']);
   });
+
+  it('drops a different dish and a title that only shares a piece of a word', () => {
+    expect(dishVideoTitleMatches('How to photograph food', 'pho')).toBe(false);
+    expect(dishVideoTitleMatches('How to boil water', 'oil')).toBe(false);
+    expect(dishVideoTitleMatches('Eggplant parmesan recipe', 'egg')).toBe(false);
+    expect(dishVideoTitleMatches('Hamburger helper', 'ham')).toBe(false);
+    expect(dishVideoTitleMatches('Scrambled eggs fried rice recipe', 'scrambled eggs')).toBe(false);
+    expect(dishVideoTitleMatches('Fried chicken and white rice', 'fried rice')).toBe(false);
+    expect(dishVideoTitleMatches('Chicken noodle soup recipe', 'chicken soup')).toBe(false);
+    expect(dishVideoTitleMatches('Perfect scrambled eggs', 'scrambled eggs')).toBe(true);
+    expect(dishVideoTitleMatches('Easy fried rice recipe', 'fried rice')).toBe(true);
+    expect(dishVideoTitleMatches('Egg fried rice recipe', 'fried rice')).toBe(true);
+    expect(dishVideoTitleMatches('Creamy chicken soup', 'chicken soup')).toBe(true);
+    expect(dishVideoTitleMatches('Tomato basil soup', 'tomato soup')).toBe(true);
+    expect(dishVideoTitleMatches('Chicken pho recipe', 'pho')).toBe(true);
+
+    const hits: DishVideoHit[] = [
+      { videoId: 'eggrice001', title: 'Scrambled eggs fried rice recipe', channelTitle: 'A' },
+      { videoId: 'realeggs01', title: 'Perfect scrambled eggs', channelTitle: 'B' },
+    ];
+    const details = new Map<string, DishVideoDetails>([
+      ['eggrice001', { durationSeconds: 600, viewCount: 9_000_000, embeddable: true }],
+      ['realeggs01', { durationSeconds: 480, viewCount: 20_000, embeddable: true }],
+    ]);
+    expect(selectDishVideos('scrambled eggs', hits, details).map((video) => video.videoId)).toEqual(['realeggs01']);
+  });
 });
 
 describe('DishVideoFinder', () => {
@@ -203,6 +229,43 @@ describe('YouTubeDishVideoClient', () => {
     const videosUrl = new URL(String(fetchFn.mock.calls[1][0]));
     expect(videosUrl.searchParams.get('part')).toBe('contentDetails,statistics,status');
     expect(videosUrl.searchParams.get('id')).toBe('lowviews01,highviews1,boilwater1');
+  });
+
+  it('returns an empty list when every payload is a different dish or a short clip', async () => {
+    const fetchFn = vi.fn((url: string): Promise<{ ok: boolean; json: () => Promise<unknown> }> => {
+      const href = String(url);
+      if (href.includes('/search')) {
+        return Promise.resolve({
+          ok: true,
+          json: (): Promise<unknown> => Promise.resolve({
+            items: [
+              { id: { videoId: 'shortpho01' }, snippet: { title: 'Pho recipe #shorts', channelTitle: 'A' } },
+              { id: { videoId: 'phorfried1' }, snippet: { title: 'Pho fried rice recipe', channelTitle: 'B' } },
+              { id: { videoId: 'photophoto' }, snippet: { title: 'How to photograph food', channelTitle: 'C' } },
+            ],
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: (): Promise<unknown> => Promise.resolve({
+          items: [
+            { id: 'shortpho01', contentDetails: { duration: 'PT45S' }, statistics: { viewCount: '9000000' }, status: { embeddable: true } },
+            { id: 'phorfried1', contentDetails: { duration: 'PT10M' }, statistics: { viewCount: '8000000' }, status: { embeddable: true } },
+            { id: 'photophoto', contentDetails: { duration: 'PT8M' }, statistics: { viewCount: '7000000' }, status: { embeddable: true } },
+          ],
+        }),
+      });
+    });
+    const client = new YouTubeDishVideoClient({
+      apiKey: SECRET,
+      fetchFn: fetchFn as unknown as typeof fetch,
+    });
+    await expect(client.search('pho')).resolves.toEqual([]);
+    const searchUrl = new URL(String(fetchFn.mock.calls[0]?.[0]));
+    expect(searchUrl.searchParams.get('safeSearch')).toBe('strict');
+    expect(searchUrl.searchParams.get('videoEmbeddable')).toBe('true');
+    expect(searchUrl.searchParams.get('key')).toBe(SECRET);
   });
 
   it('reports quota failures without the API key or the request URL', async () => {

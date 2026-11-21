@@ -4,8 +4,12 @@
  * For each distinct technique in a recipe, find one beginner YouTube video:
  *   1. Look the technique up in the shared cache (technique_videos), so a
  *      search is never repeated for another user (quota: ~100 searches/day).
- *   2. On a miss, run one YouTube Data API v3 search and cache the top result.
- *      "No result" is cached too, so a dead-end search isn't repeated.
+ *   2. On a miss, run one YouTube Data API v3 search (up to 5 results) and one
+ *      videos.list for duration. Keep the first hit whose title shares the
+ *      technique's meaningful words, is not a very short non-demo, and is
+ *      not a different dish. "No result" (including a fully rejected search)
+ *      is cached too, so a dead-end search isn't repeated. The recipe still
+ *      returns with no video for that technique.
  *   3. Any failure (no key, quota, network, timeout) leaves that technique
  *      without a video; the recipe still works. Failures are not cached.
  *   4. New searches run concurrently under one time budget per recipe
@@ -20,8 +24,16 @@
  * looks a step's video up with `videos[step.techniqueName]`.
  */
 import { z } from 'zod';
+import { isYouTubeVideoId } from '../cook-anything/youtube-url.js';
 import type { Recipe } from '../schemas/recipe.js';
 import { SupabaseRest, type SupabaseRestConfig } from './supabase-rest.js';
+import {
+  hasConflictingDishWords,
+  isVeryShortNonDemo,
+  parseIsoDuration,
+  techniqueSubjectFromQuery,
+  titleSharesMeaningfulWords,
+} from './video-match.js';
 
 export interface TechniqueVideo {
   videoId: string;
@@ -60,7 +72,7 @@ export interface TechniqueVideoCache {
 }
 
 export interface VideoSearchClient {
-  /** Top beginner video for the query, or null when there are no results. */
+  /** First acceptable beginner video, or null when nothing matches. */
   search(query: string): Promise<TechniqueVideo | null>;
 }
 
@@ -70,6 +82,8 @@ export interface VideoFinderLogger {
 
 /** Cap searches per recipe so one recipe can't burn a big share of the daily quota. */
 export const MAX_VIDEO_SEARCHES_PER_RECIPE = 6;
+/** Hits inspected per technique. search.list costs the same for 1 or 5. */
+export const TECHNIQUE_SEARCH_COUNT = 5;
 /** Re-try a cached "no result" after this long. Found videos are kept. */
 export const NEGATIVE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 /** Default VIDEO_LOOKUP_BUDGET_MS: all of a recipe's searches together. */
@@ -209,13 +223,14 @@ export interface YouTubeSearchConfig {
   apiKey: string;
   timeoutMs?: number;
   baseUrl?: string;
+  videosUrl?: string;
 }
 
 const YouTubeSearchResponseSchema = z.object({
   items: z
     .array(
       z.object({
-        id: z.object({ videoId: z.string().regex(/^[A-Za-z0-9_-]{6,20}$/).optional() }),
+        id: z.object({ videoId: z.string().optional() }).optional(),
         snippet: z
           .object({ title: z.string().optional(), channelTitle: z.string().optional() })
           .optional(),
@@ -224,25 +239,52 @@ const YouTubeSearchResponseSchema = z.object({
     .optional(),
 });
 
+const YouTubeVideosResponseSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.string().optional(),
+        contentDetails: z.object({ duration: z.string().optional() }).optional(),
+        status: z.object({ embeddable: z.boolean().optional() }).optional(),
+      })
+    )
+    .optional(),
+});
+
+interface TechniqueHit {
+  videoId: string;
+  title: string;
+  channelTitle?: string;
+}
+
+interface TechniqueHitDetails {
+  durationSeconds: number;
+  embeddable: boolean;
+}
+
 /**
- * One search.list call (100 quota units). The API key goes in the query
- * string, as the API requires, so errors report only the status and the
- * API's error reason, never the URL.
+ * One search.list call (100 quota units) plus one videos.list (1 unit) when
+ * a title is worth checking. The API key goes in the query string, as the
+ * API requires, so errors report only the status and the API's error reason,
+ * never the URL. A rejected hit is skipped; if none qualify, the result is
+ * null (a genuine "no result", not a failed search).
  */
 export class YouTubeSearchClient implements VideoSearchClient {
   private readonly timeoutMs: number;
   private readonly baseUrl: string;
+  private readonly videosUrl: string;
 
   constructor(private readonly config: YouTubeSearchConfig) {
     this.timeoutMs = config.timeoutMs ?? 5000;
     this.baseUrl = config.baseUrl ?? 'https://www.googleapis.com/youtube/v3/search';
+    this.videosUrl = config.videosUrl ?? videosEndpoint(this.baseUrl);
   }
 
   buildUrl(query: string): string {
     const url = new URL(this.baseUrl);
     url.searchParams.set('part', 'snippet');
     url.searchParams.set('type', 'video');
-    url.searchParams.set('maxResults', '1');
+    url.searchParams.set('maxResults', String(TECHNIQUE_SEARCH_COUNT));
     url.searchParams.set('safeSearch', 'strict');
     url.searchParams.set('videoEmbeddable', 'true');
     url.searchParams.set('relevanceLanguage', 'en');
@@ -251,29 +293,29 @@ export class YouTubeSearchClient implements VideoSearchClient {
     return url.toString();
   }
 
+  buildVideosUrl(ids: readonly string[]): string {
+    const url = new URL(this.videosUrl);
+    url.searchParams.set('part', 'contentDetails,status');
+    url.searchParams.set('id', ids.join(','));
+    url.searchParams.set('key', this.config.apiKey);
+    return url.toString();
+  }
+
   async search(query: string): Promise<TechniqueVideo | null> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    timer.unref?.();
     try {
-      const response = await fetch(this.buildUrl(query), { signal: controller.signal });
-      if (!response.ok) {
-        let reason = '';
-        try {
-          const body = (await response.json()) as { error?: { errors?: { reason?: string }[] } };
-          reason = body.error?.errors?.[0]?.reason ?? '';
-        } catch {
-          // ignore unparseable error bodies
-        }
-        throw new Error(`YouTube search failed: ${response.status}${reason ? ` ${reason}` : ''}`);
-      }
-      const parsed = YouTubeSearchResponseSchema.parse(await response.json());
-      const item = parsed.items?.find((i) => i.id.videoId);
-      if (!item?.id.videoId) return null;
-      return {
-        videoId: item.id.videoId,
-        ...(item.snippet?.title ? { title: item.snippet.title } : {}),
-        ...(item.snippet?.channelTitle ? { channelTitle: item.snippet.channelTitle } : {}),
-      };
+      const searchJson = await this.getJson(this.buildUrl(query), controller.signal);
+      const techniqueName = techniqueSubjectFromQuery(query);
+      const hits = techniqueHits(YouTubeSearchResponseSchema.parse(searchJson), techniqueName);
+      if (hits.length === 0) return null;
+      const detailsJson = await this.getJson(
+        this.buildVideosUrl(hits.map((hit) => hit.videoId)),
+        controller.signal
+      );
+      const details = techniqueDetails(YouTubeVideosResponseSchema.parse(detailsJson));
+      return pickTechniqueVideo(techniqueName, hits, details);
     } catch (error) {
       if (controller.signal.aborted) {
         throw new Error(`YouTube search timed out after ${this.timeoutMs}ms`);
@@ -283,6 +325,75 @@ export class YouTubeSearchClient implements VideoSearchClient {
       clearTimeout(timer);
     }
   }
+
+  private async getJson(url: string, signal: AbortSignal): Promise<unknown> {
+    const response = await fetch(url, { signal });
+    if (!response.ok) {
+      let reason = '';
+      try {
+        const body = (await response.json()) as { error?: { errors?: { reason?: string }[] } };
+        reason = body.error?.errors?.[0]?.reason ?? '';
+      } catch {
+        // ignore unparseable error bodies
+      }
+      throw new Error(`YouTube search failed: ${response.status}${reason ? ` ${reason}` : ''}`);
+    }
+    return response.json();
+  }
+}
+
+function videosEndpoint(searchUrl: string): string {
+  if (searchUrl.endsWith('/search')) return `${searchUrl.slice(0, -'/search'.length)}/videos`;
+  return 'https://www.googleapis.com/youtube/v3/videos';
+}
+
+function techniqueHits(parsed: z.infer<typeof YouTubeSearchResponseSchema>, techniqueName: string): TechniqueHit[] {
+  const hits: TechniqueHit[] = [];
+  for (const item of parsed.items ?? []) {
+    const videoId = item.id?.videoId;
+    const title = item.snippet?.title?.trim();
+    if (!videoId || !title || !isYouTubeVideoId(videoId)) continue;
+    if (!titleSharesMeaningfulWords(title, techniqueName, true)) continue;
+    hits.push({
+      videoId,
+      title,
+      ...(item.snippet?.channelTitle ? { channelTitle: item.snippet.channelTitle } : {}),
+    });
+  }
+  return hits;
+}
+
+function techniqueDetails(parsed: z.infer<typeof YouTubeVideosResponseSchema>): Map<string, TechniqueHitDetails> {
+  const details = new Map<string, TechniqueHitDetails>();
+  for (const item of parsed.items ?? []) {
+    if (!item.id) continue;
+    const durationSeconds = item.contentDetails?.duration ? parseIsoDuration(item.contentDetails.duration) : null;
+    if (durationSeconds === null || durationSeconds <= 0) continue;
+    details.set(item.id, {
+      durationSeconds,
+      embeddable: item.status?.embeddable === true,
+    });
+  }
+  return details;
+}
+
+function pickTechniqueVideo(
+  techniqueName: string,
+  hits: readonly TechniqueHit[],
+  details: ReadonlyMap<string, TechniqueHitDetails>
+): TechniqueVideo | null {
+  for (const hit of hits) {
+    const detail = details.get(hit.videoId);
+    if (!detail?.embeddable) continue;
+    if (isVeryShortNonDemo(hit.title, detail.durationSeconds, techniqueName)) continue;
+    if (hasConflictingDishWords(hit.title, techniqueName, true)) continue;
+    return {
+      videoId: hit.videoId,
+      title: hit.title,
+      ...(hit.channelTitle ? { channelTitle: hit.channelTitle } : {}),
+    };
+  }
+  return null;
 }
 
 // ---------------------------------------------------------------------------
