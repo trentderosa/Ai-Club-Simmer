@@ -354,7 +354,11 @@ export function createCookAnythingRouter(
           { budget: deps.generationBudget }
         );
         if (!result.success) {
-          if (result.error.type === 'busy') {
+          // attempts counts model calls started. Busy on attempt 1 means no
+          // model output was produced; busy after that follows a completed
+          // call (bad JSON, schema failure, rinse rejection) that used model
+          // time, so it stays charged.
+          if (result.error.type === 'busy' && result.error.attempts <= 1) {
             await refundBusy(userId);
           }
           return { error: result.error };

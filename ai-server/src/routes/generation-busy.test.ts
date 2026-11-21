@@ -247,6 +247,24 @@ describe('GENERATION_BUSY', () => {
     expect(info).toHaveBeenCalledWith('cook_anything_generation_refunded');
   });
 
+  it('POST /cook-anything does not refund a busy result that follows a completed model call', async () => {
+    const client = {
+      generate: vi
+        .fn()
+        .mockResolvedValueOnce('not json')
+        .mockRejectedValue(new OllamaBusyError('queue_timeout')),
+    };
+    const limiter = limiterWith(vi.fn().mockResolvedValue(true));
+    const res = await request(cookApp(client, limiter))
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer t')
+      .send({ dish: 'Pad Thai' });
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual(BUSY_BODY);
+    expect(client.generate).toHaveBeenCalledTimes(2);
+    expect(limiter.refund).not.toHaveBeenCalled();
+  });
+
   it('POST /cook-anything does not refund a validation failure, a rate limit, or an Ollama error', async () => {
     const post = (app: express.Express, dish: string): request.Test =>
       request(app).post('/api/recipes/cook-anything').set('Authorization', 'Bearer t').send({ dish });

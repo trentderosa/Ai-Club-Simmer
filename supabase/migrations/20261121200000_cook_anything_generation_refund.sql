@@ -1,15 +1,20 @@
 -- Cook-anything generation refund (server-only).
 --
--- A Cook anything request that ends busy (the queue filled right after the
--- limit check, a queue wait timed out, or a later attempt went busy) did not
--- produce a recipe, so it should not use up one of the user's generations.
+-- A Cook anything request that ends busy before any model output (the queue
+-- filled right after the limit check, or the first attempt's queue wait timed
+-- out) did not produce a recipe, so it should not use up one of the user's generations.
 -- The ai-server calls refund_cook_anything_generation to give that hit back.
--- Only busy results are refunded. Validation and Ollama failures still count.
+-- Only busy before any model output is refunded: the server skips the refund
+-- when a busy answer follows a completed model call (bad JSON, schema failure,
+-- rinse rejection), so users cannot burn model time beyond the cap.
+-- Validation and Ollama failures still count.
 --
 -- Design: refund the most recent hit for the user inside the window instead
 -- of adding a try_cook_anything_generation_v2 that returns a hit id. Hits are
 -- interchangeable for the sliding-window count, so deleting the newest one
--- restores exactly one unit of capacity. This keeps try_cook_anything_generation
+-- restores exactly one unit of capacity. The newest in-window hit may belong to
+-- a concurrent request of the same user rather than the one being refunded;
+-- the count is the same either way. This keeps try_cook_anything_generation
 -- unchanged, so the server's allow() path does not depend on this migration
 -- and keeps working before it is applied. Only the refund call can fail then,
 -- and the server treats that as best effort.
