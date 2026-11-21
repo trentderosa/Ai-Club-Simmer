@@ -49,6 +49,8 @@ export interface Config {
     /** Timeout for one Wikimedia Commons lookup, in ms. */
     timeoutMs: number;
   };
+  /** Generate the next path recipe in the background after a check-in (RECIPE_PREWARM). */
+  recipePrewarm: boolean;
   /** Shared queue in front of every Ollama call (see services/ollama-gate.ts). */
   ollamaGate: {
     maxConcurrent: number;
@@ -220,6 +222,15 @@ export function isPreviewRouteEnabled(env: Env = process.env): boolean {
   return requested;
 }
 
+/**
+ * RECIPE_PREWARM: on unless set to false, 0 or off (case-insensitive).
+ * Anything else, including unset or empty, leaves it on.
+ */
+export function isRecipePrewarmEnabled(env: Env = process.env): boolean {
+  const raw = env.RECIPE_PREWARM?.trim().toLowerCase();
+  return !(raw === 'false' || raw === '0' || raw === 'off');
+}
+
 export function loadConfig(): Config {
   return {
     port: parseInt(process.env.PORT || '3001', 10),
@@ -252,6 +263,7 @@ export function loadConfig(): Config {
     cookAnything: loadCookAnythingConfig(),
     dishPhoto: loadDishPhotoConfig(),
     ollamaGate: loadOllamaGateConfig(),
+    recipePrewarm: isRecipePrewarmEnabled(),
   };
 }
 

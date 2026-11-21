@@ -1,13 +1,14 @@
 import { Router, Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import { createPathRecipeService, type PathRecipeService } from '../services/path-recipe-service.js';
 import { generateRecipe, PathSlot } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { OllamaBudget } from '../services/ollama-budget.js';
 import { sendGenerationBusy } from './generation-busy.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
-import { storedTechniqueVideosMatch, type RecipeVideos, type VideoFinder, type VideoLookupResult } from '../services/video-finder.js';
+import { storedTechniqueVideosMatch, type RecipeVideos, type VideoFinder } from '../services/video-finder.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
 import type { DishVideo, DishVideoFinder } from '../services/dish-video-finder.js';
 import { normalizeDishName } from '../cook-anything/dish-name.js';
@@ -63,6 +64,8 @@ export interface RecipeRouterDeps {
   videoFinder?: VideoFinder | null;
   photoFinder?: DishPhotoFinder | null;
   dishVideoFinder?: DishVideoFinder | null;
+  /** Shared single-flight generator. Built from the deps above when omitted (tests). */
+  pathRecipes?: PathRecipeService;
 }
 
 export interface RecipeRouterOptions {
@@ -73,24 +76,29 @@ export interface RecipeRouterOptions {
   };
 }
 
-interface GenerationResult {
-  success: true;
-  recipe: Recipe;
-  videos: RecipeVideos;
-}
-
-interface GenerationError {
-  success: false;
-  error: { type: string; message: string; attempts: number };
-}
-
 export function createRecipeRouter(
   deps: RecipeRouterDeps,
   options: RecipeRouterOptions = {}
 ): Router {
   const router = Router();
 
-  const inFlightGenerations = new Map<string, Promise<GenerationResult | GenerationError>>();
+  // The same instance the check-in prewarmer uses, so a request that arrives
+  // while a prewarm runs joins it instead of starting a second model call.
+  const pathRecipes =
+    deps.pathRecipes ??
+    createPathRecipeService({
+      ollamaClient: deps.ollamaClient,
+      generationBudget: deps.generationBudget,
+      supabase: deps.supabase,
+      videoFinder: deps.videoFinder,
+    });
+  const attachVideos = (userId: string, slotId: number, recipe: Recipe): Promise<RecipeVideos> =>
+    pathRecipes.attachVideos(userId, slotId, recipe);
+  const singleFlightGenerate = (
+    userId: string,
+    slot: PathSlot,
+    userProfile: UserProfile
+  ): ReturnType<PathRecipeService['generate']> => pathRecipes.generate(userId, slot, userProfile);
 
   // IP-based rate limiter to prevent LLM resource exhaustion.
   // NOTE: Behind a tunnel, set TRUST_PROXY=true. index.ts then trusts
@@ -105,66 +113,6 @@ export function createRecipeRouter(
   });
 
   router.use(ipLimiter);
-
-  function makeGenerationKey(userId: string, slotId: number): string {
-    return `${userId}:${slotId}`;
-  }
-
-  async function generateAndSave(
-    userId: string,
-    slot: PathSlot,
-    userProfile: UserProfile
-  ): Promise<GenerationResult | GenerationError> {
-    const result = await generateRecipe(deps.ollamaClient, slot, userProfile, {
-      budget: deps.generationBudget,
-    });
-
-    if (!result.success) {
-      return result;
-    }
-
-    const savedRecipe = await deps.supabase.saveRecipe(userId, slot.id, result.recipe);
-    const videos = await attachVideos(userId, slot.id, savedRecipe);
-    return { success: true, recipe: savedRecipe, videos };
-  }
-
-  /**
-   * F4: look up technique videos and store them with the recipe. Never fails
-   * the request: on any error the recipe is returned with whatever videos
-   * were found.
-   *
-   * Videos are stored only when the lookup is complete (every technique got a
-   * video or a genuine "no result"). If any search failed, timed out or was
-   * skipped, nothing is stored, so `video_ids` stays null and the lookup runs
-   * again on the next visit. Searches that did succeed are in the shared
-   * technique cache, so the retry only re-runs the missing ones.
-   */
-  async function attachVideos(userId: string, slotId: number, recipe: Recipe): Promise<RecipeVideos> {
-    if (!deps.videoFinder) return {};
-    let lookup: VideoLookupResult;
-    try {
-      lookup = await deps.videoFinder.findForRecipe(recipe);
-    } catch (error) {
-      console.warn('recipe_videos_failed', {
-        slot_id: slotId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return {};
-    }
-    if (!lookup.complete) {
-      console.warn('recipe_videos_incomplete', { slot_id: slotId, found: Object.keys(lookup.videos).length });
-      return lookup.videos;
-    }
-    try {
-      await deps.supabase.saveVideos(userId, slotId, lookup.videos);
-    } catch (error) {
-      console.warn('recipe_videos_save_failed', {
-        slot_id: slotId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-    return lookup.videos;
-  }
 
   async function dishMedia(dishName: string): Promise<{ photo: DishPhoto | null; dish_videos: DishVideo[] }> {
     const key = normalizeDishName(dishName);
@@ -198,28 +146,6 @@ export function createRecipeRouter(
       })(),
     ]);
     return { photo, dish_videos: dishVideos };
-  }
-
-  async function singleFlightGenerate(
-    userId: string,
-    slot: PathSlot,
-    userProfile: UserProfile
-  ): Promise<GenerationResult | GenerationError> {
-    const key = makeGenerationKey(userId, slot.id);
-
-    const inFlight = inFlightGenerations.get(key);
-    if (inFlight) {
-      return inFlight;
-    }
-
-    const generationPromise = generateAndSave(userId, slot, userProfile);
-    inFlightGenerations.set(key, generationPromise);
-
-    try {
-      return await generationPromise;
-    } finally {
-      inFlightGenerations.delete(key);
-    }
   }
 
   /**

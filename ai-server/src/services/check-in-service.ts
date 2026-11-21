@@ -10,6 +10,11 @@ export interface CheckInLogger {
   error(message: string, context: Record<string, unknown>): void;
 }
 
+/** Writes the user's next path recipe in the background (see recipe-prewarmer.ts). */
+export interface CheckInRecipePrewarmer {
+  prewarm(userId: string, checkedInSlotId: number): Promise<void>;
+}
+
 export interface CheckInServiceOptions {
   /**
    * Slot lookups (mastery validation) and badge lookups (F9). Without it
@@ -21,6 +26,8 @@ export interface CheckInServiceOptions {
   generatedCheckInRepository?: GeneratedCheckInRepository | null;
   /** Awards XP for cook-anything check-ins via award_generated_recipe_xp. */
   generatedXpAwarder?: XpAwarder | null;
+  /** Fire-and-forget after a created path check-in's coach note. Unset: no prewarm. */
+  recipePrewarmer?: CheckInRecipePrewarmer | null;
 }
 
 /** Returned on an idempotent replay so a retry does not call Ollama again. */
@@ -32,6 +39,7 @@ export class CheckInService {
   private pathRepository: CheckInServiceOptions['pathRepository'];
   private generatedCheckInRepository: GeneratedCheckInRepository | null;
   private generatedXpAwarder: XpAwarder | null;
+  private recipePrewarmer: CheckInRecipePrewarmer | null;
 
   constructor(
     private repository: CheckInRepository,
@@ -43,6 +51,7 @@ export class CheckInService {
     this.pathRepository = options.pathRepository ?? null;
     this.generatedCheckInRepository = options.generatedCheckInRepository ?? null;
     this.generatedXpAwarder = options.generatedXpAwarder ?? null;
+    this.recipePrewarmer = options.recipePrewarmer ?? null;
   }
 
   /**
@@ -62,6 +71,8 @@ export class CheckInService {
    * 5. Generate Coach's note via Ollama. On an idempotent replay
    *    (`create()` returned created: false), skip generation and return
    *    REPLAY_COACH_NOTE so a retry cannot start a second Ollama run.
+   *    Then, for a created path check-in only, start a background prewarm of
+   *    the next slot's recipe (not awaited, errors logged).
    * 6. suggest_repeat = rated "hard" (F6). The path never changes.
    */
   async processCheckIn(
@@ -100,6 +111,9 @@ export class CheckInService {
         )
       : REPLAY_COACH_NOTE;
 
+    // After the note so it never competes with it for the model. Not awaited.
+    if (checkIn.created) this.startPrewarm(userId, checkIn.slot_id);
+
     return {
       check_in_id: checkIn.id,
       coach_note: coachNote.note,
@@ -108,6 +122,20 @@ export class CheckInService {
       badges,
       suggest_repeat: input.rating === 'hard',
     };
+  }
+
+  /** Fire and forget: must never delay or fail the check-in response. */
+  private startPrewarm(userId: string, slotId: number): void {
+    const prewarmer = this.recipePrewarmer;
+    if (!prewarmer) return;
+    void Promise.resolve()
+      .then(() => prewarmer.prewarm(userId, slotId))
+      .catch((error: unknown) => {
+        this.logger.error('recipe_prewarm_failed', {
+          slot_id: slotId,
+          error: error instanceof Error ? `${error.name}: ${error.message}` : 'unknown error',
+        });
+      });
   }
 
   /**

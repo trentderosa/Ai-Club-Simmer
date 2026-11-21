@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadOllamaGateConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
+import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadOllamaGateConfig, loadXpAwardTimeoutMs, isRecipePrewarmEnabled, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -247,5 +247,19 @@ describe('loadOllamaGateConfig', () => {
     expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: '4999' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
     expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: '600001' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
     expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: 'abc' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
+  });
+});
+
+describe('isRecipePrewarmEnabled', () => {
+  it('is on by default and for unknown values', () => {
+    expect(isRecipePrewarmEnabled({})).toBe(true);
+    expect(isRecipePrewarmEnabled({ RECIPE_PREWARM: '' })).toBe(true);
+    expect(isRecipePrewarmEnabled({ RECIPE_PREWARM: 'true' })).toBe(true);
+  });
+
+  it('turns off for false, 0 and off in any case', () => {
+    for (const value of ['false', 'FALSE', '0', 'off', ' Off ']) {
+      expect(isRecipePrewarmEnabled({ RECIPE_PREWARM: value })).toBe(false);
+    }
   });
 });

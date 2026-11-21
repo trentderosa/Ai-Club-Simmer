@@ -53,6 +53,27 @@ describe('SupabasePathRepository', () => {
     });
   });
 
+  describe('getNextPathSlot', () => {
+    it('finds the next slot by slot_order, not by id', async () => {
+      mockFetch
+        .mockResolvedValueOnce(ok([{ slot_order: 4 }]))
+        .mockResolvedValueOnce(
+          ok([{ id: 41, dish_name: 'Pasta', technique_focus: 'Boiling', is_final: false }])
+        );
+      const slot = await repo.getNextPathSlot(37);
+      expect(slot).toEqual({ id: 41, dishName: 'Pasta', techniqueFocus: 'Boiling', isFinal: false });
+      expect(calledUrl(0).searchParams.get('id')).toBe('eq.37');
+      expect(calledUrl(1).searchParams.get('slot_order')).toBe('eq.5');
+    });
+
+    it('returns null after the last slot or for an unknown slot', async () => {
+      mockFetch.mockResolvedValueOnce(ok([{ slot_order: 10 }])).mockResolvedValueOnce(ok([]));
+      expect(await repo.getNextPathSlot(50)).toBeNull();
+      mockFetch.mockResolvedValueOnce(ok([]));
+      expect(await repo.getNextPathSlot(999)).toBeNull();
+    });
+  });
+
   describe('getEquipment', () => {
     it('reads only the equipment column and normalizes it', async () => {
       mockFetch.mockResolvedValueOnce(ok([{ equipment: [' stove ', 'Oven', 'oven', ''] }]));
