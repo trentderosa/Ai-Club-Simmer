@@ -51,7 +51,7 @@ export function DishPhotoFill({
             accessibilityRole="link"
             accessibilityLabel={hero.credit}
             onPress={openSource}
-            hitSlop={6}
+            hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
             style={[styles.creditHit, creditAt === 'top' ? styles.creditTop : styles.creditBottom, creditStyle]}
           >
             <T style={styles.credit} numberOfLines={1}>

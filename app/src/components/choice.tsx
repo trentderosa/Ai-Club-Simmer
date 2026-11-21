@@ -68,7 +68,7 @@ export function Segmented<V extends string>({ options, value, onChange }: { opti
             <T style={[styles.segTitle, on && { color: color.paper }]} numberOfLines={1}>
               {o.title}
             </T>
-            <T variant="caption" style={[styles.segSub, on && { color: '#CFC6B6' }]} numberOfLines={1}>
+            <T variant="caption" style={[styles.segSub, on && { color: '#CFC6B6' }]}>
               {o.subtitle}
             </T>
           </Pressable>

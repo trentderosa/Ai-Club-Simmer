@@ -77,8 +77,8 @@ export function EmptyState({ title, body, action, compact }: { title: string; bo
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, minHeight: 320, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space.gutter, paddingVertical: space.s8 },
-  compact: { minHeight: 0, flexGrow: 0, paddingVertical: space.s6 },
+  wrap: { flexGrow: 1, flexShrink: 1, minHeight: 320, alignItems: 'center', justifyContent: 'center', paddingHorizontal: space.gutter, paddingVertical: space.s8 },
+  compact: { flexGrow: 0, flexShrink: 0, flexBasis: 'auto', minHeight: 0, paddingVertical: space.s6 },
   title: { marginTop: space.s4, textAlign: 'center' },
   body: { marginTop: space.s2, textAlign: 'center', maxWidth: 320 },
   btn: { marginTop: space.s6, alignSelf: 'stretch' },
