@@ -5,6 +5,7 @@ import type { OllamaClient } from './ollama-client.js';
 import { countedHiddenStepCount, MASTERY_MIN_HIDDEN_STEPS, MASTERY_MIN_STEPS } from '../mastery/mask.js';
 import { logGenerationFailure } from './generation-failure.js';
 import { OllamaBusyError } from './ollama-gate.js';
+import { startDeadline, type OllamaBudget } from './ollama-budget.js';
 
 export interface RecipeGenerationResult {
   success: true;
@@ -617,10 +618,14 @@ function sleep(ms: number): Promise<void> {
 export async function generateRecipe(
   client: OllamaClient,
   slot: PathSlot,
-  user: UserProfile
+  user: UserProfile,
+  options: { budget?: OllamaBudget } = {}
 ): Promise<RecipeGenerationResponse> {
   const prompt = buildPrompt(slot, user);
   const jsonSchema = getRecipeJsonSchema();
+  // Caps queue time plus Ollama time for the whole request, retries included.
+  const deadline = options.budget ? startDeadline(options.budget) : null;
+  let attemptsMade = MAX_RETRIES + 1;
 
   let lastError: Error | ZodError | null = null;
   // Flagged recipe from an attempt that told the cook to rinse raw meat.
@@ -635,9 +640,29 @@ export async function generateRecipe(
       await sleep(delayMs);
     }
 
+    let queueTimeoutMs: number | undefined;
+    if (deadline) {
+      queueTimeoutMs = deadline.nextQueueTimeoutMs();
+      if (queueTimeoutMs <= 0) {
+        // The budget cannot cover another attempt. Keep the earlier failure.
+        console.warn('recipe_generation_budget_exhausted', { attempt });
+        if (!lastError) {
+          return {
+            success: false,
+            error: { type: 'busy', message: 'Model is busy', attempts: 0 },
+          };
+        }
+        attemptsMade = attempt - 1;
+        break;
+      }
+    }
+
     try {
       // Call Ollama with structured JSON output format
-      const responseText = await client.generate(prompt, jsonSchema);
+      const responseText =
+        queueTimeoutMs === undefined
+          ? await client.generate(prompt, jsonSchema)
+          : await client.generate(prompt, jsonSchema, { queueTimeoutMs });
 
       // Step 1: Parse as JSON. LLMs sometimes output malformed JSON despite schema.
       let parsed: unknown;
@@ -712,6 +737,9 @@ export async function generateRecipe(
       };
     } catch (error) {
       // A busy model is not retried: more attempts only deepen the backlog.
+      // Intentional fail-safe: this also discards an earlier flagged rinse
+      // fallback (lastUnsafeRecipe). A busy answer is never turned into a
+      // recipe that may tell the cook to rinse raw meat.
       if (error instanceof OllamaBusyError) {
         return {
           success: false,
@@ -756,7 +784,7 @@ export async function generateRecipe(
       type:
         lastError instanceof ZodError ? 'validation_failed' : 'generation_failed',
       message: errorMessage,
-      attempts: MAX_RETRIES + 1,
+      attempts: attemptsMade,
     },
   };
 }

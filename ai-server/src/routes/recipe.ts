@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { generateRecipe, PathSlot } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
+import type { OllamaBudget } from '../services/ollama-budget.js';
 import { sendGenerationBusy } from './generation-busy.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
@@ -55,6 +56,8 @@ const PreviewRequestSchema = z.object({
 
 export interface RecipeRouterDeps {
   ollamaClient: OllamaClient;
+  /** Per-request time budget for the model queue and calls. No deadline when unset. */
+  generationBudget?: OllamaBudget;
   supabase: SupabaseService;
   /** F4 technique videos. Without it (no YOUTUBE_API_KEY) recipes have no videos. */
   videoFinder?: VideoFinder | null;
@@ -112,7 +115,9 @@ export function createRecipeRouter(
     slot: PathSlot,
     userProfile: UserProfile
   ): Promise<GenerationResult | GenerationError> {
-    const result = await generateRecipe(deps.ollamaClient, slot, userProfile);
+    const result = await generateRecipe(deps.ollamaClient, slot, userProfile, {
+      budget: deps.generationBudget,
+    });
 
     if (!result.success) {
       return result;
@@ -416,7 +421,9 @@ export function createRecipeRouter(
           userProfile: UserProfile;
         };
 
-        const result = await generateRecipe(deps.ollamaClient, slot, userProfile);
+        const result = await generateRecipe(deps.ollamaClient, slot, userProfile, {
+          budget: deps.generationBudget,
+        });
 
         if (!result.success) {
           if (result.error.type === 'busy') {

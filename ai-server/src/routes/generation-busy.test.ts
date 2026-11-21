@@ -107,6 +107,29 @@ describe('GENERATION_BUSY', () => {
     expect(client.generate).toHaveBeenCalledTimes(1);
   });
 
+  it('POST /generate-preview returns 503 GENERATION_BUSY when the model is busy', async () => {
+    const client = busyClient();
+    const app = express();
+    app.use(express.json());
+    app.use(
+      '/api/recipes',
+      createRecipeRouter(
+        { ollamaClient: client, supabase: supabase() },
+        { rateLimit: { windowMs: 60_000, maxRequests: 100 }, enablePreviewRoute: true }
+      )
+    );
+    const res = await request(app)
+      .post('/api/recipes/generate-preview')
+      .send({
+        slot: { id: 1, dishName: 'Test Dish', techniqueFocus: 'basics' },
+        userProfile: profile,
+      });
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual(BUSY_BODY);
+    expect(res.headers['retry-after']).toBe('30');
+    expect(client.generate).toHaveBeenCalledTimes(1);
+  });
+
   it('POST /cook-anything returns 503 with Retry-After when the model call is refused', async () => {
     const client = busyClient();
     const allow = vi.fn().mockResolvedValue(true);

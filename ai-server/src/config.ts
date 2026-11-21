@@ -56,6 +56,10 @@ export interface Config {
     queueTimeoutMs: number;
     /** Shorter queue wait for check-in coach notes, which fall back instead of failing. */
     coachNoteQueueTimeoutMs: number;
+    /** Overall time one recipe request may spend queueing and running, retries included. */
+    requestBudgetMs: number;
+    /** Same for one coach note, which must finish inside the app's check-in timeout. */
+    coachNoteBudgetMs: number;
   };
 }
 
@@ -383,9 +387,12 @@ export function loadReconcileConfig(env: Env = process.env): ReconcileConfig {
 }
 
 export const OLLAMA_MAX_CONCURRENT = { default: 1, min: 1, max: 8 } as const;
-export const OLLAMA_MAX_QUEUE = { default: 6, min: 0, max: 100 } as const;
-export const OLLAMA_QUEUE_TIMEOUT_MS = { default: 90000, min: 1000, max: 600000 } as const;
+export const OLLAMA_MAX_QUEUE = { default: 3, min: 0, max: 100 } as const;
+export const OLLAMA_QUEUE_TIMEOUT_MS = { default: 60000, min: 1000, max: 600000 } as const;
 export const OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS = { default: 15000, min: 1000, max: 600000 } as const;
+
+export const OLLAMA_REQUEST_BUDGET_MS = { default: 170000, min: 10000, max: 600000 } as const;
+export const OLLAMA_COACH_NOTE_BUDGET_MS = { default: 120000, min: 5000, max: 600000 } as const;
 
 export function loadOllamaGateConfig(env: Env = process.env): Config['ollamaGate'] {
   return {
@@ -416,6 +423,20 @@ export function loadOllamaGateConfig(env: Env = process.env): Config['ollamaGate
       OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS.default,
       OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS.min,
       OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS.max
+    ),
+    requestBudgetMs: parseBoundedIntEnv(
+      env,
+      'OLLAMA_REQUEST_BUDGET_MS',
+      OLLAMA_REQUEST_BUDGET_MS.default,
+      OLLAMA_REQUEST_BUDGET_MS.min,
+      OLLAMA_REQUEST_BUDGET_MS.max
+    ),
+    coachNoteBudgetMs: parseBoundedIntEnv(
+      env,
+      'OLLAMA_COACH_NOTE_BUDGET_MS',
+      OLLAMA_COACH_NOTE_BUDGET_MS.default,
+      OLLAMA_COACH_NOTE_BUDGET_MS.min,
+      OLLAMA_COACH_NOTE_BUDGET_MS.max
     ),
   };
 }

@@ -11,6 +11,7 @@ import {
 import type { OllamaClient } from '../services/ollama-client.js';
 import { logGenerationFailure } from '../services/generation-failure.js';
 import { OllamaBusyError } from '../services/ollama-gate.js';
+import { startDeadline, type OllamaBudget } from '../services/ollama-budget.js';
 import { buildCookAnythingPrompt } from './prompt.js';
 import { FreeformRecipeSchema } from './recipe-schema.js';
 
@@ -30,19 +31,42 @@ function sleep(ms: number): Promise<void> {
 export async function generateCookAnythingRecipe(
   client: OllamaClient,
   dishQuery: string,
-  user: UserProfile
+  user: UserProfile,
+  options: { budget?: OllamaBudget } = {}
 ): Promise<RecipeGenerationResponse> {
   const prompt = buildCookAnythingPrompt(dishQuery, user);
   const jsonSchema = getRecipeJsonSchema();
   let lastError: Error | ZodError | null = null;
   let lastUnsafeRecipe: Recipe | null = null;
+  // Caps queue time plus Ollama time for the whole request, retries included.
+  const deadline = options.budget ? startDeadline(options.budget) : null;
+  let attemptsMade = MAX_RETRIES + 1;
 
   for (let attempt = 1; attempt <= MAX_RETRIES + 1; attempt++) {
     if (attempt > 1) {
       await sleep(RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 2));
     }
+    let queueTimeoutMs: number | undefined;
+    if (deadline) {
+      queueTimeoutMs = deadline.nextQueueTimeoutMs();
+      if (queueTimeoutMs <= 0) {
+        // The budget cannot cover another attempt. Keep the earlier failure.
+        console.warn('recipe_generation_budget_exhausted', { attempt });
+        if (!lastError) {
+          return {
+            success: false,
+            error: { type: 'busy', message: 'Model is busy', attempts: 0 },
+          };
+        }
+        attemptsMade = attempt - 1;
+        break;
+      }
+    }
     try {
-      const responseText = await client.generate(prompt, jsonSchema);
+      const responseText =
+        queueTimeoutMs === undefined
+          ? await client.generate(prompt, jsonSchema)
+          : await client.generate(prompt, jsonSchema, { queueTimeoutMs });
       let parsed: unknown;
       try {
         parsed = JSON.parse(responseText);
@@ -65,6 +89,9 @@ export async function generateCookAnythingRecipe(
       return { success: true, recipe };
     } catch (error) {
       // A busy model is not retried: more attempts only deepen the backlog.
+      // Intentional fail-safe: this also discards an earlier flagged rinse
+      // fallback (lastUnsafeRecipe). A busy answer is never turned into a
+      // recipe that may tell the cook to rinse raw meat.
       if (error instanceof OllamaBusyError) {
         return {
           success: false,
@@ -95,7 +122,7 @@ export async function generateCookAnythingRecipe(
     error: {
       type: lastError instanceof ZodError ? 'validation_failed' : 'generation_failed',
       message: errorMessage,
-      attempts: MAX_RETRIES + 1,
+      attempts: attemptsMade,
     },
   };
 }

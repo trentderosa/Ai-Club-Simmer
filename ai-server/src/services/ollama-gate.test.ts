@@ -132,6 +132,26 @@ describe('createOllamaGate', () => {
     expect(gate.isIdle()).toBe(true);
   });
 
+  it('calls the inner client only after the slot is held, so its timeout starts after the wait', async () => {
+    const { client, calls } = controllableClient();
+    const generate = vi.spyOn(client, 'generate');
+    const gate = createOllamaGate(client, config);
+    const first = gate.generate('a', {});
+    const second = gate.generate('b', {});
+    await flush();
+    expect(generate).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(900);
+    expect(generate).toHaveBeenCalledTimes(1);
+    calls[0].resolve('x');
+    await first;
+    await flush();
+    // The second call reaches the inner client only now, after its queue wait.
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(generate.mock.calls[1][0]).toBe('b');
+    calls[1].resolve('y');
+    await second;
+  });
+
   it('uses a per-call queue timeout when given', async () => {
     const { client, calls } = controllableClient();
     const gate = createOllamaGate(client, config);

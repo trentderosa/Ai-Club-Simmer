@@ -201,12 +201,14 @@ describe('loadDishPhotoConfig', () => {
 });
 
 describe('loadOllamaGateConfig', () => {
-  it('defaults to one call at a time, 6 waiting, 90s and 15s waits', () => {
+  it('defaults to one call at a time, 3 waiting, 60s and 15s waits, and the request budgets', () => {
     expect(loadOllamaGateConfig({})).toEqual({
       maxConcurrent: 1,
-      maxQueue: 6,
-      queueTimeoutMs: 90000,
+      maxQueue: 3,
+      queueTimeoutMs: 60000,
       coachNoteQueueTimeoutMs: 15000,
+      requestBudgetMs: 170000,
+      coachNoteBudgetMs: 120000,
     });
   });
 
@@ -217,8 +219,17 @@ describe('loadOllamaGateConfig', () => {
         OLLAMA_MAX_QUEUE: '0',
         OLLAMA_QUEUE_TIMEOUT_MS: '5000',
         OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS: '2000',
+        OLLAMA_REQUEST_BUDGET_MS: '10000',
+        OLLAMA_COACH_NOTE_BUDGET_MS: '600000',
       })
-    ).toEqual({ maxConcurrent: 2, maxQueue: 0, queueTimeoutMs: 5000, coachNoteQueueTimeoutMs: 2000 });
+    ).toEqual({
+      maxConcurrent: 2,
+      maxQueue: 0,
+      queueTimeoutMs: 5000,
+      coachNoteQueueTimeoutMs: 2000,
+      requestBudgetMs: 10000,
+      coachNoteBudgetMs: 600000,
+    });
   });
 
   it('rejects out-of-range or non-numeric values, naming the variable', () => {
@@ -231,5 +242,10 @@ describe('loadOllamaGateConfig', () => {
     expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS: 'abc' })).toThrow(
       /OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS/
     );
+    expect(() => loadOllamaGateConfig({ OLLAMA_REQUEST_BUDGET_MS: '9999' })).toThrow(/OLLAMA_REQUEST_BUDGET_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_REQUEST_BUDGET_MS: '600001' })).toThrow(/OLLAMA_REQUEST_BUDGET_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: '4999' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: '600001' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: 'abc' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
   });
 });

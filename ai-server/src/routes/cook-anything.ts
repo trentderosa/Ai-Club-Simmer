@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import type { OllamaClient } from '../services/ollama-client.js';
+import type { OllamaBudget } from '../services/ollama-budget.js';
 import type { OllamaGate } from '../services/ollama-gate.js';
 import { sendGenerationBusy } from './generation-busy.js';
 import type { SupabaseService } from '../services/supabase.js';
@@ -21,6 +22,8 @@ import { sanitizeRecipeVideos, youtubeWatchUrl } from '../cook-anything/youtube-
 export interface CookAnythingRouterDeps {
   /** The shared gate in production. A plain client (tests) has no isSaturated. */
   ollamaClient: OllamaClient & Partial<Pick<OllamaGate, 'isSaturated'>>;
+  /** Per-request time budget for the model queue and calls. No deadline when unset. */
+  generationBudget?: OllamaBudget;
   supabase: SupabaseService;
   generatedRecipes: GeneratedRecipeRepository;
   videoFinder?: VideoFinder | null;
@@ -326,7 +329,8 @@ export function createCookAnythingRouter(
         const result = await generateCookAnythingRecipe(
           deps.ollamaClient,
           dishQuery,
-          userProfile
+          userProfile,
+          { budget: deps.generationBudget }
         );
         if (!result.success) {
           return { error: result.error };
