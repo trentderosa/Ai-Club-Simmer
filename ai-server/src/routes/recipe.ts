@@ -243,6 +243,7 @@ export function createRecipeRouter(
         if (authResult.error === 'service_unavailable') {
           res.status(503).json({
             error: 'Authentication service temporarily unavailable',
+            code: 'AUTH_UNAVAILABLE',
           });
           return;
         }

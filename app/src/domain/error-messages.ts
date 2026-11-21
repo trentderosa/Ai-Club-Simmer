@@ -46,20 +46,25 @@ const NEW_RECIPES_PAUSED: ErrorCopy = {
 };
 
 /**
- * Auth 503s send no `code`. The AI server uses one of:
+ * Auth 503s send `code: AUTH_UNAVAILABLE`. That code decides sign-in versus
+ * kitchen. Older servers omit it and use one of:
  * "Authentication service unavailable" (check-in, mastery, dish photos)
  * "Authentication service temporarily unavailable" (recipe, Cook anything).
- * Match the wording until a code exists. Do not invent one here.
+ * The wording match is only a fallback for that older server.
  */
-function isAuthUnavailable(message: string): boolean {
-  return /authentication/i.test(message);
+function isAuthUnavailable(error: { code?: string; message: string }): boolean {
+  if (error.code === 'AUTH_UNAVAILABLE') return true;
+  // A code other than AUTH_UNAVAILABLE is a kitchen (or other) 503. The
+  // wording match is only for an older server that sends no code.
+  if (error.code) return false;
+  return /authentication/i.test(error.message);
 }
 
 export function errorCopy(e: unknown): ErrorCopy {
   if (isApiError(e)) {
     if (e.kind === 'timeout') return COPY.timeout;
     if (e.code === 'GENERATION_RATE_LIMIT_UNAVAILABLE') return NEW_RECIPES_PAUSED;
-    if (e.kind === 'unavailable' && !isAuthUnavailable(e.message)) return SERVER_DOWN;
+    if (e.kind === 'unavailable' && !isAuthUnavailable(e)) return SERVER_DOWN;
     const base = COPY[e.kind];
     if (e.kind === 'rate_limited' && e.code === 'email_rate_limited') {
       return { ...base, title: 'Too many emails', body: PASSWORD_RESET_EMAIL_LIMIT_COPY };

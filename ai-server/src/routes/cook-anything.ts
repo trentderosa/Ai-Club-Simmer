@@ -225,7 +225,10 @@ export function createCookAnythingRouter(
       const authResult = await deps.supabase.verifyToken(token);
       if (!authResult.valid || !authResult.userId) {
         if (authResult.error === 'service_unavailable') {
-          res.status(503).json({ error: 'Authentication service temporarily unavailable' });
+          res.status(503).json({
+            error: 'Authentication service temporarily unavailable',
+            code: 'AUTH_UNAVAILABLE',
+          });
           return;
         }
         res.status(401).json({ error: 'Invalid or expired token' });

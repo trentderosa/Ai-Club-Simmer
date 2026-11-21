@@ -138,7 +138,10 @@ describe('Check-in API (F6)', () => {
         });
 
       expect(response.status).toBe(503);
-      expect(response.body.error).toBe('Authentication service unavailable');
+      expect(response.body).toEqual({
+        error: 'Authentication service unavailable',
+        code: 'AUTH_UNAVAILABLE',
+      });
     });
 
     it('accepts valid JWT and creates check-in', async () => {
