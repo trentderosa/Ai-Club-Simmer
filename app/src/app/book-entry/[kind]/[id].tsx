@@ -44,13 +44,13 @@ export default function BookEntryScreen() {
 function NotFound() {
   const router = useRouter();
   return (
-      <SafeAreaView style={styles.fill}>
-        <View style={[styles.fill, pageColumn]}>
+    <SafeAreaView style={styles.fill}>
+      <View style={[styles.fill, pageColumn]}>
         <View style={styles.bar}>
           <IconButton icon="back" label="Back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/book'))} />
         </View>
-      <EmptyState title="Recipe not found" body="That recipe isn’t in your book." action={{ label: 'Back to my book', onPress: () => router.replace('/book') }} />
-        </View>
+        <EmptyState title="Recipe not found" body="That recipe isn’t in your book." action={{ label: 'Back to my book', onPress: () => router.replace('/book') }} />
+      </View>
     </SafeAreaView>
   );
 }
@@ -164,10 +164,10 @@ function EntryView({
     return (
       <SafeAreaView style={styles.fill}>
         <View style={[styles.fill, pageColumn]}>
-        <View style={styles.bar}>
-          <IconButton icon="back" label="Back" onPress={back} />
-        </View>
-        {state.status === 'error' ? <ErrorState error={state.error} onAction={onError} /> : <LoadingState title={title} />}
+          <View style={styles.bar}>
+            <IconButton icon="back" label="Back" onPress={back} />
+          </View>
+          {state.status === 'error' ? <ErrorState error={state.error} onAction={onError} /> : <LoadingState title={title} />}
         </View>
       </SafeAreaView>
     );

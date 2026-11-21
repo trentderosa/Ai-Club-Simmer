@@ -30,6 +30,7 @@ import {
   upcomingDishes,
 } from '../../domain/recipe-book';
 import { normalizeDishName } from '../../domain/dish-name';
+import { heroPhotoForGenerated } from '../../domain/generated-recipe-photo';
 import { useDishPhotos } from '../../state/use-dish-photos';
 import { useSession } from '../../state/session';
 import { useAsync } from '../../state/use-async';
@@ -214,11 +215,13 @@ function FeaturedEntry({ entry, photo, technique, onOpen }: { entry: RecipeBookE
 }
 
 function BookRow({ entry, photo, technique, onOpen }: { entry: RecipeBookEntry; photo: Parameters<typeof DishPhotoFill>[0]['photo']; technique?: string; onOpen: () => void }) {
+  // The 72px thumb can't hold a credit. CC BY photos still need the line where the image is shown, so it sits under the byline. The detail screen keeps its own credit.
+  const credit = heroPhotoForGenerated(photo).credit;
   return (
     <Pressable
       onPress={onOpen}
       accessibilityRole="button"
-      accessibilityLabel={`${entry.recipe_title}. ${formatBookLabel(entry.label, entry.times_cooked)}. Repeat for 50% XP.`}
+      accessibilityLabel={`${entry.recipe_title}. ${formatBookLabel(entry.label, entry.times_cooked)}. Repeat for 50% XP. ${credit}.`}
       style={({ pressed }) => [styles.row, pressed && { opacity: 0.85 }]}
     >
       <View style={styles.rowText}>
@@ -228,6 +231,9 @@ function BookRow({ entry, photo, technique, onOpen }: { entry: RecipeBookEntry; 
         </T>
         <T variant="caption" style={styles.rowByline}>
           {byline(entry, technique)}
+        </T>
+        <T variant="caption" color="ink3" style={styles.rowCredit}>
+          {credit}
         </T>
       </View>
       <View style={styles.thumb}>
@@ -299,6 +305,7 @@ const styles = StyleSheet.create({
   rowText: { flex: 1 },
   rowTitle: { marginTop: space.s1 },
   rowByline: { marginTop: space.s1 },
+  rowCredit: { marginTop: 2 },
   thumb: { width: 72, height: 72, borderRadius: radius.sm, overflow: 'hidden', backgroundColor: color.paperDeep },
   labelRow: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', gap: space.s1 },
   tag: { marginLeft: space.s1, paddingHorizontal: 6, paddingVertical: 1, borderRadius: radius.sm, borderWidth: 1, borderColor: color.rule },

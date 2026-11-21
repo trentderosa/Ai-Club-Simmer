@@ -5,6 +5,7 @@
  * readable. On a recipe hero it opens the Commons file page; on a tappable
  * card it stays text so the card's own press still opens the recipe.
  * List thumbnails can pass showCredit={false}: a 72px image can't hold the line.
+ * The recipe book shows that same line under the row byline.
  */
 import { Image } from 'expo-image';
 import { useState } from 'react';
@@ -24,7 +25,7 @@ export function DishPhotoFill({
 }: {
   photo: DishPhoto | null | undefined;
   linkCredit?: boolean;
-  /** Small thumbnails skip the credit; the feature photo and recipe hero still show it. */
+  /** Small thumbnails skip the on-image credit. The book row shows it under the byline. */
   showCredit?: boolean;
   creditAt?: 'top' | 'bottom';
   creditStyle?: StyleProp<ViewStyle>;

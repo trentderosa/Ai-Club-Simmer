@@ -37,18 +37,18 @@ export default function RecipeScreen() {
     return (
       <SafeAreaView style={styles.fill}>
         <View style={[styles.fill, pageColumn]}>
-        <View style={styles.bar}>
-          <IconButton icon="back" label="Back" onPress={back} />
-        </View>
-        {data.status === 'error' ? (
-          <ErrorState error={data.error} onAction={onError} />
-        ) : (
-          <LoadingState
-            title="Writing your recipe…"
-            body="Your coach is fitting this dish to your kitchen and budget. The first time can take up to a minute."
-            slowBody="Still going. The local model is slow on the first try; after this, the recipe loads instantly."
-          />
-        )}
+          <View style={styles.bar}>
+            <IconButton icon="back" label="Back" onPress={back} />
+          </View>
+          {data.status === 'error' ? (
+            <ErrorState error={data.error} onAction={onError} />
+          ) : (
+            <LoadingState
+              title="Writing your recipe…"
+              body="Your coach is fitting this dish to your kitchen and budget. The first time can take up to a minute."
+              slowBody="Still going. The local model is slow on the first try; after this, the recipe loads instantly."
+            />
+          )}
         </View>
       </SafeAreaView>
     );

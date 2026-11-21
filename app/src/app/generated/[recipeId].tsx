@@ -37,14 +37,14 @@ export default function GeneratedRecipeScreen() {
     return (
       <View style={styles.fill}>
         <View style={[styles.fill, pageColumn]}>
-        <View style={[styles.bar, { paddingTop: insets.top }]}>
-          <IconButton icon="back" label="Back" onPress={back} />
-        </View>
-        {data.status === 'error' ? (
-          <ErrorState error={data.error} onAction={onError} />
-        ) : (
-          <LoadingState title="Opening your recipe…" />
-        )}
+          <View style={[styles.bar, { paddingTop: insets.top }]}>
+            <IconButton icon="back" label="Back" onPress={back} />
+          </View>
+          {data.status === 'error' ? (
+            <ErrorState error={data.error} onAction={onError} />
+          ) : (
+            <LoadingState title="Opening your recipe…" />
+          )}
         </View>
       </View>
     );

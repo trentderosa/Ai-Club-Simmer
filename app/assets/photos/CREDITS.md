@@ -1,6 +1,6 @@
 # Photo credits
 
-All photos here are CC0 (public domain dedication), from Wikimedia Commons. Each license was checked against the Commons API (`extmetadata.LicenseShortName = CC0`) on Nov 15, 2026. They were resized to 960 px wide for the app. Attribution isn't required under CC0, but the recipe hero shows a short credit anyway. Recipe-book list thumbnails omit that line; it lives on the detail screen for that dish, and on the book's featured photo.
+All photos here are CC0 (public domain dedication), from Wikimedia Commons. Each license was checked against the Commons API (`extmetadata.LicenseShortName = CC0`) on Nov 15, 2026. They were resized to 960 px wide for the app. Attribution isn't required under CC0, but the recipe hero shows a short credit anyway. Recipe-book list thumbnails leave that line off the image and show it under the row byline. It also stays on the detail screen for that dish, and on the book's featured photo.
 
 | File | Author | License | Source |
 |---|---|---|---|
