@@ -5,7 +5,7 @@ export interface OllamaGateConfig {
   maxConcurrent: number;
   /** Calls allowed to wait for a slot. 0 means none wait. */
   maxQueue: number;
-  /** Longest a call waits for a slot, in ms. */
+  /** Longest a call waits for a slot, in ms. A per-call 0 means do not wait. */
   queueTimeoutMs: number;
 }
 
@@ -67,6 +67,10 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
     }
     if (queue.length >= config.maxQueue) {
       return Promise.reject(busy('queue_full'));
+    }
+    // Zero (or less) means never wait: no free slot is an immediate busy answer.
+    if (queueTimeoutMs <= 0) {
+      return Promise.reject(busy('queue_timeout'));
     }
     return new Promise<void>((resolve, reject) => {
       const waiter: Waiter = {

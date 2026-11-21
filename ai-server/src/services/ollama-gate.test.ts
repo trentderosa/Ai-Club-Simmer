@@ -165,6 +165,22 @@ describe('createOllamaGate', () => {
     await running;
   });
 
+  it('a zero queue wait takes a free slot but is refused at once when none is free', async () => {
+    const { client, calls } = controllableClient();
+    const gate = createOllamaGate(client, config);
+    const first = gate.generate('a', {}, { queueTimeoutMs: 0 });
+    await flush();
+    expect(calls).toHaveLength(1);
+    await expect(gate.generate('b', {}, { queueTimeoutMs: 0 })).rejects.toMatchObject({
+      reason: 'queue_timeout',
+    });
+    // The refused call never joined the queue.
+    expect(gate.isIdle()).toBe(false);
+    calls[0].resolve('x');
+    await first;
+    expect(gate.isIdle()).toBe(true);
+  });
+
   it('does not time out a waiter that gets its slot in time', async () => {
     const { client, calls } = controllableClient();
     const gate = createOllamaGate(client, config);

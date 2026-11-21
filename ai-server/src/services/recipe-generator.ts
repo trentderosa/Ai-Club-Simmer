@@ -619,7 +619,19 @@ export async function generateRecipe(
   client: OllamaClient,
   slot: PathSlot,
   user: UserProfile,
-  options: { budget?: OllamaBudget } = {}
+  options: {
+    budget?: OllamaBudget;
+    /**
+     * Asked before each retry (attempt 2 and later). False stops the loop and
+     * keeps the earlier failure. Without it every retry runs.
+     */
+    shouldRetry?: () => boolean;
+    /**
+     * Never wait in the gate queue: a call that cannot start at once is
+     * answered busy. Without it each attempt may queue.
+     */
+    immediateOnly?: boolean;
+  } = {}
 ): Promise<RecipeGenerationResponse> {
   const prompt = buildPrompt(slot, user);
   const jsonSchema = getRecipeJsonSchema();
@@ -640,6 +652,13 @@ export async function generateRecipe(
       await sleep(delayMs);
     }
 
+    if (attempt > 1 && options.shouldRetry && !options.shouldRetry()) {
+      // Someone else is waiting for the model. Keep the earlier failure.
+      console.warn('recipe_generation_retry_skipped', { attempt });
+      attemptsMade = attempt - 1;
+      break;
+    }
+
     let queueTimeoutMs: number | undefined;
     if (deadline) {
       queueTimeoutMs = deadline.nextQueueTimeoutMs();
@@ -656,6 +675,7 @@ export async function generateRecipe(
         break;
       }
     }
+    if (options.immediateOnly) queueTimeoutMs = 0;
 
     try {
       // Call Ollama with structured JSON output format

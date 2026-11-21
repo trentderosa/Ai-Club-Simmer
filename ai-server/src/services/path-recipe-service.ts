@@ -17,6 +17,14 @@ export interface PathGenerationError {
   error: { type: string; message: string; attempts: number };
 }
 
+/** Optional limits for a background generation. The route passes none. */
+export interface PathGenerationOptions {
+  /** Asked before each retry; false stops retrying. */
+  shouldRetry?: () => boolean;
+  /** Never wait in the model queue; busy answers at once. */
+  immediateOnly?: boolean;
+}
+
 export interface PathRecipeServiceDeps {
   ollamaClient: OllamaClient;
   /** Per-request time budget for the model queue and calls. No deadline when unset. */
@@ -30,12 +38,14 @@ export interface PathRecipeService {
   /**
    * Generate and save a path recipe, one in flight per user and slot. A second
    * caller for the same user and slot (the route during a prewarm, or the
-   * reverse) joins the running generation instead of starting another.
+   * reverse) joins the running generation instead of starting another. A
+   * joiner shares the running generation's options, not its own.
    */
   generate(
     userId: string,
     slot: PathSlot,
-    userProfile: UserProfile
+    userProfile: UserProfile,
+    generationOptions?: PathGenerationOptions
   ): Promise<PathGenerationResult | PathGenerationError>;
   attachVideos(userId: string, slotId: number, recipe: Recipe): Promise<RecipeVideos>;
 }
@@ -50,10 +60,12 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
   async function generateAndSave(
     userId: string,
     slot: PathSlot,
-    userProfile: UserProfile
+    userProfile: UserProfile,
+    generationOptions: PathGenerationOptions
   ): Promise<PathGenerationResult | PathGenerationError> {
     const result = await generateRecipe(deps.ollamaClient, slot, userProfile, {
       budget: deps.generationBudget,
+      ...generationOptions,
     });
 
     if (!result.success) {
@@ -106,7 +118,8 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
   async function generate(
     userId: string,
     slot: PathSlot,
-    userProfile: UserProfile
+    userProfile: UserProfile,
+    generationOptions: PathGenerationOptions = {}
   ): Promise<PathGenerationResult | PathGenerationError> {
     const key = `${userId}:${slot.id}`;
 
@@ -115,7 +128,7 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
       return inFlight;
     }
 
-    const generationPromise = generateAndSave(userId, slot, userProfile);
+    const generationPromise = generateAndSave(userId, slot, userProfile, generationOptions);
     inFlightGenerations.set(key, generationPromise);
 
     try {

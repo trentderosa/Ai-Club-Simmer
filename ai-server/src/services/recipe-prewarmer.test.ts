@@ -50,7 +50,10 @@ describe('RecipePrewarmer', () => {
     const { deps, generate, logger } = makeDeps();
     await createRecipePrewarmer(deps).prewarm(USER, 21);
     expect(deps.pathRepository.getNextPathSlot).toHaveBeenCalledWith(21);
-    expect(generate).toHaveBeenCalledWith(USER, next, profile);
+    expect(generate).toHaveBeenCalledWith(USER, next, profile, {
+      shouldRetry: expect.any(Function) as () => boolean,
+      immediateOnly: true,
+    });
     expect(logger.info).toHaveBeenCalledWith('recipe_prewarm_started', { slot_id: 22 });
     expect(logger.info).toHaveBeenCalledWith(
       'recipe_prewarm_done',

@@ -7,8 +7,7 @@ import type { OllamaClient } from '../services/ollama-client.js';
 import type { OllamaBudget } from '../services/ollama-budget.js';
 import { sendGenerationBusy } from './generation-busy.js';
 import type { SupabaseService } from '../services/supabase.js';
-import type { Recipe } from '../schemas/recipe.js';
-import { storedTechniqueVideosMatch, type RecipeVideos, type VideoFinder } from '../services/video-finder.js';
+import { storedTechniqueVideosMatch, type VideoFinder } from '../services/video-finder.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
 import type { DishVideo, DishVideoFinder } from '../services/dish-video-finder.js';
 import { normalizeDishName } from '../cook-anything/dish-name.js';
@@ -92,13 +91,6 @@ export function createRecipeRouter(
       supabase: deps.supabase,
       videoFinder: deps.videoFinder,
     });
-  const attachVideos = (userId: string, slotId: number, recipe: Recipe): Promise<RecipeVideos> =>
-    pathRecipes.attachVideos(userId, slotId, recipe);
-  const singleFlightGenerate = (
-    userId: string,
-    slot: PathSlot,
-    userProfile: UserProfile
-  ): ReturnType<PathRecipeService['generate']> => pathRecipes.generate(userId, slot, userProfile);
 
   // IP-based rate limiter to prevent LLM resource exhaustion.
   // NOTE: Behind a tunnel, set TRUST_PROXY=true. index.ts then trusts
@@ -244,7 +236,7 @@ export function createRecipeRouter(
         const videosPromise =
           storedVideos && storedTechniqueVideosMatch(storedVideos)
             ? Promise.resolve(storedVideos)
-            : attachVideos(userId, slotId, existingRecipe);
+            : pathRecipes.attachVideos(userId, slotId, existingRecipe);
         const [videos, media] = await Promise.all([videosPromise, mediaPromise]);
         // F8: the final slot's hidden steps are only served by a mastery reveal.
         res.json({
@@ -283,7 +275,7 @@ export function createRecipeRouter(
       // Photo and dish videos don't depend on the recipe, so look them up while
       // Ollama generates. dishMedia never rejects (it catches internally).
       const mediaPromise = dishMedia(slot.dishName);
-      const result = await singleFlightGenerate(userId, slot, profileForGeneration);
+      const result = await pathRecipes.generate(userId, slot, profileForGeneration);
 
       if (!result.success) {
         // mediaPromise is left to settle on its own; it never rejects.

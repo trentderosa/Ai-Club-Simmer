@@ -24,8 +24,9 @@ export interface RecipePrewarmer {
 
 /**
  * After a path check-in, write the user's next slot recipe in the background so
- * it is already saved when they tap it. Only runs when the model is idle, so it
- * never queues behind or ahead of a real request.
+ * it is already saved when they tap it. Starts only when the model is idle,
+ * never waits in the queue (a busy answer just stops it), and stops retrying
+ * as soon as anyone else is waiting, so it never competes with a real request.
  */
 export function createRecipePrewarmer(deps: RecipePrewarmerDeps): RecipePrewarmer {
   const logger = deps.logger ?? console;
@@ -50,7 +51,10 @@ export function createRecipePrewarmer(deps: RecipePrewarmerDeps): RecipePrewarme
 
       logger.info('recipe_prewarm_started', { slot_id: slot.id });
       const started = Date.now();
-      const result = await deps.pathRecipes.generate(userId, slot, profile);
+      const result = await deps.pathRecipes.generate(userId, slot, profile, {
+        shouldRetry: () => deps.gate.isIdle(),
+        immediateOnly: true,
+      });
       if (!result.success) {
         logger.warn('recipe_prewarm_failed', { slot_id: slot.id, error: result.error.type });
         return;
