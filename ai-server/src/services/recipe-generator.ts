@@ -321,9 +321,11 @@ function rinseOrWashSpans(sentence: string): { negated: boolean }[] {
 
 /**
  * An instruction to rinse or wash chicken, poultry, meat, or bird.
- * "Pat dry" or "do not rinse" in the same step does not cancel this.
+ * "Pat dry" or "do not rinse" in the same text does not cancel this.
+ * Recipe generation and the check-in coach note share this check.
+ * "Rinse the rice" stays clear because rice is not one of those proteins.
  */
-function hasAffirmativeProteinRinse(instruction: string): boolean {
+export function hasAffirmativeProteinRinse(instruction: string): boolean {
   return sentencesOf(instruction).some((sentence) => {
     if (!RAW_PROTEIN_RE.test(sentence)) return false;
     return rinseOrWashSpans(sentence).some((span) => !span.negated);
