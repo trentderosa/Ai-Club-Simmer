@@ -7,6 +7,7 @@ import {
   cleanTechniqueName,
   sanitizeUserText,
   SAFETY_KEYWORDS,
+  hasAffirmativeProteinRinse,
   PathSlot,
 } from './recipe-generator.js';
 import type { OllamaClient } from './ollama-client.js';
@@ -664,6 +665,23 @@ describe('ensureSafetyFlags - raw protein rinse and poultry doneness', () => {
     const step = flag(instruction);
     expect(step.isSafetyStep).toBe(true);
     expect(step.instruction).toBe(instruction);
+  });
+
+  it('keeps the sentence-level recipe check, including rice next to a sear', () => {
+    expect(hasAffirmativeProteinRinse('Rinse the rice, then sear the chicken.')).toBe(true);
+    expect(hasAffirmativeProteinRinse('Wash your hands after handling raw chicken.')).toBe(true);
+    expect(hasAffirmativeProteinRinse('Rinse the pork.')).toBe(false);
+    expect(hasAffirmativeProteinRinse('Rinse the fish.')).toBe(false);
+    expect(hasAffirmativeProteinRinse('Wash the shrimp.')).toBe(false);
+  });
+
+  it('treats don\'t forget and never skip as an instruction to rinse', () => {
+    expect(hasAffirmativeProteinRinse("Don't forget to rinse the chicken.")).toBe(true);
+    expect(hasAffirmativeProteinRinse('Never skip rinsing the chicken.')).toBe(true);
+    expect(hasAffirmativeProteinRinse("Don't rinse the chicken.")).toBe(false);
+    expect(hasAffirmativeProteinRinse('Never rinse the chicken.')).toBe(false);
+    expect(hasAffirmativeProteinRinse('Do not rinse the chicken.')).toBe(false);
+    expect(hasAffirmativeProteinRinse('Avoid rinsing the chicken.')).toBe(false);
   });
 
   it.each([

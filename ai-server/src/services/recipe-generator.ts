@@ -305,6 +305,19 @@ function sentencesOf(instruction: string): string[] {
   return parts.length > 0 ? parts : [instruction];
 }
 
+/** "Don't forget" and "never skip" tell the cook to rinse. They are not a "do not". */
+function clauseHasRinseNegation(beforeClause: string): boolean {
+  const re = new RegExp(NEGATION_RE.source, 'gi');
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(beforeClause)) !== null) {
+    const word = match[0];
+    const after = beforeClause.slice(match.index + word.length);
+    if (/^(?:don['’]?t|dont|never)$/i.test(word) && /^\s+(?:forget|skip)\b/i.test(after)) continue;
+    return true;
+  }
+  return false;
+}
+
 function rinseOrWashSpans(sentence: string): { negated: boolean }[] {
   const re = new RegExp(RINSE_OR_WASH_SOURCE, 'gi');
   const spans: { negated: boolean }[] = [];
@@ -314,19 +327,145 @@ function rinseOrWashSpans(sentence: string): { negated: boolean }[] {
     // still counts the second instruction as dangerous.
     const before = sentence.slice(0, match.index);
     const clauseStart = Math.max(before.lastIndexOf(','), before.lastIndexOf(':'));
-    spans.push({ negated: NEGATION_RE.test(before.slice(clauseStart + 1)) });
+    spans.push({ negated: clauseHasRinseNegation(before.slice(clauseStart + 1)) });
   }
   return spans;
 }
 
 /**
  * An instruction to rinse or wash chicken, poultry, meat, or bird.
- * "Pat dry" or "do not rinse" in the same step does not cancel this.
+ * "Pat dry" or "do not rinse" in the same text does not cancel this.
+ * Recipe steps use this sentence check. A check-in coach note uses
+ * coachNoteTextRinsesRawProtein, which looks at the rinse clause only.
+ * "Rinse the rice" stays clear because rice is not one of those proteins.
  */
-function hasAffirmativeProteinRinse(instruction: string): boolean {
+export function hasAffirmativeProteinRinse(instruction: string): boolean {
   return sentencesOf(instruction).some((sentence) => {
     if (!RAW_PROTEIN_RE.test(sentence)) return false;
     return rinseOrWashSpans(sentence).some((span) => !span.negated);
+  });
+}
+
+// "chops" is the cut. The verb "chop" is not. Fish and shrimp stay out.
+// Drumsticks, wings, breasts, bacon, and sausage are the same raw-protein rinse.
+const COACH_NOTE_PROTEIN_SOURCE =
+  String.raw`chickens?|poultry|meats?|birds?|turkeys?|ducks?|hens?|thighs?|drumsticks?|wings?|breasts?|bacons?|sausages?|pork|beef|lamb|steaks?|(?:pork|lamb)\s+chops?|chops`;
+const COACH_NOTE_PROTEIN_RE = new RegExp(String.raw`\b(?:${COACH_NOTE_PROTEIN_SOURCE})\b`, 'i');
+const COACH_NOTE_NEGATION_SOURCE =
+  String.raw`do not|don['’]?t|dont|never|avoid|no need to|skip|instead of|without|stop|rather than|not necessary to`;
+const COACH_KEPT_OBJECT_RE =
+  /\b(?:hands?|fingers?|cutting\s+boards?|boards?|knives|knife|counters?|countertops?|surfaces?|surface|sinks?|utensils?|thermometers?)\b/i;
+const COACH_SAFE_FOOD_RE =
+  /\b(?:rice|beans?|lentils?|grains?|quinoa|farro|barley|vegetables?|lettuce|greens?|herbs?|fruit|berries|pasta|noodles?|fish|shrimp|parsley)\b/i;
+// The rinse object stops at a new clause, so "because raw chicken" is not the object.
+const RINSE_CLAUSE_BOUNDARY_SOURCE =
+  String.raw`[,:;]|\b(?:then|after|before|once|when|while|because|since|so)\b`;
+
+function clauseEdge(sentence: string, verbStart: number, verbEnd: number): { before: string; after: string } {
+  const boundary = new RegExp(RINSE_CLAUSE_BOUNDARY_SOURCE, 'gi');
+  let start = 0;
+  let end = sentence.length;
+  let match: RegExpExecArray | null;
+  while ((match = boundary.exec(sentence)) !== null) {
+    const matchEnd = match.index + match[0].length;
+    if (matchEnd <= verbStart) start = matchEnd;
+    else if (match.index >= verbEnd) {
+      end = match.index;
+      break;
+    }
+  }
+  return { before: sentence.slice(start, verbStart), after: sentence.slice(verbEnd, end) };
+}
+
+/**
+ * A negation counts only in the same "and" clause, directly before the verb.
+ * "ever", "really", "need to", "have to", or "bother to" may sit in between,
+ * and a second rinse or wash joined by "or" keeps the first verb's negation.
+ * "Skip the salt and rinse" is still a rinse. "Don't forget" and "never skip"
+ * are instructions to rinse, not negations.
+ */
+function coachRinseIsNegated(sentence: string, verbStart: number): boolean {
+  const before = sentence.slice(0, verbStart);
+  const clauseStart = Math.max(before.lastIndexOf(','), before.lastIndexOf(':'), before.lastIndexOf(';'));
+  const clause = before.slice(clauseStart + 1);
+  const segments = clause.split(/\band\b/i);
+  let immediate = (segments[segments.length - 1] ?? '').replace(
+    /\b(?:don['’]?t|dont|never)\s+(?:forget|skip)\b/gi,
+    ' '
+  );
+  immediate = immediate.replace(/\b(?:rins\w*|wash\w*)\s+or\s+$/i, ' ');
+  const direct = new RegExp(
+    String.raw`\b(?:(?:${COACH_NOTE_NEGATION_SOURCE})|(?:don['’]?t|dont|never|no)\s+(?:\w+\s+)?need\s+to)\b(?:\s+(?:ever|really|need\s+to|have\s+to|bother(?:\s+to)?)\b)?(?:\s+(?:a|an|the|your|raw)\b)*\s*$`,
+    'i'
+  );
+  return direct.test(immediate);
+}
+
+/** "rinsing raw chicken spreads" is a warning, not an instruction to rinse. */
+function isGerundWarning(verb: string, after: string): boolean {
+  if (!/ing$/i.test(verb)) return false;
+  const warning = new RegExp(
+    String.raw`^\s+(?:(?:the|a|an|your|raw)\s+)*(?:${COACH_NOTE_PROTEIN_SOURCE})\b(?:\s+\w+){0,4}?\s+(?:spreads|splashes|splatters|can\s+(?:spread|splash|splatter)|is\s+(?:risky|unsafe|unnecessary|a\s+bad\s+idea|not\s+(?:safe|needed))|isn['’]?t\s+(?:necessary|needed|safe))\b`,
+    'i'
+  );
+  return warning.test(after);
+}
+
+function rinseObjectPhrases(before: string, after: string): string[] {
+  const given = before.match(/\bgive\s+(.+?)\s+an?\s+$/i);
+  if (given) return [given[1]];
+  const rest = after.trim();
+  const lead = rest.match(/^and\s+(?:chop|slice|dice|mince)\s+(.+)$/i);
+  if (lead) return [lead[1]];
+  if (!rest) return [];
+  const phrases: string[] = [];
+  for (const part of rest.split(/\band\b/i)) {
+    const phrase = part.trim();
+    if (!phrase) continue;
+    if (/^(?:pat|sear|cook|dry|heat|roast|slice|chop|dice|mince|drain|rest)\b/i.test(phrase)) break;
+    phrases.push(phrase);
+  }
+  return phrases;
+}
+
+function classifyRinseObject(phrase: string): 'safe' | 'danger' | 'fallback' {
+  const core = phrase.split(/\b(?:under|in|with|into|over|from|for|on|well|thoroughly)\b/i)[0]?.trim() ?? '';
+  if (!core) return 'fallback';
+  const text = core.replace(/\bmeat\s+(?=thermometers?\b)/gi, '');
+  const dangerous = COACH_NOTE_PROTEIN_RE.test(text);
+  const kept = COACH_KEPT_OBJECT_RE.test(text);
+  if (dangerous) return 'danger';
+  if (kept) return 'safe';
+  if (COACH_SAFE_FOOD_RE.test(text)) return 'safe';
+  return 'fallback';
+}
+
+/**
+ * Check-in coach note only. The direct object of rinse or wash decides.
+ * Hands, a board, a surface, a counter, a sink, a knife, a utensil, or a
+ * thermometer stays. Rice, fish, shrimp, and a warning ("no need to rinse",
+ * "don't rinse or wash", "rather than rinsing", "rinsing spreads", "can splash",
+ * "isn't necessary") stay. A negation of something else does not hide a later
+ * rinse, and "don't forget" or "never skip" does not either. A pronoun, or an
+ * object that names no food, falls back to the whole sentence, so "rinse it"
+ * still counts when that sentence names chicken,
+ * pork, beef, lamb, steak, chops, drumsticks, wings, breasts, bacon, or
+ * sausage. Recipe steps keep the sentence check.
+ */
+export function coachNoteTextRinsesRawProtein(text: string): boolean {
+  return sentencesOf(text).some((sentence) => {
+    const re = new RegExp(RINSE_OR_WASH_SOURCE, 'gi');
+    let match: RegExpExecArray | null;
+    while ((match = re.exec(sentence)) !== null) {
+      if (coachRinseIsNegated(sentence, match.index)) continue;
+      const edge = clauseEdge(sentence, match.index, match.index + match[0].length);
+      if (isGerundWarning(match[0], edge.after)) continue;
+      const phrases = rinseObjectPhrases(edge.before, edge.after);
+      if (phrases.some((phrase) => classifyRinseObject(phrase) === 'danger')) return true;
+      if (phrases.length > 0 && phrases.every((phrase) => classifyRinseObject(phrase) === 'safe')) continue;
+      if (COACH_NOTE_PROTEIN_RE.test(sentence.replace(/\bmeat\s+(?=thermometers?\b)/gi, ''))) return true;
+    }
+    return false;
   });
 }
 

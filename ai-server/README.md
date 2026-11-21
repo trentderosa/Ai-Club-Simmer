@@ -35,6 +35,12 @@ and dish-video lookup runs while Ollama generates. The check-in Coach's note pro
 dish name and the user's equipment (one small `profiles` read, plus one dish read per new
 check-in: `getPathSlot` for a path slot, or a `user_generated_recipes` read scoped by id and
 user_id for Cook anything; a failed lookup is logged and the note is written without it).
+A note that tells the cook to rinse or wash raw chicken, poultry, meat, pork, beef, lamb,
+steak, chops, drumsticks, wings, breasts, bacon, or sausage is rejected and retried within the same attempts; if every attempt still
+says so, the note is rewritten to pat it dry with paper towels. Washing hands, a board, a surface, a knife, a utensil, or a thermometer stays, and so does
+rinsing rice, fish, or shrimp, or a warning not to rinse, including "don't rinse or wash" and "rather than rinsing". Rinsing "it" still counts when
+that sentence names the protein. A negation of something else, and "don't forget" or "never skip", does not hide that rinse. The Ollama timeout
+and the attempt limit are unchanged.
 A JSON parse failure is logged and returned only as `invalid_json`, because the parser's
 error text quotes the model's output.
 
