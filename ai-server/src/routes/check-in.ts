@@ -5,6 +5,7 @@ import { CheckInIdempotencyConflict, CheckInInputSchema, CheckInMasterySessionEr
 import type { CheckInService } from '../services/check-in-service.js';
 import type { JwtVerifier } from '../services/jwt-verifier.js';
 import { createAuthMiddleware } from '../middleware/authenticate.js';
+import { createPreAuthIpLimiter } from '../middleware/pre-auth-ip-limiter.js';
 
 export interface CheckInRouterDeps {
   checkInService: CheckInService;
@@ -36,13 +37,7 @@ export function createCheckInRouter(
   // calls are bounded too. Behind a reverse proxy set TRUST_PROXY=true so
   // req.ip is the real client. Looser than the per-user cap because many
   // students can share one NAT or tunnel IP.
-  const ipLimiter = rateLimit({
-    windowMs: options.ipRateLimit?.windowMs ?? 60000,
-    max: options.ipRateLimit?.maxRequests ?? 60,
-    message: { error: 'Too many requests, please try again later' },
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
+  const ipLimiter = createPreAuthIpLimiter(options.ipRateLimit);
 
   // S1/B3 fix: Per-user rate limiter runs AFTER auth, using the authenticated userId
   const userLimiter = rateLimit({

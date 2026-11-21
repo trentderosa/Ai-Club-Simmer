@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z, ZodError } from 'zod';
 import { createAuthMiddleware } from '../middleware/authenticate.js';
+import { createPreAuthIpLimiter } from '../middleware/pre-auth-ip-limiter.js';
 import type { JwtVerifier } from '../services/jwt-verifier.js';
 import { MasteryError, type MasteryErrorCode, type MasteryRepository } from '../repositories/mastery-repository.js';
 
@@ -52,13 +53,7 @@ export function createMasteryRouter(deps: MasteryRouterDeps, options: MasteryRou
   // calls are bounded too. Behind a reverse proxy set TRUST_PROXY=true so
   // req.ip is the real client. Looser than the per-user cap because many
   // students can share one NAT or tunnel IP.
-  const ipLimiter = rateLimit({
-    windowMs: options.ipRateLimit?.windowMs ?? 60000,
-    max: options.ipRateLimit?.maxRequests ?? 60,
-    message: { error: 'Too many requests, please try again later' },
-    standardHeaders: true,
-    legacyHeaders: false,
-  });
+  const ipLimiter = createPreAuthIpLimiter(options.ipRateLimit);
 
   // Per-user, after auth. Reveals are cheap single-row updates, so the limit
   // is more generous than recipe generation but still bounded.

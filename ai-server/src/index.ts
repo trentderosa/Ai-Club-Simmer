@@ -1,6 +1,8 @@
 import express from 'express';
 import { loadEnvFile } from './load-env.js';
 import { assertProductionConfig, loadConfig } from './config.js';
+import { runWithConfigErrors } from './run-with-config-errors.js';
+import { createShutdown, SHUTDOWN_GRACE_MS } from './shutdown.js';
 import { applyTrustProxy } from './trust-proxy.js';
 import { createCorsMiddleware } from './middleware/cors.js';
 import { mountErrorHandlers } from './middleware/error-handler.js';
@@ -66,7 +68,13 @@ import type { GeneratedRecipeRepository } from './repositories/generated-recipe-
 
 loadEnvFile();
 
-const config = loadConfig();
+// A bad setting prints one `Config error:` line and exits 1, with no stack.
+const configErrorIo = {
+  exit: (code: number): never => process.exit(code),
+  stderr: process.stderr,
+};
+
+const config = runWithConfigErrors(() => loadConfig(), configErrorIo);
 
 const app = express();
 app.disable('x-powered-by');
@@ -290,7 +298,7 @@ function createServicesFromConfig(): ServiceConfig {
   };
 }
 
-const services = createServicesFromConfig();
+const services = runWithConfigErrors(() => createServicesFromConfig(), configErrorIo);
 
 const recipeRouter = createRecipeRouter(
   {
@@ -342,9 +350,10 @@ app.use(
   })
 );
 
-// Per-IP pre-auth cap for check-ins and mastery (PREAUTH_IP_RATE_LIMIT_MAX).
+// Per-IP pre-auth cap for check-ins and mastery (PREAUTH_IP_RATE_LIMIT_MAX and
+// PREAUTH_IP_RATE_LIMIT_WINDOW_MS).
 const preAuthIpRateLimit = {
-  windowMs: config.rateLimit.windowMs,
+  windowMs: config.preAuthIpRateLimitWindowMs,
   maxRequests: config.preAuthIpRateLimitMax,
 };
 
@@ -391,7 +400,10 @@ mountHealthRoutes(app, {
 mountErrorHandlers(app);
 
 // Retry failed XP awards on a timer (same job as npm run reconcile:xp).
-const reconcileScheduler = startReconcileScheduler(process.env, { stubAuth: isStubAuthAllowed() });
+const reconcileScheduler = runWithConfigErrors(
+  () => startReconcileScheduler(process.env, { stubAuth: isStubAuthAllowed() }),
+  configErrorIo
+);
 
 const server = app.listen(config.port, config.host, () => {
   console.info(`Simmer AI Server running on http://${config.host}:${config.port}`);
@@ -424,23 +436,15 @@ const server = app.listen(config.port, config.host, () => {
   console.info(`CORS origins: ${config.allowedOrigins.join(', ')}`);
 });
 
-// Graceful shutdown: stop the scheduler, stop accepting connections, and force
-// exit if keep-alive connections linger. Registered here, never in tests
+// Graceful shutdown: stop the scheduler, stop accepting connections, and wait
+// for in-flight requests. The force-exit waits for the model timeout plus a
+// grace period so an in-flight generation attempt can finish (the timer is
+// unref'd). A second signal exits right away. Registered here, never in tests
 // (this module is not imported by them).
-const SHUTDOWN_FORCE_EXIT_MS = 10_000;
-let shuttingDown = false;
-function shutdown(signal: string): void {
-  if (shuttingDown) {
-    console.warn(`${signal} received again, exiting now`);
-    process.exit(1);
-  }
-  shuttingDown = true;
-  console.info(`${signal} received, shutting down`);
-  if (reconcileScheduler.enabled) reconcileScheduler.stop();
-  const forceTimer = setTimeout(() => process.exit(1), SHUTDOWN_FORCE_EXIT_MS);
-  forceTimer.unref();
-  server.close(() => process.exit(0));
-  server.closeIdleConnections?.();
-}
+const shutdown = createShutdown(server, reconcileScheduler, {
+  forceExitMs: config.ollama.timeoutMs + SHUTDOWN_GRACE_MS,
+  exit: (code: number): void => process.exit(code),
+  logger: console,
+});
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));

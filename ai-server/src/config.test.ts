@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { assertProductionConfig, loadConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
+import { ConfigError, assertProductionConfig, loadConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -265,5 +265,49 @@ describe('PREAUTH_IP_RATE_LIMIT_MAX', () => {
       vi.stubEnv('PREAUTH_IP_RATE_LIMIT_MAX', bad);
       expect(() => loadConfig()).toThrow('PREAUTH_IP_RATE_LIMIT_MAX must be a whole number from 1 to 10000');
     }
+  });
+});
+
+describe('PREAUTH_IP_RATE_LIMIT_WINDOW_MS', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('defaults to 60000 when unset or empty, independent of RATE_LIMIT_WINDOW_MS', () => {
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_WINDOW_MS', '');
+    vi.stubEnv('RATE_LIMIT_WINDOW_MS', '5000');
+    const config = loadConfig();
+    expect(config.preAuthIpRateLimitWindowMs).toBe(60000);
+    expect(config.rateLimit.windowMs).toBe(5000);
+  });
+
+  it('accepts the range edges', () => {
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_WINDOW_MS', '1000');
+    expect(loadConfig().preAuthIpRateLimitWindowMs).toBe(1000);
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_WINDOW_MS', '3600000');
+    expect(loadConfig().preAuthIpRateLimitWindowMs).toBe(3600000);
+  });
+
+  it('rejects out-of-range and non-integer values, naming the variable', () => {
+    for (const bad of ['999', '3600001', '1.5', 'abc', '-1']) {
+      vi.stubEnv('PREAUTH_IP_RATE_LIMIT_WINDOW_MS', bad);
+      expect(() => loadConfig()).toThrow('PREAUTH_IP_RATE_LIMIT_WINDOW_MS must be a whole number from 1000 to 3600000');
+    }
+  });
+});
+
+describe('ConfigError', () => {
+  it('is thrown by parseBoundedIntEnv and assertProductionConfig', () => {
+    expect(() => parseBoundedIntEnv({ X: 'abc' }, 'X', 1, 0, 10)).toThrow(ConfigError);
+    expect(() => assertProductionConfig({})).toThrow(ConfigError);
+  });
+
+  it('does not include secret values in assertProductionConfig messages', () => {
+    try {
+      assertProductionConfig({ serviceRoleKey: 'super-secret-service-role' });
+    } catch (error) {
+      expect((error as Error).message).not.toContain('super-secret-service-role');
+    }
+    expect.assertions(1);
   });
 });
