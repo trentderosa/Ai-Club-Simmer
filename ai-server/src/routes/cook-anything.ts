@@ -1,6 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import type { OllamaClient } from '../services/ollama-client.js';
+import type { OllamaGate } from '../services/ollama-gate.js';
+import { sendGenerationBusy } from './generation-busy.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
 import type { DishVideo, DishVideoFinder } from '../services/dish-video-finder.js';
@@ -17,7 +19,8 @@ import { generateCookAnythingRecipe } from '../cook-anything/generator.js';
 import { sanitizeRecipeVideos, youtubeWatchUrl } from '../cook-anything/youtube-url.js';
 
 export interface CookAnythingRouterDeps {
-  ollamaClient: OllamaClient;
+  /** The shared gate in production. A plain client (tests) has no isSaturated. */
+  ollamaClient: OllamaClient & Partial<Pick<OllamaGate, 'isSaturated'>>;
   supabase: SupabaseService;
   generatedRecipes: GeneratedRecipeRepository;
   videoFinder?: VideoFinder | null;
@@ -203,6 +206,10 @@ export function createCookAnythingRouter(
       return;
     }
     if ('error' in result && result.error) {
+      if (result.error.type === 'busy') {
+        sendGenerationBusy(res);
+        return;
+      }
       res.status(500).json({
         error: 'Recipe generation failed. Please try again.',
         type: result.error.type,
@@ -298,6 +305,11 @@ export function createCookAnythingRouter(
       // request for this dish must join this promise instead of spending
       // another generation and starting another model call.
       const work = (async (): Promise<GenerationWorkResult> => {
+        // A full queue is refused before allow(), so an overloaded model
+        // never costs the user one of their generations.
+        if (deps.ollamaClient.isSaturated?.()) {
+          return { error: { type: 'busy', message: 'Model is busy', attempts: 0 } };
+        }
         let allowed: boolean;
         try {
           allowed = await generationLimiter.allow(userId);

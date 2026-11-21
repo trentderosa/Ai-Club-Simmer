@@ -4,6 +4,7 @@ import { UserProfile } from '../schemas/user.js';
 import type { OllamaClient } from './ollama-client.js';
 import { countedHiddenStepCount, MASTERY_MIN_HIDDEN_STEPS, MASTERY_MIN_STEPS } from '../mastery/mask.js';
 import { logGenerationFailure } from './generation-failure.js';
+import { OllamaBusyError } from './ollama-gate.js';
 
 export interface RecipeGenerationResult {
   success: true;
@@ -13,7 +14,8 @@ export interface RecipeGenerationResult {
 export interface RecipeGenerationError {
   success: false;
   error: {
-    type: 'validation_failed' | 'generation_failed';
+    /** busy: the shared model queue refused the call. Never retried. */
+    type: 'validation_failed' | 'generation_failed' | 'busy';
     message: string;
     attempts: number;
   };
@@ -709,6 +711,13 @@ export async function generateRecipe(
         recipe: recipeWithSafetyFlags,
       };
     } catch (error) {
+      // A busy model is not retried: more attempts only deepen the backlog.
+      if (error instanceof OllamaBusyError) {
+        return {
+          success: false,
+          error: { type: 'busy', message: 'Model is busy', attempts: attempt },
+        };
+      }
       // Ollama client error (network, model not found, etc.)
       lastError = error as Error;
       console.warn('Recipe attempt rejected', {

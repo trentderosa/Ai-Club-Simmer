@@ -4,6 +4,7 @@ import { assertProductionConfig, loadConfig } from './config.js';
 import { applyTrustProxy } from './trust-proxy.js';
 import { createCorsMiddleware } from './middleware/cors.js';
 import { createOllamaClient } from './services/ollama-client.js';
+import { createOllamaGate } from './services/ollama-gate.js';
 import {
   createSupabaseService,
   createSupabaseStub,
@@ -79,7 +80,8 @@ applyTrustProxy(app, process.env.TRUST_PROXY);
 app.use(createCorsMiddleware(config.allowedOrigins));
 app.use(express.json());
 
-const ollamaClient = createOllamaClient(config.ollama);
+// Every Ollama call goes through one shared queue (OLLAMA_MAX_CONCURRENT etc.).
+const ollamaClient = createOllamaGate(createOllamaClient(config.ollama), config.ollamaGate);
 
 interface ServiceConfig {
   supabase: ReturnType<typeof createSupabaseService>;
@@ -243,7 +245,9 @@ function createServicesFromConfig(): ServiceConfig {
   const pathRepository =
     url && serviceRoleKey ? new SupabasePathRepository({ url, serviceRoleKey }) : undefined;
 
-  const coachNoteGenerator = createCoachNoteGenerator(ollamaClient);
+  const coachNoteGenerator = createCoachNoteGenerator(ollamaClient, {
+    queueTimeoutMs: config.ollamaGate.coachNoteQueueTimeoutMs,
+  });
   // XP is awarded only here, server-side, with the service role (never by the client).
   const xpAwarder =
     url && serviceRoleKey

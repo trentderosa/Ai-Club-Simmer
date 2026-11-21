@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
+import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadOllamaGateConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -197,5 +197,39 @@ describe('loadDishPhotoConfig', () => {
         'DISH_PHOTO_LOOKUP_TIMEOUT_MS must be a whole number from 500 to 10000'
       );
     }
+  });
+});
+
+describe('loadOllamaGateConfig', () => {
+  it('defaults to one call at a time, 6 waiting, 90s and 15s waits', () => {
+    expect(loadOllamaGateConfig({})).toEqual({
+      maxConcurrent: 1,
+      maxQueue: 6,
+      queueTimeoutMs: 90000,
+      coachNoteQueueTimeoutMs: 15000,
+    });
+  });
+
+  it('reads overrides, including a queue of 0', () => {
+    expect(
+      loadOllamaGateConfig({
+        OLLAMA_MAX_CONCURRENT: '2',
+        OLLAMA_MAX_QUEUE: '0',
+        OLLAMA_QUEUE_TIMEOUT_MS: '5000',
+        OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS: '2000',
+      })
+    ).toEqual({ maxConcurrent: 2, maxQueue: 0, queueTimeoutMs: 5000, coachNoteQueueTimeoutMs: 2000 });
+  });
+
+  it('rejects out-of-range or non-numeric values, naming the variable', () => {
+    expect(() => loadOllamaGateConfig({ OLLAMA_MAX_CONCURRENT: '0' })).toThrow(/OLLAMA_MAX_CONCURRENT/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_MAX_CONCURRENT: '9' })).toThrow(/OLLAMA_MAX_CONCURRENT/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_MAX_QUEUE: '101' })).toThrow(/OLLAMA_MAX_QUEUE/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_MAX_QUEUE: '-1' })).toThrow(/OLLAMA_MAX_QUEUE/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_QUEUE_TIMEOUT_MS: '999' })).toThrow(/OLLAMA_QUEUE_TIMEOUT_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_QUEUE_TIMEOUT_MS: '600001' })).toThrow(/OLLAMA_QUEUE_TIMEOUT_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS: 'abc' })).toThrow(
+      /OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS/
+    );
   });
 });

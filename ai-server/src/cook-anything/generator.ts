@@ -10,6 +10,7 @@ import {
 } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import { logGenerationFailure } from '../services/generation-failure.js';
+import { OllamaBusyError } from '../services/ollama-gate.js';
 import { buildCookAnythingPrompt } from './prompt.js';
 import { FreeformRecipeSchema } from './recipe-schema.js';
 
@@ -63,6 +64,13 @@ export async function generateCookAnythingRecipe(
       }
       return { success: true, recipe };
     } catch (error) {
+      // A busy model is not retried: more attempts only deepen the backlog.
+      if (error instanceof OllamaBusyError) {
+        return {
+          success: false,
+          error: { type: 'busy', message: 'Model is busy', attempts: attempt },
+        };
+      }
       lastError = error as Error;
     }
   }

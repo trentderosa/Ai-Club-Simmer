@@ -134,7 +134,11 @@ Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Pl
 | `OLLAMA_BASE_URL` | Ollama base URL (default `http://localhost:11434`) |
 | `OLLAMA_MODEL` | Model name (default `llama3.2`) |
 | `OLLAMA_MAX_TOKENS` | Max generation tokens (default `1500`) |
-| `OLLAMA_TIMEOUT_MS` | Ollama timeout in ms (default `60000`) |
+| `OLLAMA_TIMEOUT_MS` | Ollama timeout in ms (default `60000`). The clock starts when a call gets a model slot, not while it waits in the queue. |
+| `OLLAMA_MAX_CONCURRENT` | Model calls running at once, shared by path recipes, Cook anything and coach notes (default `1`, range 1 to 8) |
+| `OLLAMA_MAX_QUEUE` | Calls allowed to wait for a slot (default `6`, range 0 to 100). A full queue answers `503 GENERATION_BUSY`. |
+| `OLLAMA_QUEUE_TIMEOUT_MS` | Longest a recipe call waits for a slot, in ms (default `90000`, range 1000 to 600000) |
+| `OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS` | Longest a check-in coach note waits for a slot before using the fallback note (default `15000`, range 1000 to 600000) |
 | `PORT` | AI server port (default `3001`) |
 | `HOST` | Bind address (default `127.0.0.1`) |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the AI server (Expo web). Default: `http://localhost:8081`, `http://127.0.0.1:8081`, `http://localhost:19006`, `http://127.0.0.1:19006`. Never `*`. |

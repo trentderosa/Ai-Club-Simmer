@@ -49,6 +49,14 @@ export interface Config {
     /** Timeout for one Wikimedia Commons lookup, in ms. */
     timeoutMs: number;
   };
+  /** Shared queue in front of every Ollama call (see services/ollama-gate.ts). */
+  ollamaGate: {
+    maxConcurrent: number;
+    maxQueue: number;
+    queueTimeoutMs: number;
+    /** Shorter queue wait for check-in coach notes, which fall back instead of failing. */
+    coachNoteQueueTimeoutMs: number;
+  };
 }
 
 type Env = Record<string, string | undefined>;
@@ -239,6 +247,7 @@ export function loadConfig(): Config {
     allowedOrigins: parseAllowedOrigins(),
     cookAnything: loadCookAnythingConfig(),
     dishPhoto: loadDishPhotoConfig(),
+    ollamaGate: loadOllamaGateConfig(),
   };
 }
 
@@ -370,5 +379,43 @@ export function loadReconcileConfig(env: Env = process.env): ReconcileConfig {
     batchLimit: bounded('XP_RECONCILE_BATCH_LIMIT', XP_RECONCILE_BATCH_LIMIT),
     maxAttempts: bounded('XP_RECONCILE_MAX_ATTEMPTS', XP_RECONCILE_MAX_ATTEMPTS),
     retryBaseMinutes: bounded('XP_RECONCILE_RETRY_BASE_MINUTES', XP_RECONCILE_RETRY_BASE_MINUTES),
+  };
+}
+
+export const OLLAMA_MAX_CONCURRENT = { default: 1, min: 1, max: 8 } as const;
+export const OLLAMA_MAX_QUEUE = { default: 6, min: 0, max: 100 } as const;
+export const OLLAMA_QUEUE_TIMEOUT_MS = { default: 90000, min: 1000, max: 600000 } as const;
+export const OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS = { default: 15000, min: 1000, max: 600000 } as const;
+
+export function loadOllamaGateConfig(env: Env = process.env): Config['ollamaGate'] {
+  return {
+    maxConcurrent: parseBoundedIntEnv(
+      env,
+      'OLLAMA_MAX_CONCURRENT',
+      OLLAMA_MAX_CONCURRENT.default,
+      OLLAMA_MAX_CONCURRENT.min,
+      OLLAMA_MAX_CONCURRENT.max
+    ),
+    maxQueue: parseBoundedIntEnv(
+      env,
+      'OLLAMA_MAX_QUEUE',
+      OLLAMA_MAX_QUEUE.default,
+      OLLAMA_MAX_QUEUE.min,
+      OLLAMA_MAX_QUEUE.max
+    ),
+    queueTimeoutMs: parseBoundedIntEnv(
+      env,
+      'OLLAMA_QUEUE_TIMEOUT_MS',
+      OLLAMA_QUEUE_TIMEOUT_MS.default,
+      OLLAMA_QUEUE_TIMEOUT_MS.min,
+      OLLAMA_QUEUE_TIMEOUT_MS.max
+    ),
+    coachNoteQueueTimeoutMs: parseBoundedIntEnv(
+      env,
+      'OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS',
+      OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS.default,
+      OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS.min,
+      OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS.max
+    ),
   };
 }

@@ -3,6 +3,7 @@ import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
 import { generateRecipe, PathSlot } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
+import { sendGenerationBusy } from './generation-busy.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
 import { storedTechniqueVideosMatch, type RecipeVideos, type VideoFinder, type VideoLookupResult } from '../services/video-finder.js';
@@ -355,6 +356,10 @@ export function createRecipeRouter(
 
       if (!result.success) {
         // mediaPromise is left to settle on its own; it never rejects.
+        if (result.error.type === 'busy') {
+          sendGenerationBusy(res);
+          return;
+        }
         console.error('Recipe generation failed:', result.error);
         res.status(500).json({
           error: 'Recipe generation failed. Please try again.',
@@ -414,6 +419,10 @@ export function createRecipeRouter(
         const result = await generateRecipe(deps.ollamaClient, slot, userProfile);
 
         if (!result.success) {
+          if (result.error.type === 'busy') {
+            sendGenerationBusy(res);
+            return;
+          }
           console.error('Recipe generation preview failed:', result.error);
           res.status(500).json({
             error: 'Recipe generation failed. Please try again.',
