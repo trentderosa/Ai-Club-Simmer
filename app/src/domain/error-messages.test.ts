@@ -30,8 +30,29 @@ describe('errorCopy outage messages', () => {
     });
   });
 
+  it('treats AUTH_UNAVAILABLE as sign-in even when the message is reworded, and a kitchen 503 without the code as the kitchen', () => {
+    expect(errorCopy(new ApiError('unavailable', 'Login could not be checked just now.', 503, 'AUTH_UNAVAILABLE'))).toEqual({
+      title: 'Sign-in service is down',
+      body: 'The server couldn’t check your login just now. Try again in a moment.',
+      action: 'retry',
+    });
+    expect(errorCopy(new ApiError('unavailable', 'The kitchen is temporarily unavailable.', 503))).toEqual({
+      title: 'The kitchen is unavailable',
+      body: 'The AI server can’t take that request right now. Try again in a moment.',
+      action: 'retry',
+    });
+    // A different code wins over the old wording. The wording match is only for a body with no code.
+    expect(
+      errorCopy(new ApiError('unavailable', 'Authentication service temporarily unavailable', 503, 'KITCHEN_DOWN')),
+    ).toEqual({
+      title: 'The kitchen is unavailable',
+      body: 'The AI server can’t take that request right now. Try again in a moment.',
+      action: 'retry',
+    });
+  });
+
   it('keeps the sign-in message for the server’s exact auth 503 text', () => {
-    // These 503s have no `code`. Check-in, mastery, and dish photos say the first;
+    // Older servers omit `code`. Check-in, mastery, and dish photos say the first;
     // recipe and Cook anything say the second.
     const messages = ['Authentication service unavailable', 'Authentication service temporarily unavailable'];
     for (const message of messages) {

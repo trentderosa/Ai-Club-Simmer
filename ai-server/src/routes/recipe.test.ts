@@ -96,6 +96,28 @@ describe('POST /api/recipes/generate/:slotId', () => {
     expect(response.body.error).toContain('authorization header');
   });
 
+  it('returns 503 AUTH_UNAVAILABLE when the auth service is down', async () => {
+    const supabase = createMockSupabase({ tokenValid: false });
+    (supabase.verifyToken as ReturnType<typeof vi.fn>).mockResolvedValue({
+      valid: false,
+      error: 'service_unavailable',
+    });
+    const app = createApp({
+      ollamaClient: createMockOllamaClient(),
+      supabase,
+    });
+
+    const response = await request(app)
+      .post('/api/recipes/generate/1')
+      .set('Authorization', 'Bearer valid-token');
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error: 'Authentication service temporarily unavailable',
+      code: 'AUTH_UNAVAILABLE',
+    });
+  });
+
   it('returns 401 when token is invalid', async () => {
     const app = createApp({
       ollamaClient: createMockOllamaClient(),

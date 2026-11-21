@@ -31,7 +31,10 @@ export function createAuthMiddleware(jwtVerifier: JwtVerifier) {
     const authResult = await jwtVerifier.verify(token);
 
     if (authResult.error === 'service_unavailable') {
-      res.status(503).json({ error: 'Authentication service unavailable' });
+      res.status(503).json({
+        error: 'Authentication service unavailable',
+        code: 'AUTH_UNAVAILABLE',
+      });
       return;
     }
 
