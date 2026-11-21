@@ -25,6 +25,11 @@ const masteryRecipe: Recipe = {
     { instruction: 'Serve', isSafetyStep: false },
   ],
 };
+const rinseRecipe: Recipe = {
+  ...recipe,
+  title: 'Chicken',
+  steps: [{ instruction: 'Rinse the chicken under cold water.', isSafetyStep: false }],
+};
 const profile = { id: 'u1', experienceLevel: 'never_cooked' as const, budget: 'low' as const, equipment: ['pan'] };
 
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
@@ -199,5 +204,78 @@ describe('recipe route joining a background generation', () => {
     const steps = response.body.recipe.steps as Array<{ isHidden?: boolean }>;
     expect(steps.map((s) => s.isHidden ?? false)).toEqual([true, false, true, false, true, true]);
     expect(JSON.stringify(response.body)).not.toContain('Whisk the eggs');
+  });
+
+  it('a prewarm that skipped its retries after a flagged rinse saves nothing; the joiner reruns clean', async () => {
+    const t = setup();
+    const prewarm = t.pathRecipes.generate('u1', t.slot, profile, { immediateOnly: true, shouldRetry: () => false });
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(1));
+    const responsePromise = t.post();
+    await t.settle();
+    t.pending[0].resolve(JSON.stringify(rinseRecipe));
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(2), { timeout: 3000 });
+    t.pending[1].resolve(JSON.stringify(recipe));
+    const [response, bg] = await Promise.all([responsePromise, prewarm]);
+
+    expect(bg).toMatchObject({ success: false, error: { retrySkipped: true } });
+    expect(response.status).toBe(200);
+    expect(response.body.recipe.title).toBe('Eggs');
+    expect(t.supabase.saveRecipe).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('recipe_joined_generation_rerun', { slot_id: 2, reason: 'retry_skipped' });
+  }, 10000);
+
+  it('a prewarm alone that skipped its retries after a flagged rinse saves nothing', async () => {
+    const t = setup();
+    const prewarm = t.pathRecipes.generate('u1', t.slot, profile, { immediateOnly: true, shouldRetry: () => false });
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(1));
+    t.pending[0].resolve(JSON.stringify(rinseRecipe));
+    const bg = await prewarm;
+
+    expect(bg).toMatchObject({ success: false, error: { retrySkipped: true } });
+    expect(t.supabase.saveRecipe).not.toHaveBeenCalled();
+  }, 10000);
+
+  it('stranded joiners wait for a new prewarm and rerun once, sharing that rerun', async () => {
+    const clock = 0;
+    let armed = false;
+    let newPrewarm: Promise<unknown> | undefined;
+    const hook = { t: undefined as unknown as ReturnType<typeof setup> };
+    const t = setup(2, {
+      budgetMs: 100000,
+      ollamaTimeoutMs: 1000,
+      queueTimeoutMs: 1000,
+      now: () => {
+        if (armed) {
+          // Runs inside the joiner, after the first prewarm is gone and before its run():
+          // a new prewarm registers in that gap.
+          armed = false;
+          newPrewarm = hook.t.pathRecipes.generate('u1', hook.t.slot, profile, { immediateOnly: true });
+        }
+        return clock;
+      },
+    });
+    hook.t = t;
+    const first = t.pathRecipes.generate('u1', t.slot, profile, { immediateOnly: true });
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(1));
+    const a = t.post();
+    const b = t.post();
+    await t.settle();
+    armed = true;
+    t.pending[0].reject(new OllamaBusyError('queue_timeout'));
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(2));
+    await t.settle();
+    // No third model call yet: the joiners wait for the new prewarm, not replace it.
+    expect(t.ollamaClient.generate).toHaveBeenCalledTimes(2);
+    t.pending[1].reject(new OllamaBusyError('queue_timeout'));
+    await vi.waitFor(() => expect(t.ollamaClient.generate).toHaveBeenCalledTimes(3));
+    await t.settle();
+    expect(t.ollamaClient.generate.mock.calls[2][2]?.background).toBeUndefined();
+    t.pending[2].resolve(JSON.stringify(recipe));
+    const [ra, rb] = await Promise.all([a, b, first, newPrewarm]);
+
+    expect(ra.status).toBe(200);
+    expect(rb.status).toBe(200);
+    expect(t.ollamaClient.generate).toHaveBeenCalledTimes(3);
+    expect(t.supabase.saveRecipe).toHaveBeenCalledTimes(1);
   });
 });

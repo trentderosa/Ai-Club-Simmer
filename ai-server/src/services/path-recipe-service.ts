@@ -168,8 +168,26 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
   ): Promise<PathGenerationResult | PathGenerationError> {
     const key = `${userId}:${slot.id}`;
     // Another joiner may already have started the replacement generation.
-    const existing = inFlightGenerations.get(key);
-    if (existing) return existing.promise;
+    let existing = inFlightGenerations.get(key);
+    if (existing && (generationOptions.immediateOnly || !existing.background)) return existing.promise;
+    if (existing) {
+      // A new prewarm registered while this foreground joiner was stranded.
+      // Never replace a running prewarm (two model calls at once): wait for it.
+      // If it does not produce a recipe, rerun once, here, with what is left.
+      const waitStartedAt = (deps.generationBudget?.now ?? Date.now)();
+      const prewarm = existing;
+      const shared = await prewarm.promise;
+      if (shared.success) return shared;
+      console.warn('recipe_joined_generation_rerun', { slot_id: slot.id, reason: 'new_prewarm_failed' });
+      if (inFlightGenerations.get(key) === prewarm) inFlightGenerations.delete(key);
+      // Another stranded joiner may have started the rerun already: share it.
+      existing = inFlightGenerations.get(key);
+      if (existing && !existing.background) return existing.promise;
+      budget = budget && {
+        ...budget,
+        budgetMs: budget.budgetMs - ((budget.now ?? Date.now)() - waitStartedAt),
+      };
+    }
 
     const generationPromise = generateAndSave(userId, slot, userProfile, generationOptions, budget);
     const entry = { promise: generationPromise, background: generationOptions.immediateOnly === true };

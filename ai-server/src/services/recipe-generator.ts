@@ -798,8 +798,11 @@ export async function generateRecipe(
   }
 
   // Every attempt failed. A flagged rinse is saved only when nothing cleaner arrived.
+  // Not when shouldRetry stopped the loop: the retries never ran, so the caller
+  // (a joiner that reruns on retrySkipped) must get the chance to find a clean recipe.
   if (
     lastUnsafeRecipe &&
+    !retrySkipped &&
     (!slot.isFinal || countedHiddenStepCount(lastUnsafeRecipe) >= MASTERY_MIN_HIDDEN_STEPS)
   ) {
     return { success: true, recipe: lastUnsafeRecipe };
