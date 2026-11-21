@@ -22,6 +22,8 @@ export interface RecipeGenerationError {
     type: 'validation_failed' | 'generation_failed' | 'busy' | 'preempted';
     message: string;
     attempts: number;
+    /** True when retrying stopped early because shouldRetry said no, not because attempts ran out. */
+    retrySkipped?: boolean;
   };
 }
 
@@ -641,6 +643,7 @@ export async function generateRecipe(
   // Caps queue time plus Ollama time for the whole request, retries included.
   const deadline = options.budget ? startDeadline(options.budget) : null;
   let attemptsMade = MAX_RETRIES + 1;
+  let retrySkipped = false;
 
   let lastError: Error | ZodError | null = null;
   // Flagged recipe from an attempt that told the cook to rinse raw meat.
@@ -659,6 +662,7 @@ export async function generateRecipe(
       // Someone else is waiting for the model. Keep the earlier failure.
       console.warn('recipe_generation_retry_skipped', { attempt });
       attemptsMade = attempt - 1;
+      retrySkipped = true;
       break;
     }
 
@@ -820,6 +824,7 @@ export async function generateRecipe(
         lastError instanceof ZodError ? 'validation_failed' : 'generation_failed',
       message: errorMessage,
       attempts: attemptsMade,
+      ...(retrySkipped ? { retrySkipped: true } : {}),
     },
   };
 }

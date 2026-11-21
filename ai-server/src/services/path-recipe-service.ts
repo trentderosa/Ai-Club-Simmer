@@ -14,7 +14,7 @@ export interface PathGenerationResult {
 
 export interface PathGenerationError {
   success: false;
-  error: { type: string; message: string; attempts: number };
+  error: { type: string; message: string; attempts: number; retrySkipped?: boolean };
 }
 
 /** Optional limits for a background generation. The route passes none. */
@@ -55,7 +55,12 @@ export interface PathRecipeService {
  * and pass it to both: the in-flight map lives here.
  */
 export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipeService {
-  const inFlightGenerations = new Map<string, Promise<PathGenerationResult | PathGenerationError>>();
+  // background: started with immediateOnly (a prewarm). Its failures can come
+  // from those limits, so a foreground joiner may rerun instead of inheriting them.
+  const inFlightGenerations = new Map<
+    string,
+    { promise: Promise<PathGenerationResult | PathGenerationError>; background: boolean }
+  >();
 
   async function generateAndSave(
     userId: string,
@@ -127,13 +132,22 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
 
     const inFlight = inFlightGenerations.get(key);
     if (inFlight) {
-      const shared = await inFlight;
-      // A prewarm that was cancelled for a real request must not strand a
-      // joiner: the joiner runs its own foreground generation with whatever
-      // is left of its budget. A background caller just stops.
-      if (shared.success || shared.error.type !== 'preempted' || generationOptions.immediateOnly) {
-        return shared;
+      const shared = await inFlight.promise;
+      // A background generation that ended for its own reasons must not strand
+      // a joiner: preempted for a real request, refused as busy (immediateOnly
+      // or a refused retry), or stopped early by shouldRetry. The joiner then
+      // runs its own foreground generation, once, with whatever is left of its
+      // budget. A genuine failure after all attempts is returned as is, and a
+      // foreground entry's result (even busy) is shared. A background caller
+      // just stops.
+      let reason: string | null = null;
+      if (!shared.success && !generationOptions.immediateOnly) {
+        if (shared.error.type === 'preempted') reason = 'preempted';
+        else if (inFlight.background && shared.error.type === 'busy') reason = 'busy';
+        else if (inFlight.background && shared.error.retrySkipped) reason = 'retry_skipped';
       }
+      if (!reason) return shared;
+      console.warn('recipe_joined_generation_rerun', { slot_id: slot.id, reason });
       if (inFlightGenerations.get(key) === inFlight) inFlightGenerations.delete(key);
       const budget = deps.generationBudget && {
         ...deps.generationBudget,
@@ -155,15 +169,16 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
     const key = `${userId}:${slot.id}`;
     // Another joiner may already have started the replacement generation.
     const existing = inFlightGenerations.get(key);
-    if (existing) return existing;
+    if (existing) return existing.promise;
 
     const generationPromise = generateAndSave(userId, slot, userProfile, generationOptions, budget);
-    inFlightGenerations.set(key, generationPromise);
+    const entry = { promise: generationPromise, background: generationOptions.immediateOnly === true };
+    inFlightGenerations.set(key, entry);
 
     try {
       return await generationPromise;
     } finally {
-      if (inFlightGenerations.get(key) === generationPromise) inFlightGenerations.delete(key);
+      if (inFlightGenerations.get(key) === entry) inFlightGenerations.delete(key);
     }
   }
 
