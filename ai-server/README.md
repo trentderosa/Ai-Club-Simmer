@@ -138,15 +138,21 @@ a different dish is dropped. If every hit is rejected, that technique is cached 
 result" and the recipe still returns with no video for the step. Misses are cached for
 7 days and a recipe makes at most 6 new searches. The searches run concurrently under one
 time budget (`VIDEO_LOOKUP_BUDGET_MS`, default 8000 ms); a search that finishes after the
-budget still writes the shared cache. The response has `videos[techniqueName]`. Safe search,
+budget still writes the shared cache. A cached video's title is checked again on read, with
+no YouTube call: one that no longer names the technique or names a different dish counts as
+a miss and is searched again (a cached video with no title is kept). The response has
+`videos[techniqueName]`. Safe search,
 the embeddable filter, the watch-URL allowlist, the timeout, and the quota cooldown are unchanged.
 
 The same key is used by `src/services/dish-video-finder.ts` for one "{dish} recipe" search
 per normalized dish name (path slots and Cook anything). A follow-up `videos.list` call
 keeps embeddable videos about 3–20 minutes long whose titles name that dish and not a
 different one ("fried chicken and rice" is not fried rice), and returns at most 3, highest
-view count first, as `dish_videos`. A rejected search is an empty list. Results are cached
-in `dish_videos` (migration `20261117201646_dish_videos.sql`). An empty result is
+view count first, as `dish_videos`. Title matching uses the tightest window of the dish's
+words, so "Rice cooker hack: Chicken Fried Rice" names fried rice. A rejected search is an
+empty list. Results are cached in `dish_videos` (migration `20261117201646_dish_videos.sql`).
+Cached titles are checked again on read, with no YouTube call. Off-target videos are dropped,
+and when none survive the dish is searched again and the new result replaces the cache row. An empty result is
 retried after 7 days. Quota and network failures are not cached; a failed search uses a
 short per-dish cooldown, and a quota exhaustion pauses every dish search until midnight
 Pacific. `dish_videos` is `[]`, and the recipe still returns. Errors never include the

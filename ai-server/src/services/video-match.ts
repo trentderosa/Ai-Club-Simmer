@@ -224,28 +224,58 @@ function isListed(token: string, list: ReadonlySet<string>): boolean {
   return false;
 }
 
+/** Most title positions tried per query word, so a long title stays cheap. */
+const MAX_CANDIDATES_PER_WORD = 8;
+
+/**
+ * Title positions for each query word, one distinct position per word,
+ * choosing the tightest window (smallest span, then the earliest start).
+ * "Rice cooker hack: Chicken Fried Rice" places "fried rice" on the last two
+ * words, not on the first "rice", so the words in between don't count.
+ */
 function locateWords(
   titleTokens: readonly string[],
   wanted: readonly string[],
   inflectVerbs: boolean
 ): number[] | null {
-  const used = new Set<number>();
-  const positions: number[] = [];
+  const candidates: number[][] = [];
   for (const word of wanted) {
-    let found = -1;
-    for (let i = 0; i < titleTokens.length; i++) {
-      if (used.has(i)) continue;
+    const spots: number[] = [];
+    for (let i = 0; i < titleTokens.length && spots.length < MAX_CANDIDATES_PER_WORD; i++) {
       const token = titleTokens[i];
-      if (token && matchesWord(token, word, inflectVerbs)) {
-        found = i;
-        break;
-      }
+      if (token && matchesWord(token, word, inflectVerbs)) spots.push(i);
     }
-    if (found < 0) return null;
-    used.add(found);
-    positions.push(found);
+    if (spots.length === 0) return null;
+    candidates.push(spots);
   }
-  return positions;
+
+  let best: number[] | null = null;
+  let bestSpan = Infinity;
+  let bestStart = Infinity;
+  const chosen: number[] = [];
+  const used = new Set<number>();
+  const visit = (index: number, lo: number, hi: number): void => {
+    if (hi - lo > bestSpan) return;
+    if (index === candidates.length) {
+      const span = hi - lo;
+      if (span < bestSpan || (span === bestSpan && lo < bestStart)) {
+        best = [...chosen];
+        bestSpan = span;
+        bestStart = lo;
+      }
+      return;
+    }
+    for (const position of candidates[index] ?? []) {
+      if (used.has(position)) continue;
+      used.add(position);
+      chosen.push(position);
+      visit(index + 1, Math.min(lo, position), Math.max(hi, position));
+      chosen.pop();
+      used.delete(position);
+    }
+  };
+  visit(0, Infinity, -Infinity);
+  return best;
 }
 
 function containsPhrase(titleTokens: readonly string[], phrase: readonly string[]): boolean {

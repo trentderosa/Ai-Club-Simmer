@@ -29,8 +29,12 @@ function recipeWith(techniques: (string | undefined)[]): Recipe {
   };
 }
 
-function video(id: string): TechniqueVideo {
-  return { videoId: id, title: `Video ${id}` };
+/**
+ * A fake hit. Pass the technique when the test reads the video back from the
+ * cache: cached titles are re-checked on read, so they need to name it.
+ */
+function video(id: string, technique?: string): TechniqueVideo {
+  return { videoId: id, title: technique ? `How to ${technique}` : `Video ${id}` };
 }
 
 function searchReturning(map: Record<string, TechniqueVideo | null>): VideoSearchClient & { search: ReturnType<typeof vi.fn> } {
@@ -58,6 +62,53 @@ describe('VideoFinder', () => {
     logger.warn.mockReset();
   });
 
+  it('treats a stale off-target cached video as a miss and searches again', async () => {
+    // Cached before the title check: the top result for "dice onion" was a soup video.
+    await cache.put({
+      techniqueKey: 'dice onion',
+      searchQuery: buildSearchQuery('dice onion'),
+      video: { videoId: 'soupvid001', title: 'French onion soup recipe' },
+      fetchedAt: new Date(NOW.getTime() - 60_000),
+    });
+    const search = searchReturning({ 'dice onion': video('dicevid001', 'dice onion') });
+    const finder = new VideoFinder(cache, search, logger, () => NOW);
+
+    const result = await finder.findForRecipe(recipeWith(['Dice onion']));
+
+    expect(result).toEqual({ videos: { 'Dice onion': video('dicevid001', 'dice onion') }, complete: true });
+    expect(search.search).toHaveBeenCalledTimes(1);
+    expect(cache.entries.get('dice onion')?.video).toEqual(video('dicevid001', 'dice onion'));
+    expect(logger.warn).toHaveBeenCalledWith('video_cache_off_target', { technique: 'dice onion' });
+  });
+
+  it('keeps an on-target cached video, and a cached video with no title, without searching', async () => {
+    await cache.put({
+      techniqueKey: 'dice onion',
+      searchQuery: buildSearchQuery('dice onion'),
+      video: { videoId: 'dicevid001', title: 'How to Dice an Onion Like a Chef' },
+      fetchedAt: NOW,
+    });
+    await cache.put({
+      techniqueKey: 'whisk eggs',
+      searchQuery: buildSearchQuery('whisk eggs'),
+      video: { videoId: 'notitle001' },
+      fetchedAt: NOW,
+    });
+    const search = searchReturning({});
+    const finder = new VideoFinder(cache, search, logger, () => NOW);
+
+    const result = await finder.findForRecipe(recipeWith(['Dice onion', 'Whisk eggs']));
+
+    expect(search.search).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      videos: {
+        'Dice onion': { videoId: 'dicevid001', title: 'How to Dice an Onion Like a Chef' },
+        'Whisk eggs': { videoId: 'notitle001' },
+      },
+      complete: true,
+    });
+  });
+
   it('searches once per distinct technique and keys results by the exact technique name', async () => {
     const search = searchReturning({ 'dice onion': video('abc123'), 'whisk eggs': video('def456') });
     const finder = new VideoFinder(cache, search, logger, () => NOW);
@@ -77,14 +128,14 @@ describe('VideoFinder', () => {
   });
 
   it('uses the shared cache so another user never repeats a search', async () => {
-    const search = searchReturning({ 'dice onion': video('abc123') });
+    const search = searchReturning({ 'dice onion': video('abc123', 'dice onion') });
     const finder = new VideoFinder(cache, search, logger, () => NOW);
 
     await finder.findForRecipe(recipeWith(['Dice onion']));
     const second = await finder.findForRecipe(recipeWith(['DICE ONION']));
 
     expect(search.search).toHaveBeenCalledTimes(1);
-    expect(second).toEqual({ videos: { 'DICE ONION': video('abc123') }, complete: true });
+    expect(second).toEqual({ videos: { 'DICE ONION': video('abc123', 'dice onion') }, complete: true });
   });
 
   it('caches "no result" and retries it only after the TTL', async () => {
@@ -127,7 +178,9 @@ describe('VideoFinder', () => {
   });
 
   it(`caps new searches at ${MAX_VIDEO_SEARCHES_PER_RECIPE} per recipe`, async () => {
-    const search: VideoSearchClient = { search: vi.fn().mockResolvedValue(video('abc123')) };
+    const search: VideoSearchClient = {
+      search: vi.fn().mockImplementation((query: string) => Promise.resolve({ videoId: 'abc123', title: query })),
+    };
     const finder = new VideoFinder(cache, search, logger, () => NOW);
     const names = Array.from({ length: MAX_VIDEO_SEARCHES_PER_RECIPE + 3 }, (_, i) => `technique ${i}`);
 
@@ -178,8 +231,8 @@ describe('VideoFinder', () => {
       const search: VideoSearchClient = {
         search: vi.fn().mockImplementation((query: string) =>
           query === buildSearchQuery('fast')
-            ? Promise.resolve(video('fast01'))
-            : new Promise((resolve) => setTimeout(() => resolve(video('slow01')), 5000))
+            ? Promise.resolve(video('fast01', 'fast'))
+            : new Promise((resolve) => setTimeout(() => resolve(video('slow01', 'slow')), 5000))
         ),
       };
       const finder = new VideoFinder(cache, search, logger, () => NOW, { budgetMs: 1000 });
@@ -188,14 +241,14 @@ describe('VideoFinder', () => {
       await vi.advanceTimersByTimeAsync(1000);
       const result = await pending;
 
-      expect(result).toEqual({ videos: { Fast: video('fast01') }, complete: false });
+      expect(result).toEqual({ videos: { Fast: video('fast01', 'fast') }, complete: false });
       expect(logger.warn).toHaveBeenCalledWith('video_lookup_budget_exceeded', { budget_ms: 1000, unsettled: 1 });
 
       // The slow search still lands in the shared cache for the next visit.
       await vi.advanceTimersByTimeAsync(4000);
-      expect(cache.entries.get('slow')?.video).toEqual(video('slow01'));
+      expect(cache.entries.get('slow')?.video).toEqual(video('slow01', 'slow'));
       const again = await finder.findForRecipe(recipeWith(['Fast', 'Slow']));
-      expect(again).toEqual({ videos: { Fast: video('fast01'), Slow: video('slow01') }, complete: true });
+      expect(again).toEqual({ videos: { Fast: video('fast01', 'fast'), Slow: video('slow01', 'slow') }, complete: true });
       expect(search.search).toHaveBeenCalledTimes(2);
     });
 

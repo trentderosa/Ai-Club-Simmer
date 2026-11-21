@@ -188,11 +188,15 @@ export class DishVideoFinder {
     } catch (error) {
       this.logger.warn('dish_video_cache_read_failed', { error: errorMessage(error) });
     }
-    if (
-      cached &&
-      (cached.videos.length > 0 || this.now().getTime() - cached.fetchedAt.getTime() < DISH_VIDEO_NEGATIVE_CACHE_TTL_MS)
-    ) {
-      return { videos: cached.videos, complete: true };
+    if (cached && cached.videos.length > 0) {
+      // Re-check cached titles on read (no YouTube call), so off-target videos
+      // cached before the title check are dropped. When none survive, search
+      // again below; the new result replaces the cache row.
+      const kept = cached.videos.filter((video) => dishVideoTitleMatches(video.title, key));
+      if (kept.length > 0) return { videos: kept, complete: true };
+      this.logger.warn('dish_video_cache_off_target', { dish: key, dropped: cached.videos.length });
+    } else if (cached && this.now().getTime() - cached.fetchedAt.getTime() < DISH_VIDEO_NEGATIVE_CACHE_TTL_MS) {
+      return { videos: [], complete: true };
     }
 
     const nowMs = this.now().getTime();

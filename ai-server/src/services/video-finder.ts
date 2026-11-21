@@ -99,6 +99,15 @@ export function buildSearchQuery(techniqueKey: string): string {
   return `how to ${techniqueKey} beginner cooking`;
 }
 
+/**
+ * True when a technique video's title shares the technique's words and does
+ * not name a different dish. Used for search hits and again on cache read,
+ * so an off-target video cached before this check is treated as a miss.
+ */
+export function techniqueVideoTitleMatches(title: string, techniqueName: string): boolean {
+  return titleSharesMeaningfulWords(title, techniqueName, true) && !hasConflictingDishWords(title, techniqueName, true);
+}
+
 export class VideoFinder {
   private readonly budgetMs: number;
 
@@ -139,7 +148,14 @@ export class VideoFinder {
     let complete = true;
     for (const key of keys) {
       const hit = cached.get(key);
-      if (hit && (hit.video || this.now().getTime() - hit.fetchedAt.getTime() < NEGATIVE_CACHE_TTL_MS)) {
+      // Re-check a cached video's title on read (no YouTube call). An
+      // off-target video, for example one cached before the title check
+      // existed, counts as a miss and is searched again. A cached video with
+      // no title can't be checked here, so it is kept.
+      const stale = hit?.video?.title !== undefined && !techniqueVideoTitleMatches(hit.video.title, key);
+      if (stale) {
+        this.logger.warn('video_cache_off_target', { technique: key });
+      } else if (hit && (hit.video || this.now().getTime() - hit.fetchedAt.getTime() < NEGATIVE_CACHE_TTL_MS)) {
         if (hit.video) found.set(key, hit.video);
         continue;
       }

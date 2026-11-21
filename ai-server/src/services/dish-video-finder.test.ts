@@ -82,6 +82,8 @@ describe('selectDishVideos', () => {
     expect(dishVideoTitleMatches('Creamy chicken soup', 'chicken soup')).toBe(true);
     expect(dishVideoTitleMatches('Tomato basil soup', 'tomato soup')).toBe(true);
     expect(dishVideoTitleMatches('Chicken pho recipe', 'pho')).toBe(true);
+    // Tightest window: "fried rice" sits on the last two words, not the first "rice".
+    expect(dishVideoTitleMatches('Rice cooker hack: Chicken Fried Rice', 'fried rice')).toBe(true);
     expect(dishVideoTitleMatches('Roasted Chicken (Easy Whole Chicken)', 'roast chicken')).toBe(true);
     expect(dishVideoTitleMatches('Perfect Roast Chicken Recipe', 'roast chicken')).toBe(true);
     expect(dishVideoTitleMatches('Pan Seared Chicken Breast', 'seared chicken breast')).toBe(true);
@@ -103,6 +105,48 @@ describe('selectDishVideos', () => {
 describe('DishVideoFinder', () => {
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it('drops off-target cached videos on read without calling YouTube', async () => {
+    const cache = new InMemoryDishVideoCache();
+    await cache.put({
+      normalizedDishName: 'fried rice',
+      searchQuery: 'fried rice recipe',
+      videos: [
+        { videoId: 'friedchk01', title: 'Fried chicken and white rice' },
+        { videoId: 'friedrice1', title: 'Easy fried rice recipe' },
+      ],
+      fetchedAt: new Date('2026-11-01T00:00:00Z'),
+    });
+    const search: DishVideoSearchClient = { search: vi.fn() };
+    const warn = vi.fn();
+    const finder = new DishVideoFinder(cache, search, { warn });
+
+    await expect(finder.findForDish('Fried rice')).resolves.toEqual({
+      videos: [{ videoId: 'friedrice1', title: 'Easy fried rice recipe' }],
+      complete: true,
+    });
+    expect(search.search).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('searches again when no cached video survives the read check, and replaces the cache', async () => {
+    const cache = new InMemoryDishVideoCache();
+    await cache.put({
+      normalizedDishName: 'scrambled eggs',
+      searchQuery: 'scrambled eggs recipe',
+      videos: [{ videoId: 'eggrice001', title: 'Scrambled eggs fried rice recipe' }],
+      fetchedAt: new Date('2026-11-01T00:00:00Z'),
+    });
+    const fresh = [{ videoId: 'realeggs01', title: 'Perfect scrambled eggs' }];
+    const search: DishVideoSearchClient = { search: vi.fn().mockResolvedValue(fresh) };
+    const warn = vi.fn();
+    const finder = new DishVideoFinder(cache, search, { warn });
+
+    await expect(finder.findForDish('Scrambled eggs')).resolves.toEqual({ videos: fresh, complete: true });
+    expect(search.search).toHaveBeenCalledTimes(1);
+    expect(cache.entries.get('scrambled eggs')?.videos).toEqual(fresh);
+    expect(warn).toHaveBeenCalledWith('dish_video_cache_off_target', { dish: 'scrambled eggs', dropped: 1 });
   });
 
   it('caches a hit and does not search again', async () => {
