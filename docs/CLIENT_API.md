@@ -111,6 +111,7 @@ The first call generates the recipe with Ollama, which can take 10–60 s, so sh
   - `404`: unknown slot, or onboarding isn't finished.
   - `500`: generation failed after 3 tries. Show a **Retry** button (F3).
   - `503 { code: "GENERATION_BUSY" }` with a `Retry-After` header (seconds): the model queue is full, the wait ran out, or the per-request time budget (`OLLAMA_REQUEST_BUDGET_MS`) ran out. Nothing was generated and the call is not retried server side. Show a short message and a way to try again.
+    `Retry-After` is exposed to browsers through CORS (`Access-Control-Expose-Headers: Retry-After`, sent only to allowed origins), so the web build can read it. The JSON `error` text says "The kitchen is busy right now. Try again in about 30 seconds."
   - `429`: rate limited.
 
 

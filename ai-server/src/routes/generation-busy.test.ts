@@ -31,7 +31,7 @@ function supabase(): SupabaseService {
 }
 
 const BUSY_BODY = {
-  error: 'The kitchen is busy right now. Try again in a minute.',
+  error: 'The kitchen is busy right now. Try again in about 30 seconds.',
   code: 'GENERATION_BUSY',
 };
 
