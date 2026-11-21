@@ -1,7 +1,8 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Platform } from 'react-native';
 
-import { PASSWORD_RECOVERY_OWNER_KEY } from '../domain/password-reset';
+import { errorCopy } from '../domain/error-messages';
+import { PASSWORD_RECOVERY_OWNER_KEY, PASSWORD_RESET_EMAIL_LIMIT_COPY } from '../domain/password-reset';
 import type { AuthChange } from '../domain/password-reset';
 import { createLiveBackend } from './live-backend';
 import type { Backend } from './backend';
@@ -23,11 +24,14 @@ type FakeSession = {
   };
 };
 
+type ResetError = { message: string; status?: number; code?: string };
+
 type FakeAuth = {
   session: FakeSession | null;
   handlers: ((event: string, session: FakeSession | null) => void)[];
   onGetSession: (() => void) | null;
   updateCalls: number;
+  resetError: ResetError | null;
   emit: (event: string, session: FakeSession | null) => void;
 };
 
@@ -74,6 +78,7 @@ jest.mock('./supabase', () => {
     handlers,
     onGetSession: null,
     updateCalls: 0,
+    resetError: null,
     emit(event, session) {
       state.session = session;
       for (const handler of handlers) handler(event, session);
@@ -97,7 +102,7 @@ jest.mock('./supabase', () => {
         },
         setSession: async () => ({ data: { session: state.session, user: state.session?.user ?? null }, error: null }),
         exchangeCodeForSession: async () => ({ data: { session: state.session }, error: null }),
-        resetPasswordForEmail: async () => ({ data: {}, error: null }),
+        resetPasswordForEmail: async () => ({ data: {}, error: state.resetError }),
         signInWithPassword: async () => ({ data: { session: state.session }, error: null }),
         signUp: async () => ({ data: { session: null, user: null }, error: null }),
         signOut: async () => ({ error: null }),
@@ -188,6 +193,7 @@ beforeEach(() => {
   auth.handlers.length = 0;
   auth.onGetSession = null;
   auth.updateCalls = 0;
+  auth.resetError = null;
   const linking = linkingState();
   linking.initial = null;
   linking.handler = null;
@@ -211,7 +217,7 @@ describe('live password recovery', () => {
     expect(auth.updateCalls).toBe(1);
   });
 
-  it('honors a stored owner for the restored session, not a fresh SIGNED_IN', async () => {
+  it('keeps recovery on a same-user SIGNED_IN and clears it for a different user', async () => {
     await AsyncStorage.setItem(PASSWORD_RECOVERY_OWNER_KEY, 'user-a');
     const auth = authState();
     auth.session = sessionFor('user-a');
@@ -229,9 +235,18 @@ describe('live password recovery', () => {
     await pastStartup();
     auth.emit('SIGNED_IN', sessionFor('user-a'));
 
+    expect(restored.passwordRecoveryPending()).toBe(true);
+    expect(restored.passwordResetOwns('user-a')).toBe(true);
+    await restored.updatePassword('longenough');
+    expect(auth.updateCalls).toBe(1);
+
+    auth.emit('SIGNED_IN', sessionFor('user-b'));
     expect(restored.passwordRecoveryPending()).toBe(false);
     expect(restored.passwordResetOwns('user-a')).toBe(false);
+    expect(restored.passwordResetOwns('user-b')).toBe(false);
     expect(await AsyncStorage.getItem(PASSWORD_RECOVERY_OWNER_KEY)).toBeNull();
+    await expect(restored.updatePassword('longenough')).rejects.toMatchObject({ kind: 'unauthorized' });
+    expect(auth.updateCalls).toBe(1);
   });
 
   it('shows a failure immediately for an expired simmer link while the app is open', async () => {
@@ -272,5 +287,26 @@ describe('live password recovery', () => {
     await expect(backend.updatePassword('longenough')).rejects.toBeInstanceOf(ApiError);
     await expect(backend.updatePassword('longenough')).rejects.toMatchObject({ kind: 'unauthorized' });
     expect(auth.updateCalls).toBe(0);
+  });
+
+  it('uses the hour copy only for the email-send cap', async () => {
+    const auth = authState();
+    const backend = openBackend();
+    async function copyFor(error: { message: string; status: number; code?: string }) {
+      auth.resetError = error;
+      try {
+        await backend.requestPasswordReset('person@simmer.invalid');
+      } catch (e) {
+        return errorCopy(e);
+      }
+      throw new Error('expected requestPasswordReset to fail');
+    }
+
+    const byCode = await copyFor({ message: 'over the cap', status: 429, code: 'over_email_send_rate_limit' });
+    expect(byCode.body).toBe(PASSWORD_RESET_EMAIL_LIMIT_COPY);
+    const byMessage = await copyFor({ message: 'Email rate limit exceeded', status: 429 });
+    expect(byMessage.body).toBe(PASSWORD_RESET_EMAIL_LIMIT_COPY);
+    const other = await copyFor({ message: 'Request rate limit reached', status: 429, code: 'over_request_rate_limit' });
+    expect(other.body).toMatch(/Wait a minute/);
   });
 });

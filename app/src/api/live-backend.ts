@@ -59,6 +59,12 @@ function fromSupabaseError(e: { message: string; code?: string; status?: number 
   return new ApiError('server', msg, e.status, e.code);
 }
 
+/** The auth service's hourly email cap. Other 429s are a short cooldown. */
+function isEmailSendCap(error: { message?: string; code?: string }): boolean {
+  if (error.code === 'over_email_send_rate_limit') return true;
+  return /email rate limit|over_email_send_rate_limit/i.test(error.message ?? '');
+}
+
 function fromAuthError(e: { message: string; status?: number; code?: string }): ApiError {
   const msg = e.message || 'Supabase auth request failed.';
   if (e.status === 429 || /rate limit/i.test(msg)) return new ApiError('rate_limited', msg, e.status, e.code);
@@ -137,8 +143,8 @@ export function createLiveBackend(opts: {
       emit(appSession, 'password_recovery');
       return;
     }
-    if (event === 'SIGNED_IN' && !startup) {
-      // A fresh sign-in is not the restored recovery session. Drop a leftover owner.
+    if (event === 'SIGNED_IN' && !startup && userId !== recoveryOwnerId) {
+      // A different user signed in. A same-user SIGNED_IN after startup is a tab refocus.
       recoveryOwnerId = null;
       void writeRecoveryOwner(AsyncStorage, null);
     }
@@ -248,8 +254,8 @@ export function createLiveBackend(opts: {
     async requestPasswordReset(email) {
       const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: passwordResetRedirect() });
       if (!error) return;
-      // The auth email cap is a few messages an hour, shared with sign-up. Other 429s stay on the short cooldown copy.
-      if (error.status === 429 || /rate limit/i.test(error.message || '')) {
+      // Only the hourly email cap. Another 429 keeps the short cooldown copy.
+      if (isEmailSendCap(error)) {
         throw new ApiError('rate_limited', PASSWORD_RESET_EMAIL_LIMIT_COPY, error.status, 'email_rate_limited');
       }
       throw fromAuthError(error);
