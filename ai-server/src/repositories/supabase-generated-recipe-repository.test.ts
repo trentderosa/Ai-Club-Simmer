@@ -280,16 +280,14 @@ describe('SupabaseGeneratedRecipeRepository', () => {
       expect(saved.xpValue).toBe(10);
     });
 
-    // KNOWN BUG (not fixed here, test-only change): on a 409 the catch block calls
-    // findByUserAndNormalizedName, which returns this.inFlight's pending promise,
-    // i.e. the save promise itself, so it awaits itself and never settles.
-    // When the bug is fixed, switch these two it.fails back to it.
+    // Race guard: a regression where the 409 recovery awaits its own save promise
+    // would hang, so fail fast after 100ms instead.
     const neverSettles = (): Promise<never> =>
       new Promise<never>((_, reject) => {
         setTimeout(() => reject(new Error('save never settled')), 100);
       });
 
-    it.fails('returns the winner row when the insert hits a unique conflict (409)', async () => {
+    it('returns the winner row when the insert hits a unique conflict (409)', async () => {
       globalThis.fetch = createMockFetch([
         { status: 200, body: [] },
         { status: 409, body: 'dup' },
@@ -302,7 +300,7 @@ describe('SupabaseGeneratedRecipeRepository', () => {
       expect(saved.id).toBe(RECIPE_ID);
     });
 
-    it.fails('rethrows the 409 when the conflicting row cannot be found', async () => {
+    it('rethrows the 409 when the conflicting row cannot be found', async () => {
       globalThis.fetch = createMockFetch([
         { status: 200, body: [] },
         { status: 409, body: 'dup' },
@@ -314,6 +312,35 @@ describe('SupabaseGeneratedRecipeRepository', () => {
 
       expect(error).toBeInstanceOf(SupabaseRestError);
       expect((error as SupabaseRestError).status).toBe(409);
+    });
+
+    it('shares the first save result with a concurrent save issued during 409 recovery', async () => {
+      const calls: string[] = [];
+      let releaseRecovery: () => void = () => {};
+      const recoveryGate = new Promise<void>((resolve) => {
+        releaseRecovery = resolve;
+      });
+      let gets = 0;
+      globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+        calls.push(init.method ?? 'GET');
+        if (init.method === 'POST') return new Response('dup', { status: 409 });
+        gets++;
+        if (gets === 1) return new Response(JSON.stringify([]), { status: 200 });
+        await recoveryGate;
+        return new Response(JSON.stringify([row()]), { status: 200 });
+      }) as unknown as typeof fetch;
+      const repo = new SupabaseGeneratedRecipeRepository(TEST_CONFIG);
+
+      const first = repo.save(saveInput);
+      await vi.waitFor(() => expect(gets).toBe(2));
+      const second = repo.save(saveInput);
+      releaseRecovery();
+
+      const [a, b] = await Promise.race([Promise.all([first, second]), neverSettles()]);
+
+      expect(a.id).toBe(RECIPE_ID);
+      expect(b).toBe(a);
+      expect(calls.filter((m) => m === 'POST')).toHaveLength(1);
     });
 
     it('does not swallow non-409 insert errors', async () => {
