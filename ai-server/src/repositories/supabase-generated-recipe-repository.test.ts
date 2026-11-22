@@ -341,6 +341,33 @@ describe('SupabaseGeneratedRecipeRepository', () => {
       expect(a.id).toBe(RECIPE_ID);
       expect(b).toBe(a);
       expect(calls.filter((m) => m === 'POST')).toHaveLength(1);
+      expect(calls.filter((m) => m === 'GET')).toHaveLength(2);
+    });
+
+    it('makes a public find during 409 recovery wait for the save and return its result', async () => {
+      let releaseRecovery: () => void = () => {};
+      const recoveryGate = new Promise<void>((resolve) => {
+        releaseRecovery = resolve;
+      });
+      let gets = 0;
+      globalThis.fetch = vi.fn().mockImplementation(async (_url: string, init: RequestInit) => {
+        if (init.method === 'POST') return new Response('dup', { status: 409 });
+        gets++;
+        if (gets === 1) return new Response(JSON.stringify([]), { status: 200 });
+        await recoveryGate;
+        return new Response(JSON.stringify([row()]), { status: 200 });
+      }) as unknown as typeof fetch;
+      const repo = new SupabaseGeneratedRecipeRepository(TEST_CONFIG);
+
+      const saving = repo.save(saveInput);
+      await vi.waitFor(() => expect(gets).toBe(2));
+      const finding = repo.findByUserAndNormalizedName(saveInput.userId, saveInput.normalizedDishName);
+      releaseRecovery();
+
+      const [saved, found] = await Promise.race([Promise.all([saving, finding]), neverSettles()]);
+
+      expect(found).toBe(saved);
+      expect(gets).toBe(2);
     });
 
     it('does not swallow non-409 insert errors', async () => {
