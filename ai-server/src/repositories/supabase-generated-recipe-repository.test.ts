@@ -280,11 +280,41 @@ describe('SupabaseGeneratedRecipeRepository', () => {
       expect(saved.xpValue).toBe(10);
     });
 
-    // BUG (not fixed here, test-only change): on a 409 the catch block calls
+    // KNOWN BUG (not fixed here, test-only change): on a 409 the catch block calls
     // findByUserAndNormalizedName, which returns this.inFlight's pending promise,
     // i.e. the save promise itself, so it awaits itself and never settles.
-    it.todo('returns the winner row when the insert hits a unique conflict (409)');
-    it.todo('rethrows the 409 when the conflicting row cannot be found');
+    // When the bug is fixed, switch these two it.fails back to it.
+    const neverSettles = (): Promise<never> =>
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('save never settled')), 100);
+      });
+
+    it.fails('returns the winner row when the insert hits a unique conflict (409)', async () => {
+      globalThis.fetch = createMockFetch([
+        { status: 200, body: [] },
+        { status: 409, body: 'dup' },
+        { status: 200, body: [row()] },
+      ]);
+      const repo = new SupabaseGeneratedRecipeRepository(TEST_CONFIG);
+
+      const saved = await Promise.race([repo.save(saveInput), neverSettles()]);
+
+      expect(saved.id).toBe(RECIPE_ID);
+    });
+
+    it.fails('rethrows the 409 when the conflicting row cannot be found', async () => {
+      globalThis.fetch = createMockFetch([
+        { status: 200, body: [] },
+        { status: 409, body: 'dup' },
+        { status: 200, body: [] },
+      ]);
+      const repo = new SupabaseGeneratedRecipeRepository(TEST_CONFIG);
+
+      const error = await Promise.race([repo.save(saveInput), neverSettles()]).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(SupabaseRestError);
+      expect((error as SupabaseRestError).status).toBe(409);
+    });
 
     it('does not swallow non-409 insert errors', async () => {
       globalThis.fetch = createMockFetch([
@@ -374,6 +404,7 @@ describe('SupabaseGeneratedRecipeRepository', () => {
       const error = await repo.save(saveInput).catch((e: unknown) => e as Error);
 
       expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('aborted');
       expect((error as Error).message).not.toContain(TEST_CONFIG.serviceRoleKey);
     });
   });

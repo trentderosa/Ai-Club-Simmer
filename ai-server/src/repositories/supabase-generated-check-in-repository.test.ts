@@ -327,6 +327,7 @@ describe('SupabaseGeneratedCheckInRepository', () => {
       const error = await repo.validateRecipe(USER_ID, RECIPE_ID).catch((e: unknown) => e as Error);
 
       expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toBe('aborted');
       expect((error as Error).message).not.toContain(TEST_CONFIG.serviceRoleKey);
     });
   });
