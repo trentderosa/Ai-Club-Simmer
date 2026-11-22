@@ -111,7 +111,7 @@ describe('FreeformRecipeSchema', () => {
     );
   });
 
-  it('is more permissive than the path-slot RecipeSchema for sizes only', () => {
+  it('accepts sizes beyond the path-slot RecipeSchema limits', () => {
     const big = recipe({
       ingredients: many(51, ingredient),
       steps: many(31, step),
