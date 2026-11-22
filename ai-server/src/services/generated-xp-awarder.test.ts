@@ -18,6 +18,12 @@ function uniqueViolationResponse(): { ok: false; status: number; text: () => Pro
   return { ok: false, status: 409, text: (): Promise<string> => Promise.resolve(uniqueViolationBody()) };
 }
 
+const RECIPE_ID = randomUUID();
+
+function recipeXpResponse(xpValue: number): { ok: true; json: () => Promise<unknown> } {
+  return { ok: true, json: () => Promise.resolve([{ xp_value: xpValue }]) };
+}
+
 describe('SupabaseGeneratedXpAwarder', () => {
   let awarder: SupabaseGeneratedXpAwarder;
 
@@ -217,8 +223,8 @@ describe('SupabaseGeneratedXpAwarder', () => {
     const checkInId = randomUUID();
     mockFetch.mockResolvedValueOnce(uniqueViolationResponse()).mockResolvedValueOnce({
       ok: true,
-      json: () => Promise.resolve([{ xp_awarded: 40, is_first_completion: true }]),
-    });
+      json: () => Promise.resolve([{ xp_awarded: 40, is_first_completion: true, generated_recipe_id: RECIPE_ID }]),
+    }).mockResolvedValueOnce(recipeXpResponse(40));
 
     const result = await awarder.award(checkInId);
 
@@ -243,11 +249,55 @@ describe('SupabaseGeneratedXpAwarder', () => {
     });
     await expect(awarder.award(randomUUID())).resolves.toMatchObject({ xp_awarded: 0, capped: true });
 
-    mockFetch.mockResolvedValueOnce(uniqueViolationResponse()).mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve([{ xp_awarded: 20, is_first_completion: false }]),
-    });
+    mockFetch
+      .mockResolvedValueOnce(uniqueViolationResponse())
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve([{ xp_awarded: 20, is_first_completion: false, generated_recipe_id: RECIPE_ID }]),
+      })
+      .mockResolvedValueOnce(recipeXpResponse(40));
     await expect(awarder.award(randomUUID())).resolves.toMatchObject({ xp_awarded: 20, capped: false });
+  });
+
+  function readBack(row: Record<string, unknown>): void {
+    mockFetch
+      .mockResolvedValueOnce(uniqueViolationResponse())
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([{ generated_recipe_id: RECIPE_ID, ...row }]) });
+  }
+
+  it('reads back a partially capped repeat as capped, using the recipe xp_value', async () => {
+    readBack({ xp_awarded: 5, is_first_completion: false });
+    mockFetch.mockResolvedValueOnce(recipeXpResponse(40));
+    await expect(awarder.award(randomUUID())).resolves.toMatchObject({ xp_awarded: 5, capped: true });
+    const [url, options] = mockFetch.mock.calls[2] as [string, RequestInit];
+    expect(url).toContain('/rest/v1/user_generated_recipes');
+    expect(url).toContain(`id=eq.${RECIPE_ID}`);
+    expect(options.method).toBe('GET');
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+  });
+
+  it('reads back a daily-capped first completion as capped, and an uncapped one as not capped', async () => {
+    readBack({ xp_awarded: 30, is_first_completion: true });
+    mockFetch.mockResolvedValueOnce(recipeXpResponse(40));
+    await expect(awarder.award(randomUUID())).resolves.toMatchObject({ xp_awarded: 30, capped: true });
+
+    readBack({ xp_awarded: 40, is_first_completion: true });
+    mockFetch.mockResolvedValueOnce(recipeXpResponse(40));
+    await expect(awarder.award(randomUUID())).resolves.toMatchObject({ xp_awarded: 40, capped: false });
+  });
+
+  it('falls back to the 0-XP-repeat heuristic when the recipe lookup fails', async () => {
+    readBack({ xp_awarded: 5, is_first_completion: false });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+    await expect(awarder.award(randomUUID())).resolves.toMatchObject({ xp_awarded: 5, capped: false });
+
+    readBack({ xp_awarded: 0, is_first_completion: false });
+    mockFetch.mockRejectedValueOnce(new TypeError('fetch failed'));
+    await expect(awarder.award(randomUUID())).resolves.toMatchObject({ xp_awarded: 0, capped: true });
+
+    readBack({ xp_awarded: 30, is_first_completion: true });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
+    await expect(awarder.award(randomUUID())).resolves.toMatchObject({ xp_awarded: 30, capped: false });
   });
 
   it('throws already_awarded (status 409) when the duplicate row cannot be read back', async () => {
