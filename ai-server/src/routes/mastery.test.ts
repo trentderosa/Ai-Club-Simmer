@@ -114,3 +114,25 @@ describe('POST /api/mastery/sessions/:id/reveal', () => {
     expect(res.body.code).toBe(code);
   });
 });
+
+describe('per-IP limiter before auth', () => {
+  it('rate-limits unauthenticated requests after the cap', async () => {
+    const masteryRepository = { start: vi.fn(), reveal: vi.fn() } as unknown as MasteryRepository;
+    const verify = vi.fn().mockResolvedValue({ valid: false, error: 'invalid' });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      '/api/mastery',
+      createMasteryRouter(
+        { jwtVerifier: { verify }, masteryRepository },
+        { ipRateLimit: { windowMs: 60000, maxRequests: 2 } }
+      )
+    );
+    expect((await request(app).post('/api/mastery/sessions').send({ slot_id: 10 })).status).toBe(401);
+    expect((await request(app).post('/api/mastery/sessions').send({ slot_id: 10 })).status).toBe(401);
+    const limited = await request(app).post('/api/mastery/sessions').send({ slot_id: 10 });
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({ error: 'Too many requests, please try again later' });
+    expect((await request(app).post('/api/mastery/sessions/x/reveal').send({})).status).toBe(429);
+  });
+});
