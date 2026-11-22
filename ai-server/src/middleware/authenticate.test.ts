@@ -171,11 +171,22 @@ describe('authenticate middleware', () => {
     const verifier: JwtVerifier = { verify: vi.fn().mockRejectedValue(new Error('boom')) };
     const middleware = createAuthMiddleware(verifier);
     const req = { headers: { authorization: `Bearer ${FAKE_TOKEN}` } } as express.Request;
-    const res = { status: vi.fn(), json: vi.fn() } as unknown as express.Response;
+    const json = vi.fn();
+    const res = { status: vi.fn().mockReturnValue({ json }) } as unknown as express.Response;
     const next = vi.fn();
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    await middleware(req, res, next).catch(() => {});
-    expect(next).not.toHaveBeenCalledWith();
+    try {
+      await middleware(req, res, next);
+    } finally {
+      errorSpy.mockRestore();
+    }
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(json).toHaveBeenCalledWith({
+      error: 'Authentication service unavailable',
+      code: 'AUTH_UNAVAILABLE',
+    });
+    expect(next).not.toHaveBeenCalled();
     expect(req.userId).toBeUndefined();
   });
 

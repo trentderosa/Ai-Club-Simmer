@@ -167,6 +167,7 @@ const { data } = await supabase
   - `404`: onboarding isn't finished.
   - `429`: per-user uncached generation rate limit (default 5 per hour). The count is stored in the database and survives an AI server restart. Cache hits are not limited.
   - `503 { code: "GENERATION_RATE_LIMIT_UNAVAILABLE" }`: the generation limit could not be checked, so a new recipe was not started. A saved dish still loads. This is not the auth-service 503.
+  - `503 { error, code: "AUTH_UNAVAILABLE" }`: sign-in could not be checked (the auth service was unreachable, or verification hit an unexpected error), so the request was not processed. Retry shortly.
   - `500`: generation failed after 3 tries. Show a **Retry** button.
 
 To check in, `POST /api/check-ins` with `generated_recipe_id` instead of `user_recipe_id` / `slot_id` (do not send both). The same idempotency rules apply. Repeats of that normalized dish earn 50% XP and share the 100 XP/week repeat cap with path-slot repeats. Free-form awards also apply a daily cap (default 200) that counts today's slot XP and free-form XP together.
