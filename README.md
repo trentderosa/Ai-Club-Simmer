@@ -1,6 +1,6 @@
 # Simmer
 
-Simmer is the JMU AI Club "Duolingo of cooking" app for new cooks. The MVP is a single fixed path, **"Weeknight basics"**: 10 weeknight dishes in a set order, each teaching a technique, with check-ins, XP, and AI-tailored tips after each cook. Users can also type a dish outside the path ("Cook anything") and get a generated recipe, then cook and check in the same way. Free-form XP uses the same slot formula; the mock canned recipe is 84 XP. A fully clamped recipe has `xp_value` 177, below roast chicken (181). The daily cap on free-form awards remains 200.
+Simmer is the JMU AI Club "Duolingo of cooking" app for new cooks. The MVP is a single fixed path, **"Weeknight basics"**: 10 weeknight dishes in a set order, each teaching a technique, with check-ins, XP, and AI-tailored tips after each cook. Users can also type a dish outside the path ("Cook anything") and get a generated recipe, then cook and check in the same way. When two saves of the same dish race, the losing insert returns the already-saved recipe instead of failing. Free-form XP uses the same slot formula; the mock canned recipe is 84 XP. A fully clamped recipe has `xp_value` 177, below roast chicken (181). The daily cap on free-form awards remains 200.
 
 This repo holds the product requirements, the Expo app, the AI server, and the database migrations and tests.
 
