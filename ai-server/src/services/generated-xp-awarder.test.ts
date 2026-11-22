@@ -300,6 +300,20 @@ describe('SupabaseGeneratedXpAwarder', () => {
     await expect(awarder.award(randomUUID())).resolves.toMatchObject({ xp_awarded: 30, capped: false });
   });
 
+  it('rejects with reason "timeout" when the abort fires during the recipe lookup', async () => {
+    const slow = new SupabaseGeneratedXpAwarder({ url: URL_BASE, serviceRoleKey: KEY, timeoutMs: 20 });
+    readBack({ xp_awarded: 5, is_first_completion: false });
+    mockFetch.mockImplementationOnce(
+      (_url: string, options: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        })
+    );
+    const err = await slow.award(randomUUID()).catch((e: unknown) => e);
+    expect(xpAwardErrorReason(err)).toBe('timeout');
+    expect((err as Error).message).not.toContain(KEY);
+  });
+
   it('throws already_awarded (status 409) when the duplicate row cannot be read back', async () => {
     // Empty result, failed read, and malformed row each fall through to already_awarded.
     mockFetch.mockResolvedValueOnce(uniqueViolationResponse()).mockResolvedValueOnce({

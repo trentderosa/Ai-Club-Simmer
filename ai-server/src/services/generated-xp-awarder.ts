@@ -170,6 +170,9 @@ export class SupabaseGeneratedXpAwarder implements XpAwarder {
     }
     if (typeof xpValue !== 'number') return fallback;
 
+    // Edge case: a repeat of an xp_value=1 recipe has expected 0 (effectively unreachable
+    // with current clamps). The SQL can still report capped=true there (a cap forced 0),
+    // but `0 < 0` reads back false.
     const expected = isFirstCompletion ? xpValue : Math.floor((xpValue * 50) / 100);
     return xpAwarded < expected;
   }
