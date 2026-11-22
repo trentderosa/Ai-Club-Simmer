@@ -165,8 +165,8 @@ describe('authenticate middleware', () => {
     expect(res.status).toHaveBeenCalledWith(401);
   });
 
-  // Today a throwing verifier surfaces as an unhandled rejection; the real verifier in
-  // services/jwt-verifier.ts catches everything, so only custom verifiers can reach this.
+  // The real verifier in services/jwt-verifier.ts catches everything, so only custom
+  // verifiers can reach this.
   it('fails closed when the verifier throws', async () => {
     const verifier: JwtVerifier = { verify: vi.fn().mockRejectedValue(new Error('boom')) };
     const middleware = createAuthMiddleware(verifier);
@@ -177,5 +177,45 @@ describe('authenticate middleware', () => {
     await middleware(req, res, next).catch(() => {});
     expect(next).not.toHaveBeenCalledWith();
     expect(req.userId).toBeUndefined();
+  });
+
+  it('returns 503 AUTH_UNAVAILABLE when the verifier throws, without leaking the token', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const verifier: JwtVerifier = {
+        verify: vi.fn().mockRejectedValue(new Error(`bad token ${FAKE_TOKEN}`)),
+      };
+      const next = vi.fn();
+      const app = express();
+      const auth = createAuthMiddleware(verifier);
+      app.get('/protected', (req, res) => void auth(req, res, next));
+
+      const res = await request(app)
+        .get('/protected')
+        .set('Authorization', `Bearer ${FAKE_TOKEN}`);
+
+      expect(res.status).toBe(503);
+      expect(res.body).toEqual({
+        error: 'Authentication service unavailable',
+        code: 'AUTH_UNAVAILABLE',
+      });
+      expect(res.text).not.toContain(FAKE_TOKEN);
+      expect(next).not.toHaveBeenCalled();
+
+      const logged = JSON.stringify([
+        ...errorSpy.mock.calls,
+        ...warnSpy.mock.calls,
+        ...logSpy.mock.calls,
+      ]);
+      expect(errorSpy).toHaveBeenCalled();
+      expect(logged).not.toContain(FAKE_TOKEN);
+      expect(logged).not.toContain('Bearer');
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+      logSpy.mockRestore();
+    }
   });
 });
