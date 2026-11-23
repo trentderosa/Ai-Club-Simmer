@@ -353,7 +353,7 @@ week counts toward that week's cap (PRD open question 10).
 
 ## Shutdown
 
-On SIGTERM or SIGINT the server stops the XP reconcile timer and stops accepting connections. It waits up to the model timeout (`OLLAMA_TIMEOUT_MS`) plus 5 s for in-flight requests, so a generation attempt that is running can finish. After that it exits anyway. A second Ctrl-C exits right away.
+On SIGTERM or SIGINT the server stops the XP reconcile timer and stops accepting connections. It waits up to the model timeout (`OLLAMA_TIMEOUT_MS`) plus 5 s for in-flight requests, so a generation attempt that is running can finish. Requests still waiting in the model queue (and any retry or new request) get `503` `GENERATION_BUSY` with `Retry-After` straight away, and running prewarm calls are aborted. After that it exits anyway. A second Ctrl-C exits right away.
 
 ## Bad config
 

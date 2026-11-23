@@ -396,3 +396,90 @@ describe('createOllamaGate preemption of background calls', () => {
     expect(gate.isIdle()).toBe(true);
   });
 });
+
+describe('createOllamaGate close', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** Inner client whose calls settle on demand and reject when their signal aborts. */
+  function abortableClient(): { client: OllamaClient; settle: Array<(v: string) => void>; signals: Array<AbortSignal | undefined> } {
+    const settle: Array<(v: string) => void> = [];
+    const signals: Array<AbortSignal | undefined> = [];
+    const client: OllamaClient = {
+      generate: (_prompt, _schema, options) =>
+        new Promise<string>((resolve, reject) => {
+          settle.push(resolve);
+          signals.push(options?.signal);
+          options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    };
+    return { client, settle, signals };
+  }
+
+  it('rejects queued waiters at once with shutting_down and clears their timers', async () => {
+    const { client, settle } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    const running = gate.generate('a', {});
+    await flush();
+    const queued = gate.generate('b', {}).catch((e: unknown) => e);
+    await flush();
+    gate.close();
+    const error = await queued;
+    expect(error).toBeInstanceOf(OllamaBusyError);
+    expect((error as OllamaBusyError).reason).toBe('shutting_down');
+    expect(vi.getTimerCount()).toBe(0);
+    expect(settle).toHaveLength(1);
+    settle[0]('done');
+    await running;
+    expect(settle).toHaveLength(1);
+  });
+
+  it('refuses new calls, including retries, and reports saturated', async () => {
+    const { client, settle } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    gate.close();
+    expect(gate.isSaturated()).toBe(true);
+    await expect(gate.generate('x', {})).rejects.toMatchObject({ reason: 'shutting_down' });
+    await expect(gate.generate('y', {}, { background: true })).rejects.toMatchObject({ reason: 'shutting_down' });
+    expect(settle).toHaveLength(0);
+  });
+
+  it('lets a running foreground call finish and release its slot', async () => {
+    const { client, settle, signals } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    const running = gate.generate('a', {});
+    await flush();
+    gate.close();
+    expect(signals[0]).toBeUndefined();
+    settle[0]('result');
+    await expect(running).resolves.toBe('result');
+    expect(gate.isIdle()).toBe(true);
+  });
+
+  it('aborts a running background call, which ends with shutting_down busy', async () => {
+    const { client } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    const bg = gate.generate('bg', {}, { background: true }).catch((e: unknown) => e);
+    await flush();
+    gate.close();
+    const error = await bg;
+    expect(error).toBeInstanceOf(OllamaBusyError);
+    expect((error as OllamaBusyError).reason).toBe('shutting_down');
+    expect(gate.isIdle()).toBe(true);
+  });
+
+  it('is idempotent', async () => {
+    const { client } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    gate.close();
+    expect(() => gate.close()).not.toThrow();
+    await expect(gate.generate('x', {})).rejects.toBeInstanceOf(OllamaBusyError);
+  });
+});
