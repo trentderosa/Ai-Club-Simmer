@@ -11,6 +11,7 @@ import {
   PathSlot,
 } from './recipe-generator.js';
 import type { OllamaClient } from './ollama-client.js';
+import { OllamaBusyError } from './ollama-gate.js';
 import { RecipeSchema, type Recipe } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 import { HIDDEN_STEP_INSTRUCTION, maskRecipeForMastery } from '../mastery/mask.js';
@@ -1234,5 +1235,65 @@ describe('recipe cleanup guards', () => {
     expect(JSON.stringify(err.mock.calls)).not.toContain('SECRETTEXT');
     expect(JSON.stringify(err.mock.calls)).toContain('invalid_json');
     vi.restoreAllMocks();
+  });
+});
+
+describe('generateRecipe - shouldRetry and immediateOnly', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  const skipLogs = (): unknown[][] =>
+    vi.mocked(console.warn).mock.calls.filter((c) => c[0] === 'recipe_generation_retry_skipped');
+
+  it('stops before a retry when shouldRetry says no, keeping the earlier failure', async () => {
+    const client = { generate: vi.fn().mockResolvedValue('not-json') };
+    const shouldRetry = vi.fn().mockReturnValue(false);
+    const pending = generateRecipe(client, mockSlot, mockUserProfile, { shouldRetry });
+    await vi.runAllTimersAsync();
+    const result = await pending;
+    expect(client.generate).toHaveBeenCalledTimes(1);
+    expect(shouldRetry).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.type).toBe('generation_failed');
+      expect(result.error.attempts).toBe(1);
+    }
+    expect(skipLogs()).toHaveLength(1);
+  });
+
+  it('keeps retrying while shouldRetry says yes and never asks before the first attempt', async () => {
+    const client = { generate: vi.fn().mockResolvedValue('not-json') };
+    const shouldRetry = vi.fn().mockReturnValue(true);
+    const pending = generateRecipe(client, mockSlot, mockUserProfile, { shouldRetry });
+    await vi.runAllTimersAsync();
+    await pending;
+    expect(client.generate).toHaveBeenCalledTimes(3);
+    expect(shouldRetry).toHaveBeenCalledTimes(2);
+    expect(skipLogs()).toHaveLength(0);
+  });
+
+  it('passes a zero queue wait on every attempt when immediateOnly is set', async () => {
+    const client = { generate: vi.fn().mockResolvedValue('not-json') };
+    const pending = generateRecipe(client, mockSlot, mockUserProfile, { immediateOnly: true });
+    await vi.runAllTimersAsync();
+    await pending;
+    expect(client.generate).toHaveBeenCalledTimes(3);
+    for (const call of client.generate.mock.calls) expect(call[2]).toEqual({ queueTimeoutMs: 0, background: true });
+  });
+
+  it('returns busy without retrying when an immediateOnly call is refused', async () => {
+    const client = { generate: vi.fn().mockRejectedValue(new OllamaBusyError('queue_timeout')) };
+    const result = await generateRecipe(client, mockSlot, mockUserProfile, { immediateOnly: true });
+    expect(client.generate).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.type).toBe('busy');
   });
 });

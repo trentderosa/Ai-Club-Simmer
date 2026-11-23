@@ -56,6 +56,20 @@ export interface Config {
     /** Timeout for one Wikimedia Commons lookup, in ms. */
     timeoutMs: number;
   };
+  /** Generate the next path recipe in the background after a check-in (RECIPE_PREWARM). */
+  recipePrewarm: boolean;
+  /** Shared queue in front of every Ollama call (see services/ollama-gate.ts). */
+  ollamaGate: {
+    maxConcurrent: number;
+    maxQueue: number;
+    queueTimeoutMs: number;
+    /** Shorter queue wait for check-in coach notes, which fall back instead of failing. */
+    coachNoteQueueTimeoutMs: number;
+    /** Overall time one recipe request may spend queueing and running, retries included. */
+    requestBudgetMs: number;
+    /** Same for one coach note, which must finish inside the app's check-in timeout. */
+    coachNoteBudgetMs: number;
+  };
 }
 
 type Env = Record<string, string | undefined>;
@@ -232,6 +246,15 @@ export function isPreviewRouteEnabled(env: Env = process.env): boolean {
   return requested;
 }
 
+/**
+ * RECIPE_PREWARM: on unless set to false, 0 or off (case-insensitive).
+ * Anything else, including unset or empty, leaves it on.
+ */
+export function isRecipePrewarmEnabled(env: Env = process.env): boolean {
+  const raw = env.RECIPE_PREWARM?.trim().toLowerCase();
+  return !(raw === 'false' || raw === '0' || raw === 'off');
+}
+
 export function loadConfig(): Config {
   return {
     port: parseInt(process.env.PORT || '3001', 10),
@@ -265,6 +288,8 @@ export function loadConfig(): Config {
     allowedOrigins: parseAllowedOrigins(),
     cookAnything: loadCookAnythingConfig(),
     dishPhoto: loadDishPhotoConfig(),
+    ollamaGate: loadOllamaGateConfig(),
+    recipePrewarm: isRecipePrewarmEnabled(),
   };
 }
 
@@ -396,5 +421,88 @@ export function loadReconcileConfig(env: Env = process.env): ReconcileConfig {
     batchLimit: bounded('XP_RECONCILE_BATCH_LIMIT', XP_RECONCILE_BATCH_LIMIT),
     maxAttempts: bounded('XP_RECONCILE_MAX_ATTEMPTS', XP_RECONCILE_MAX_ATTEMPTS),
     retryBaseMinutes: bounded('XP_RECONCILE_RETRY_BASE_MINUTES', XP_RECONCILE_RETRY_BASE_MINUTES),
+  };
+}
+
+export const OLLAMA_MAX_CONCURRENT = { default: 1, min: 1, max: 8 } as const;
+export const OLLAMA_MAX_QUEUE = { default: 3, min: 0, max: 100 } as const;
+export const OLLAMA_QUEUE_TIMEOUT_MS = { default: 60000, min: 1000, max: 600000 } as const;
+export const OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS = { default: 15000, min: 1000, max: 600000 } as const;
+
+export const OLLAMA_REQUEST_BUDGET_MS = { default: 170000, min: 10000, max: 600000 } as const;
+export const OLLAMA_COACH_NOTE_BUDGET_MS = { default: 120000, min: 5000, max: 600000 } as const;
+
+/**
+ * Warnings for Ollama timeout and budget settings that cannot work together.
+ * Pure: the values are durations in ms, not secrets, so they are named in the text.
+ */
+export function ollamaTimingWarnings(
+  ollamaTimeoutMs: number,
+  requestBudgetMs: number,
+  coachNoteBudgetMs: number
+): string[] {
+  if (!Number.isFinite(ollamaTimeoutMs) || ollamaTimeoutMs <= 0) {
+    return [
+      `OLLAMA_TIMEOUT_MS is ${ollamaTimeoutMs}, not a finite positive number; model calls may not time out as expected`,
+    ];
+  }
+  const warnings: string[] = [];
+  if (!(requestBudgetMs > ollamaTimeoutMs)) {
+    warnings.push(
+      `OLLAMA_REQUEST_BUDGET_MS (${requestBudgetMs}) is not greater than OLLAMA_TIMEOUT_MS (${ollamaTimeoutMs}); every recipe request will answer 503 GENERATION_BUSY without calling the model`
+    );
+  }
+  if (!(coachNoteBudgetMs > ollamaTimeoutMs)) {
+    warnings.push(
+      `OLLAMA_COACH_NOTE_BUDGET_MS (${coachNoteBudgetMs}) is not greater than OLLAMA_TIMEOUT_MS (${ollamaTimeoutMs}); every coach note will use the fallback note`
+    );
+  }
+  return warnings;
+}
+
+export function loadOllamaGateConfig(env: Env = process.env): Config['ollamaGate'] {
+  return {
+    maxConcurrent: parseBoundedIntEnv(
+      env,
+      'OLLAMA_MAX_CONCURRENT',
+      OLLAMA_MAX_CONCURRENT.default,
+      OLLAMA_MAX_CONCURRENT.min,
+      OLLAMA_MAX_CONCURRENT.max
+    ),
+    maxQueue: parseBoundedIntEnv(
+      env,
+      'OLLAMA_MAX_QUEUE',
+      OLLAMA_MAX_QUEUE.default,
+      OLLAMA_MAX_QUEUE.min,
+      OLLAMA_MAX_QUEUE.max
+    ),
+    queueTimeoutMs: parseBoundedIntEnv(
+      env,
+      'OLLAMA_QUEUE_TIMEOUT_MS',
+      OLLAMA_QUEUE_TIMEOUT_MS.default,
+      OLLAMA_QUEUE_TIMEOUT_MS.min,
+      OLLAMA_QUEUE_TIMEOUT_MS.max
+    ),
+    coachNoteQueueTimeoutMs: parseBoundedIntEnv(
+      env,
+      'OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS',
+      OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS.default,
+      OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS.min,
+      OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS.max
+    ),
+    requestBudgetMs: parseBoundedIntEnv(
+      env,
+      'OLLAMA_REQUEST_BUDGET_MS',
+      OLLAMA_REQUEST_BUDGET_MS.default,
+      OLLAMA_REQUEST_BUDGET_MS.min,
+      OLLAMA_REQUEST_BUDGET_MS.max
+    ),
+    coachNoteBudgetMs: parseBoundedIntEnv(
+      env,
+      'OLLAMA_COACH_NOTE_BUDGET_MS',
+      OLLAMA_COACH_NOTE_BUDGET_MS.default,
+      OLLAMA_COACH_NOTE_BUDGET_MS.min,
+      OLLAMA_COACH_NOTE_BUDGET_MS.max
+    ),
   };
 }

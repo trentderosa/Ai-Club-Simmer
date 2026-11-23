@@ -1,6 +1,9 @@
 import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import type { OllamaClient } from '../services/ollama-client.js';
+import type { OllamaBudget } from '../services/ollama-budget.js';
+import type { OllamaGate } from '../services/ollama-gate.js';
+import { sendGenerationBusy } from './generation-busy.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
 import type { DishVideo, DishVideoFinder } from '../services/dish-video-finder.js';
@@ -17,7 +20,10 @@ import { generateCookAnythingRecipe } from '../cook-anything/generator.js';
 import { sanitizeRecipeVideos, youtubeWatchUrl } from '../cook-anything/youtube-url.js';
 
 export interface CookAnythingRouterDeps {
-  ollamaClient: OllamaClient;
+  /** The shared gate in production. A plain client (tests) has no isSaturated. */
+  ollamaClient: OllamaClient & Partial<Pick<OllamaGate, 'isSaturated'>>;
+  /** Per-request time budget for the model queue and calls. No deadline when unset. */
+  generationBudget?: OllamaBudget;
   supabase: SupabaseService;
   generatedRecipes: GeneratedRecipeRepository;
   videoFinder?: VideoFinder | null;
@@ -182,6 +188,21 @@ export function createCookAnythingRouter(
     };
   }
 
+  // Best effort: a request that ended busy after allow() charged it did not
+  // produce a recipe, so its hit is given back. Never throws and never changes
+  // the response.
+  async function refundBusy(userId: string): Promise<void> {
+    try {
+      if (await generationLimiter.refund(userId)) {
+        console.info('cook_anything_generation_refunded');
+      }
+    } catch (error) {
+      console.error('cook_anything_refund_failed', {
+        error: error instanceof Error ? error.name : 'UnknownError',
+      });
+    }
+  }
+
   type GenerationWorkResult =
     | CookAnythingHttpResponse
     | GenerationWorkError
@@ -203,6 +224,10 @@ export function createCookAnythingRouter(
       return;
     }
     if ('error' in result && result.error) {
+      if (result.error.type === 'busy') {
+        sendGenerationBusy(res);
+        return;
+      }
       res.status(500).json({
         error: 'Recipe generation failed. Please try again.',
         type: result.error.type,
@@ -298,6 +323,11 @@ export function createCookAnythingRouter(
       // request for this dish must join this promise instead of spending
       // another generation and starting another model call.
       const work = (async (): Promise<GenerationWorkResult> => {
+        // A queue that is already full is refused before allow(), so it never
+        // costs the user one of their generations.
+        if (deps.ollamaClient.isSaturated?.()) {
+          return { error: { type: 'busy', message: 'Model is busy', attempts: 0 } };
+        }
         let allowed: boolean;
         try {
           allowed = await generationLimiter.allow(userId);
@@ -310,13 +340,27 @@ export function createCookAnythingRouter(
         if (!allowed) {
           return { limit: 'rate_limited' };
         }
+        // The queue can fill during the allow() round trip. The hit is already
+        // charged, so it is refunded, and the model is not called.
+        if (deps.ollamaClient.isSaturated?.()) {
+          await refundBusy(userId);
+          return { error: { type: 'busy', message: 'Model is busy', attempts: 0 } };
+        }
 
         const result = await generateCookAnythingRecipe(
           deps.ollamaClient,
           dishQuery,
-          userProfile
+          userProfile,
+          { budget: deps.generationBudget }
         );
         if (!result.success) {
+          // attempts counts model calls started. Busy on attempt 1 means no
+          // model output was produced; busy after that follows a completed
+          // call (bad JSON, schema failure, rinse rejection) that used model
+          // time, so it stays charged.
+          if (result.error.type === 'busy' && result.error.attempts <= 1) {
+            await refundBusy(userId);
+          }
           return { error: result.error };
         }
         const clamped = clampRecipeCounts(result.recipe);
