@@ -660,3 +660,25 @@ describe('Check-in API idempotency_key', () => {
   });
 });
 
+
+describe('POST /api/check-ins per-IP limiter before auth', () => {
+  it('rate-limits unauthenticated requests after the cap', async () => {
+    const repository = new InMemoryCheckInRepository();
+    const service = new CheckInService(repository, createMockCoachNoteGenerator());
+    const jwtVerifier = createMockJwtVerifier({ valid: false, error: 'invalid_token' });
+    const app = express();
+    app.use(express.json());
+    app.use(
+      '/api/check-ins',
+      createCheckInRouter(
+        { checkInService: service, jwtVerifier },
+        { ipRateLimit: { windowMs: 60000, maxRequests: 2 } }
+      )
+    );
+    expect((await request(app).post('/api/check-ins').send({})).status).toBe(401);
+    expect((await request(app).post('/api/check-ins').send({})).status).toBe(401);
+    const limited = await request(app).post('/api/check-ins').send({});
+    expect(limited.status).toBe(429);
+    expect(limited.body).toEqual({ error: 'Too many requests, please try again later' });
+  });
+});

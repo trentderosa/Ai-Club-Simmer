@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { assertProductionConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadOllamaGateConfig, loadXpAwardTimeoutMs, isRecipePrewarmEnabled, ollamaTimingWarnings, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
+import { afterEach, describe, it, expect, vi } from 'vitest';
+import { ConfigError, assertProductionConfig, loadConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadOllamaGateConfig, loadXpAwardTimeoutMs, isRecipePrewarmEnabled, ollamaTimingWarnings, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -288,5 +288,117 @@ describe('ollamaTimingWarnings', () => {
       expect(w).toHaveLength(1);
       expect(w[0]).toMatch(/OLLAMA_TIMEOUT_MS is /);
     }
+  });
+});
+
+describe('loadConfig Ollama and rate-limit bounds', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('keeps the defaults when unset', () => {
+    for (const name of ['OLLAMA_MAX_TOKENS', 'OLLAMA_TIMEOUT_MS', 'RATE_LIMIT_WINDOW_MS', 'RATE_LIMIT_MAX_REQUESTS']) {
+      vi.stubEnv(name, '');
+    }
+    const config = loadConfig();
+    expect(config.ollama.maxTokens).toBe(1500);
+    expect(config.ollama.timeoutMs).toBe(60000);
+    expect(config.rateLimit).toEqual({ windowMs: 60000, maxRequests: 10 });
+  });
+
+  it('accepts in-range values and the range edges', () => {
+    vi.stubEnv('OLLAMA_MAX_TOKENS', '256');
+    vi.stubEnv('OLLAMA_TIMEOUT_MS', '600000');
+    vi.stubEnv('RATE_LIMIT_WINDOW_MS', '1000');
+    vi.stubEnv('RATE_LIMIT_MAX_REQUESTS', '1000');
+    const config = loadConfig();
+    expect(config.ollama).toMatchObject({ maxTokens: 256, timeoutMs: 600000 });
+    expect(config.rateLimit).toEqual({ windowMs: 1000, maxRequests: 1000 });
+  });
+
+  it.each([
+    ['OLLAMA_MAX_TOKENS', 'abc'],
+    ['OLLAMA_MAX_TOKENS', '255'],
+    ['OLLAMA_MAX_TOKENS', '8193'],
+    ['OLLAMA_TIMEOUT_MS', '4999'],
+    ['OLLAMA_TIMEOUT_MS', '600001'],
+    ['RATE_LIMIT_WINDOW_MS', '999'],
+    ['RATE_LIMIT_WINDOW_MS', '3600001'],
+    ['RATE_LIMIT_MAX_REQUESTS', '0'],
+    ['RATE_LIMIT_MAX_REQUESTS', '1001'],
+    ['RATE_LIMIT_MAX_REQUESTS', '-5'],
+    ['RATE_LIMIT_MAX_REQUESTS', '1.5'],
+  ])('throws naming %s for %s', (name, value) => {
+    vi.stubEnv(name, value);
+    expect(() => loadConfig()).toThrow(new RegExp(`^${name} must be a whole number from`));
+  });
+});
+
+describe('PREAUTH_IP_RATE_LIMIT_MAX', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('defaults to 60 when unset or empty', () => {
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_MAX', '');
+    expect(loadConfig().preAuthIpRateLimitMax).toBe(60);
+  });
+
+  it('accepts the range edges', () => {
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_MAX', '1');
+    expect(loadConfig().preAuthIpRateLimitMax).toBe(1);
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_MAX', '10000');
+    expect(loadConfig().preAuthIpRateLimitMax).toBe(10000);
+  });
+
+  it('rejects out-of-range and non-integer values, naming the variable', () => {
+    for (const bad of ['0', '10001', '1.5', 'abc', '-1']) {
+      vi.stubEnv('PREAUTH_IP_RATE_LIMIT_MAX', bad);
+      expect(() => loadConfig()).toThrow('PREAUTH_IP_RATE_LIMIT_MAX must be a whole number from 1 to 10000');
+    }
+  });
+});
+
+describe('PREAUTH_IP_RATE_LIMIT_WINDOW_MS', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('defaults to 60000 when unset or empty, independent of RATE_LIMIT_WINDOW_MS', () => {
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_WINDOW_MS', '');
+    vi.stubEnv('RATE_LIMIT_WINDOW_MS', '5000');
+    const config = loadConfig();
+    expect(config.preAuthIpRateLimitWindowMs).toBe(60000);
+    expect(config.rateLimit.windowMs).toBe(5000);
+  });
+
+  it('accepts the range edges', () => {
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_WINDOW_MS', '1000');
+    expect(loadConfig().preAuthIpRateLimitWindowMs).toBe(1000);
+    vi.stubEnv('PREAUTH_IP_RATE_LIMIT_WINDOW_MS', '3600000');
+    expect(loadConfig().preAuthIpRateLimitWindowMs).toBe(3600000);
+  });
+
+  it('rejects out-of-range and non-integer values, naming the variable', () => {
+    for (const bad of ['999', '3600001', '1.5', 'abc', '-1']) {
+      vi.stubEnv('PREAUTH_IP_RATE_LIMIT_WINDOW_MS', bad);
+      expect(() => loadConfig()).toThrow('PREAUTH_IP_RATE_LIMIT_WINDOW_MS must be a whole number from 1000 to 3600000');
+    }
+  });
+});
+
+describe('ConfigError', () => {
+  it('is thrown by parseBoundedIntEnv and assertProductionConfig', () => {
+    expect(() => parseBoundedIntEnv({ X: 'abc' }, 'X', 1, 0, 10)).toThrow(ConfigError);
+    expect(() => assertProductionConfig({})).toThrow(ConfigError);
+  });
+
+  it('does not include secret values in assertProductionConfig messages', () => {
+    try {
+      assertProductionConfig({ serviceRoleKey: 'super-secret-service-role' });
+    } catch (error) {
+      expect((error as Error).message).not.toContain('super-secret-service-role');
+    }
+    expect.assertions(1);
   });
 });
