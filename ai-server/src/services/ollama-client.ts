@@ -8,8 +8,14 @@ export interface OllamaClientConfig {
   timeoutMs: number;
 }
 
+/** Per-call options. Only the shared concurrency gate reads them. */
+export interface OllamaGenerateOptions {
+  /** Longest this call may wait for a model slot, in ms. Gate default if unset. */
+  queueTimeoutMs?: number;
+}
+
 export interface OllamaClient {
-  generate(prompt: string, jsonSchema: object): Promise<string>;
+  generate(prompt: string, jsonSchema: object, options?: OllamaGenerateOptions): Promise<string>;
 }
 
 type FetchFn = typeof fetch;

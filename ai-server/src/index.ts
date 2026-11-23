@@ -1,12 +1,13 @@
 import express from 'express';
 import { loadEnvFile } from './load-env.js';
-import { assertProductionConfig, loadConfig } from './config.js';
+import { assertProductionConfig, loadConfig, ollamaTimingWarnings } from './config.js';
 import { runWithConfigErrors } from './run-with-config-errors.js';
 import { createShutdown, SHUTDOWN_GRACE_MS } from './shutdown.js';
 import { applyTrustProxy } from './trust-proxy.js';
 import { createCorsMiddleware } from './middleware/cors.js';
 import { mountErrorHandlers } from './middleware/error-handler.js';
 import { createOllamaClient } from './services/ollama-client.js';
+import { createOllamaGate } from './services/ollama-gate.js';
 import {
   createSupabaseService,
   createSupabaseStub,
@@ -90,7 +91,16 @@ applyTrustProxy(app, process.env.TRUST_PROXY);
 app.use(createCorsMiddleware(config.allowedOrigins));
 app.use(express.json());
 
-const ollamaClient = createOllamaClient(config.ollama);
+// Every Ollama call goes through one shared queue (OLLAMA_MAX_CONCURRENT etc.).
+const ollamaClient = createOllamaGate(createOllamaClient(config.ollama), config.ollamaGate);
+for (const w of ollamaTimingWarnings(config.ollama.timeoutMs, config.ollamaGate.requestBudgetMs, config.ollamaGate.coachNoteBudgetMs)) console.warn(w);
+
+// Caps queue time plus Ollama time for one recipe request, retries included.
+const recipeBudget = {
+  budgetMs: config.ollamaGate.requestBudgetMs,
+  ollamaTimeoutMs: config.ollama.timeoutMs,
+  queueTimeoutMs: config.ollamaGate.queueTimeoutMs,
+};
 
 interface ServiceConfig {
   supabase: ReturnType<typeof createSupabaseService>;
@@ -254,7 +264,14 @@ function createServicesFromConfig(): ServiceConfig {
   const pathRepository =
     url && serviceRoleKey ? new SupabasePathRepository({ url, serviceRoleKey }) : undefined;
 
-  const coachNoteGenerator = createCoachNoteGenerator(ollamaClient);
+  const coachNoteGenerator = createCoachNoteGenerator(ollamaClient, {
+    queueTimeoutMs: config.ollamaGate.coachNoteQueueTimeoutMs,
+    budget: {
+      budgetMs: config.ollamaGate.coachNoteBudgetMs,
+      ollamaTimeoutMs: config.ollama.timeoutMs,
+      queueTimeoutMs: config.ollamaGate.coachNoteQueueTimeoutMs,
+    },
+  });
   // XP is awarded only here, server-side, with the service role (never by the client).
   const xpAwarder =
     url && serviceRoleKey
@@ -304,6 +321,7 @@ const services = await runWithConfigErrors(() => createServicesFromConfig(), con
 const recipeRouter = createRecipeRouter(
   {
     ollamaClient,
+    generationBudget: recipeBudget,
     supabase: services.supabase,
     videoFinder: services.videoFinder,
     photoFinder: services.photoFinder,
@@ -320,6 +338,7 @@ app.use('/api/recipes', recipeRouter);
 const cookAnythingRouter = createCookAnythingRouter(
   {
     ollamaClient,
+    generationBudget: recipeBudget,
     supabase: services.supabase,
     generatedRecipes: services.generatedRecipes,
     videoFinder: services.videoFinder,
