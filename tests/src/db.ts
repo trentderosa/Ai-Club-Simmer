@@ -136,6 +136,14 @@ export class TestDatabase {
   async ensurePlatformStubs(options: RunMigrationsOptions = {}): Promise<void> {
     const stubRlsAutoEnable = options.stubRlsAutoEnable ?? true;
     await this.ensureSupabaseRoles();
+    // Simulate Supabase's default privileges: new functions in public get
+    // EXECUTE for anon/authenticated/service_role (on top of PUBLIC). Must run
+    // before migrations so a missing explicit REVOKE shows up in grant tests.
+    // Function EXECUTE grants are deliberately NOT re-applied in setupRoles().
+    await this.pool.query(`
+      ALTER DEFAULT PRIVILEGES IN SCHEMA public
+        GRANT EXECUTE ON FUNCTIONS TO anon, authenticated, service_role;
+    `);
     if (stubRlsAutoEnable) {
       await this.ensureRlsAutoEnableStub();
     }
@@ -187,7 +195,8 @@ export class TestDatabase {
   /**
    * Setup roles and permissions to simulate Supabase environment.
    * This allows tests to run as authenticated/anon/service_role with proper RLS.
-   * Must re-apply security restrictions AFTER granting broad table access.
+   * Must re-apply table restrictions AFTER granting broad table access.
+   * Function EXECUTE grants are NOT re-applied here; migrations must set them.
    */
   async setupRoles(): Promise<void> {
     await this.ensureSupabaseRoles();
@@ -213,10 +222,6 @@ export class TestDatabase {
       -- user_slot_completions - no INSERT for clients (only via SECURITY DEFINER function)
       REVOKE INSERT, UPDATE, DELETE ON user_slot_completions FROM anon, authenticated;
 
-      -- Re-assert RPC lockdown after broad GRANTs (migrations already set these)
-      REVOKE EXECUTE ON FUNCTION public.award_slot_xp(UUID) FROM PUBLIC, anon, authenticated;
-      GRANT EXECUTE ON FUNCTION public.award_slot_xp(UUID) TO service_role;
-
       -- 20261115000000_plan_badges_recipe_book.sql: re-assert after broad GRANTs
       REVOKE INSERT, UPDATE, DELETE ON badges FROM anon, authenticated;
       REVOKE ALL ON technique_videos FROM anon, authenticated;
@@ -228,8 +233,6 @@ export class TestDatabase {
       REVOKE INSERT, UPDATE, DELETE ON generated_recipe_xp_events FROM anon, authenticated;
       REVOKE INSERT, UPDATE, DELETE ON generated_recipe_check_ins FROM anon, authenticated;
       GRANT SELECT ON generated_recipe_check_ins TO authenticated;
-      REVOKE EXECUTE ON FUNCTION public.award_generated_recipe_xp(UUID) FROM PUBLIC, anon, authenticated;
-      GRANT EXECUTE ON FUNCTION public.award_generated_recipe_xp(UUID) TO service_role;
 
       -- 20261117140000_dish_photos.sql: re-assert after broad GRANTs
       REVOKE ALL ON dish_photos FROM PUBLIC, anon, authenticated;
@@ -246,10 +249,6 @@ export class TestDatabase {
       -- 20261120150000_cook_anything_generation_limits.sql: re-assert after broad GRANTs
       REVOKE ALL ON cook_anything_generation_hits FROM PUBLIC, anon, authenticated;
       GRANT ALL ON cook_anything_generation_hits TO service_role;
-      REVOKE EXECUTE ON FUNCTION public.try_cook_anything_generation(UUID, INTEGER, INTEGER, TIMESTAMPTZ)
-          FROM PUBLIC, anon, authenticated;
-      GRANT EXECUTE ON FUNCTION public.try_cook_anything_generation(UUID, INTEGER, INTEGER, TIMESTAMPTZ)
-          TO service_role;
       DO $cook_limit_seq$
       DECLARE
           seq text;
@@ -265,14 +264,6 @@ export class TestDatabase {
       -- 20261121180000_youtube_search_quota.sql: re-assert after broad GRANTs
       REVOKE ALL ON youtube_search_quota FROM PUBLIC, anon, authenticated;
       GRANT ALL ON youtube_search_quota TO service_role;
-      REVOKE EXECUTE ON FUNCTION public.claim_youtube_search(INTEGER, TIMESTAMPTZ)
-          FROM PUBLIC, anon, authenticated;
-      GRANT EXECUTE ON FUNCTION public.claim_youtube_search(INTEGER, TIMESTAMPTZ)
-          TO service_role;
-      REVOKE EXECUTE ON FUNCTION public.record_youtube_quota_cooldown(TIMESTAMPTZ, TIMESTAMPTZ)
-          FROM PUBLIC, anon, authenticated;
-      GRANT EXECUTE ON FUNCTION public.record_youtube_quota_cooldown(TIMESTAMPTZ, TIMESTAMPTZ)
-          TO service_role;
       DO $youtube_quota_seq$
       DECLARE
           seq text;
@@ -291,17 +282,6 @@ export class TestDatabase {
       REVOKE INSERT ON check_ins FROM anon, authenticated;
       REVOKE SELECT ON user_recipes FROM anon, authenticated;
       GRANT SELECT (id, user_id, slot_id, video_ids, created_at) ON user_recipes TO authenticated;
-    `);
-
-    // Match migration guard: only revoke when the function exists
-    await this.pool.query(`
-      DO $$
-      BEGIN
-        IF to_regprocedure('public.rls_auto_enable()') IS NOT NULL THEN
-          REVOKE EXECUTE ON FUNCTION public.rls_auto_enable() FROM PUBLIC, anon, authenticated;
-        END IF;
-      END
-      $$;
     `);
   }
 
