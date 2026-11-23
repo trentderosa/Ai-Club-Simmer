@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z, ZodError } from 'zod';
 import { createAuthMiddleware } from '../middleware/authenticate.js';
+import { createPreAuthIpLimiter } from '../middleware/pre-auth-ip-limiter.js';
 import type { JwtVerifier } from '../services/jwt-verifier.js';
 import { MasteryError, type MasteryErrorCode, type MasteryRepository } from '../repositories/mastery-repository.js';
 
@@ -12,6 +13,8 @@ export interface MasteryRouterDeps {
 
 export interface MasteryRouterOptions {
   rateLimit?: { windowMs: number; maxRequests: number };
+  /** Per-IP limit (before auth). */
+  ipRateLimit?: { windowMs: number; maxRequests: number };
 }
 
 const StartBodySchema = z.object({ slot_id: z.number().int().min(1).max(10) });
@@ -45,6 +48,12 @@ const ERROR_STATUS: Record<MasteryErrorCode, { status: number; message: string }
 export function createMasteryRouter(deps: MasteryRouterDeps, options: MasteryRouterOptions = {}): Router {
   const router = Router();
   const authenticate = createAuthMiddleware(deps.jwtVerifier);
+
+  // Per-IP, BEFORE auth, so unauthenticated floods and token-verification
+  // calls are bounded too. Behind a reverse proxy set TRUST_PROXY=true so
+  // req.ip is the real client. Looser than the per-user cap because many
+  // students can share one NAT or tunnel IP.
+  const ipLimiter = createPreAuthIpLimiter(options.ipRateLimit);
 
   // Per-user, after auth. Reveals are cheap single-row updates, so the limit
   // is more generous than recipe generation but still bounded.
@@ -80,7 +89,7 @@ export function createMasteryRouter(deps: MasteryRouterDeps, options: MasteryRou
   }
 
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  router.post('/sessions', authenticate, userLimiter, async (req: Request, res: Response): Promise<void> => {
+  router.post('/sessions', ipLimiter, authenticate, userLimiter, async (req: Request, res: Response): Promise<void> => {
     try {
       if (!req.userId) {
         res.status(401).json({ error: 'Authentication required' });
@@ -99,7 +108,7 @@ export function createMasteryRouter(deps: MasteryRouterDeps, options: MasteryRou
   });
 
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
-  router.post('/sessions/:sessionId/reveal', authenticate, userLimiter, async (req: Request, res: Response): Promise<void> => {
+  router.post('/sessions/:sessionId/reveal', ipLimiter, authenticate, userLimiter, async (req: Request, res: Response): Promise<void> => {
     try {
       if (!req.userId) {
         res.status(401).json({ error: 'Authentication required' });
