@@ -1,5 +1,5 @@
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { ConfigError, assertProductionConfig, loadConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadXpAwardTimeoutMs, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
+import { ConfigError, assertProductionConfig, loadConfig, DEFAULT_ALLOWED_ORIGINS, loadCookAnythingConfig, loadDishPhotoConfig, loadOllamaGateConfig, loadXpAwardTimeoutMs, isRecipePrewarmEnabled, ollamaTimingWarnings, loadYouTubeConfig, parseAllowedOrigins, parseBoundedIntEnv } from './config.js';
 
 const full = {
   url: 'https://example.supabase.co',
@@ -196,6 +196,97 @@ describe('loadDishPhotoConfig', () => {
       expect(() => loadDishPhotoConfig({ DISH_PHOTO_LOOKUP_TIMEOUT_MS: bad })).toThrow(
         'DISH_PHOTO_LOOKUP_TIMEOUT_MS must be a whole number from 500 to 10000'
       );
+    }
+  });
+});
+
+describe('loadOllamaGateConfig', () => {
+  it('defaults to one call at a time, 3 waiting, 60s and 15s waits, and the request budgets', () => {
+    expect(loadOllamaGateConfig({})).toEqual({
+      maxConcurrent: 1,
+      maxQueue: 3,
+      queueTimeoutMs: 60000,
+      coachNoteQueueTimeoutMs: 15000,
+      requestBudgetMs: 170000,
+      coachNoteBudgetMs: 120000,
+    });
+  });
+
+  it('reads overrides, including a queue of 0', () => {
+    expect(
+      loadOllamaGateConfig({
+        OLLAMA_MAX_CONCURRENT: '2',
+        OLLAMA_MAX_QUEUE: '0',
+        OLLAMA_QUEUE_TIMEOUT_MS: '5000',
+        OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS: '2000',
+        OLLAMA_REQUEST_BUDGET_MS: '10000',
+        OLLAMA_COACH_NOTE_BUDGET_MS: '600000',
+      })
+    ).toEqual({
+      maxConcurrent: 2,
+      maxQueue: 0,
+      queueTimeoutMs: 5000,
+      coachNoteQueueTimeoutMs: 2000,
+      requestBudgetMs: 10000,
+      coachNoteBudgetMs: 600000,
+    });
+  });
+
+  it('rejects out-of-range or non-numeric values, naming the variable', () => {
+    expect(() => loadOllamaGateConfig({ OLLAMA_MAX_CONCURRENT: '0' })).toThrow(/OLLAMA_MAX_CONCURRENT/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_MAX_CONCURRENT: '9' })).toThrow(/OLLAMA_MAX_CONCURRENT/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_MAX_QUEUE: '101' })).toThrow(/OLLAMA_MAX_QUEUE/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_MAX_QUEUE: '-1' })).toThrow(/OLLAMA_MAX_QUEUE/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_QUEUE_TIMEOUT_MS: '999' })).toThrow(/OLLAMA_QUEUE_TIMEOUT_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_QUEUE_TIMEOUT_MS: '600001' })).toThrow(/OLLAMA_QUEUE_TIMEOUT_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS: 'abc' })).toThrow(
+      /OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS/
+    );
+    expect(() => loadOllamaGateConfig({ OLLAMA_REQUEST_BUDGET_MS: '9999' })).toThrow(/OLLAMA_REQUEST_BUDGET_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_REQUEST_BUDGET_MS: '600001' })).toThrow(/OLLAMA_REQUEST_BUDGET_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: '4999' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: '600001' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
+    expect(() => loadOllamaGateConfig({ OLLAMA_COACH_NOTE_BUDGET_MS: 'abc' })).toThrow(/OLLAMA_COACH_NOTE_BUDGET_MS/);
+  });
+});
+
+describe('isRecipePrewarmEnabled', () => {
+  it('is on by default and for unknown values', () => {
+    expect(isRecipePrewarmEnabled({})).toBe(true);
+    expect(isRecipePrewarmEnabled({ RECIPE_PREWARM: '' })).toBe(true);
+    expect(isRecipePrewarmEnabled({ RECIPE_PREWARM: 'true' })).toBe(true);
+  });
+
+  it('turns off for false, 0 and off in any case', () => {
+    for (const value of ['false', 'FALSE', '0', 'off', ' Off ']) {
+      expect(isRecipePrewarmEnabled({ RECIPE_PREWARM: value })).toBe(false);
+    }
+  });
+});
+
+describe('ollamaTimingWarnings', () => {
+  it('returns nothing when both budgets exceed the timeout', () => {
+    expect(ollamaTimingWarnings(60000, 170000, 120000)).toEqual([]);
+  });
+
+  it('warns for each budget that is not strictly greater, naming the values', () => {
+    const w = ollamaTimingWarnings(120000, 120000, 100000);
+    expect(w).toHaveLength(2);
+    expect(w[0]).toMatch(/OLLAMA_REQUEST_BUDGET_MS \(120000\).*OLLAMA_TIMEOUT_MS \(120000\)/);
+    expect(w[1]).toMatch(/OLLAMA_COACH_NOTE_BUDGET_MS \(100000\).*OLLAMA_TIMEOUT_MS \(120000\)/);
+  });
+
+  it('warns about only the budget that is too small', () => {
+    const w = ollamaTimingWarnings(130000, 170000, 120000);
+    expect(w).toHaveLength(1);
+    expect(w[0]).toMatch(/OLLAMA_COACH_NOTE_BUDGET_MS/);
+  });
+
+  it('warns when the timeout is not a finite positive number', () => {
+    for (const bad of [NaN, Infinity, 0, -5]) {
+      const w = ollamaTimingWarnings(bad, 170000, 120000);
+      expect(w).toHaveLength(1);
+      expect(w[0]).toMatch(/OLLAMA_TIMEOUT_MS is /);
     }
   });
 });

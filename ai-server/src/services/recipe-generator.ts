@@ -4,6 +4,8 @@ import { UserProfile } from '../schemas/user.js';
 import type { OllamaClient } from './ollama-client.js';
 import { countedHiddenStepCount, MASTERY_MIN_HIDDEN_STEPS, MASTERY_MIN_STEPS } from '../mastery/mask.js';
 import { logGenerationFailure } from './generation-failure.js';
+import { OllamaBusyError, OllamaPreemptedError } from './ollama-gate.js';
+import { startDeadline, type OllamaBudget } from './ollama-budget.js';
 
 export interface RecipeGenerationResult {
   success: true;
@@ -13,9 +15,15 @@ export interface RecipeGenerationResult {
 export interface RecipeGenerationError {
   success: false;
   error: {
-    type: 'validation_failed' | 'generation_failed';
+    /**
+     * busy: the shared model queue refused the call. Never retried.
+     * preempted: a background call was cancelled for a real request. Never retried.
+     */
+    type: 'validation_failed' | 'generation_failed' | 'busy' | 'preempted';
     message: string;
     attempts: number;
+    /** True when retrying stopped early because shouldRetry said no, not because attempts ran out. */
+    retrySkipped?: boolean;
   };
 }
 
@@ -615,10 +623,27 @@ function sleep(ms: number): Promise<void> {
 export async function generateRecipe(
   client: OllamaClient,
   slot: PathSlot,
-  user: UserProfile
+  user: UserProfile,
+  options: {
+    budget?: OllamaBudget;
+    /**
+     * Asked before each retry (attempt 2 and later). False stops the loop and
+     * keeps the earlier failure. Without it every retry runs.
+     */
+    shouldRetry?: () => boolean;
+    /**
+     * Never wait in the gate queue: a call that cannot start at once is
+     * answered busy. Without it each attempt may queue.
+     */
+    immediateOnly?: boolean;
+  } = {}
 ): Promise<RecipeGenerationResponse> {
   const prompt = buildPrompt(slot, user);
   const jsonSchema = getRecipeJsonSchema();
+  // Caps queue time plus Ollama time for the whole request, retries included.
+  const deadline = options.budget ? startDeadline(options.budget) : null;
+  let attemptsMade = MAX_RETRIES + 1;
+  let retrySkipped = false;
 
   let lastError: Error | ZodError | null = null;
   // Flagged recipe from an attempt that told the cook to rinse raw meat.
@@ -633,9 +658,43 @@ export async function generateRecipe(
       await sleep(delayMs);
     }
 
+    if (attempt > 1 && options.shouldRetry && !options.shouldRetry()) {
+      // Someone else is waiting for the model. Keep the earlier failure.
+      console.warn('recipe_generation_retry_skipped', { attempt });
+      attemptsMade = attempt - 1;
+      retrySkipped = true;
+      break;
+    }
+
+    let queueTimeoutMs: number | undefined;
+    if (deadline) {
+      queueTimeoutMs = deadline.nextQueueTimeoutMs();
+      if (queueTimeoutMs <= 0) {
+        // The budget cannot cover another attempt. Keep the earlier failure.
+        console.warn('recipe_generation_budget_exhausted', { attempt });
+        if (!lastError) {
+          return {
+            success: false,
+            error: { type: 'busy', message: 'Model is busy', attempts: 0 },
+          };
+        }
+        attemptsMade = attempt - 1;
+        break;
+      }
+    }
+    if (options.immediateOnly) queueTimeoutMs = 0;
+    // Never-queueing calls are background work: a real request may cancel them.
+    const callOptions = options.immediateOnly
+      ? { queueTimeoutMs, background: true }
+      : queueTimeoutMs === undefined
+        ? undefined
+        : { queueTimeoutMs };
+
     try {
       // Call Ollama with structured JSON output format
-      const responseText = await client.generate(prompt, jsonSchema);
+      const responseText = callOptions
+        ? await client.generate(prompt, jsonSchema, callOptions)
+        : await client.generate(prompt, jsonSchema);
 
       // Step 1: Parse as JSON. LLMs sometimes output malformed JSON despite schema.
       let parsed: unknown;
@@ -709,6 +768,23 @@ export async function generateRecipe(
         recipe: recipeWithSafetyFlags,
       };
     } catch (error) {
+      // A busy model is not retried: more attempts only deepen the backlog.
+      // Intentional fail-safe: this also discards an earlier flagged rinse
+      // fallback (lastUnsafeRecipe). A busy answer is never turned into a
+      // recipe that may tell the cook to rinse raw meat.
+      // A preempted background call is dropped for the same reason: never retried.
+      if (error instanceof OllamaPreemptedError) {
+        return {
+          success: false,
+          error: { type: 'preempted', message: 'Preempted by a real request', attempts: attempt },
+        };
+      }
+      if (error instanceof OllamaBusyError) {
+        return {
+          success: false,
+          error: { type: 'busy', message: 'Model is busy', attempts: attempt },
+        };
+      }
       // Ollama client error (network, model not found, etc.)
       lastError = error as Error;
       console.warn('Recipe attempt rejected', {
@@ -722,8 +798,11 @@ export async function generateRecipe(
   }
 
   // Every attempt failed. A flagged rinse is saved only when nothing cleaner arrived.
+  // Not when shouldRetry stopped the loop: the retries never ran, so the caller
+  // (a joiner that reruns on retrySkipped) must get the chance to find a clean recipe.
   if (
     lastUnsafeRecipe &&
+    !retrySkipped &&
     (!slot.isFinal || countedHiddenStepCount(lastUnsafeRecipe) >= MASTERY_MIN_HIDDEN_STEPS)
   ) {
     return { success: true, recipe: lastUnsafeRecipe };
@@ -747,7 +826,8 @@ export async function generateRecipe(
       type:
         lastError instanceof ZodError ? 'validation_failed' : 'generation_failed',
       message: errorMessage,
-      attempts: MAX_RETRIES + 1,
+      attempts: attemptsMade,
+      ...(retrySkipped ? { retrySkipped: true } : {}),
     },
   };
 }

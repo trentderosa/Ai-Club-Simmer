@@ -121,4 +121,64 @@ describe('SupabaseGenerationRateLimiter', () => {
     expect(timedOut).toContain('timed out after 20ms');
     expect(timedOut).not.toContain(KEY);
   });
+
+  describe('refund', () => {
+    const config = {
+      url: 'https://test-project.supabase.co',
+      serviceRoleKey: KEY,
+      windowMs: 3_600_000,
+      maxGenerations: 5,
+    };
+
+    it('calls refund_cook_anything_generation with the user and window and returns its boolean', async () => {
+      mockFetch.mockResolvedValueOnce(ok('true')).mockResolvedValueOnce(ok('false'));
+      const limiter = new SupabaseGenerationRateLimiter(config);
+
+      await expect(limiter.refund(USER)).resolves.toBe(true);
+      const [url, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(url).toBe('https://test-project.supabase.co/rest/v1/rpc/refund_cook_anything_generation');
+      expect(options.method).toBe('POST');
+      expect(JSON.parse(options.body as string)).toEqual({ p_user_id: USER, p_window_ms: 3_600_000 });
+      expect(options.headers).toMatchObject({ apikey: KEY, Authorization: `Bearer ${KEY}` });
+
+      await expect(limiter.refund(USER, 1_700_000_000_000)).resolves.toBe(false);
+      const [, second] = mockFetch.mock.calls[1] as [string, RequestInit];
+      expect(JSON.parse(second.body as string).p_now).toBe(new Date(1_700_000_000_000).toISOString());
+    });
+
+    it('treats a missing function (PGRST202 / 404) as no refund and warns once', async () => {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      mockFetch.mockResolvedValue({
+        ok: false,
+        status: 404,
+        text: () => Promise.resolve('{"code":"PGRST202","message":"Could not find the function"}'),
+      });
+      const limiter = new SupabaseGenerationRateLimiter(config);
+
+      await expect(limiter.refund(USER)).resolves.toBe(false);
+      await expect(limiter.refund(USER)).resolves.toBe(false);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0]?.[0]).toBe('cook_anything_refund_unavailable');
+      expect(JSON.stringify(warn.mock.calls)).not.toContain(KEY);
+      warn.mockRestore();
+    });
+
+    it('throws on other HTTP errors and on a non-boolean body without leaking the key', async () => {
+      const limiter = new SupabaseGenerationRateLimiter(config);
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('boom'),
+      });
+      const failed = await limiter.refund(USER).then(
+        () => '',
+        (error: unknown) => (error instanceof Error ? error.message : String(error))
+      );
+      expect(failed).toContain('failed: 500');
+      expect(failed).not.toContain(KEY);
+
+      mockFetch.mockResolvedValueOnce(ok('1'));
+      await expect(limiter.refund(USER)).rejects.toThrow(/non-boolean/);
+    });
+  });
 });

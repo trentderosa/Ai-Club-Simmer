@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { OllamaClient } from './ollama-client.js';
+import { OllamaBusyError } from './ollama-gate.js';
+import { startDeadline, type OllamaBudget } from './ollama-budget.js';
 import { CoachNoteSchema, type CoachNote } from '../types/check-in.js';
 import { FOOD_SAFETY_RULE, coachNoteTextRinsesRawProtein, sanitizeUserText } from './recipe-generator.js';
 
@@ -135,9 +137,14 @@ export function coachNoteRinsesRawProtein(note: CoachNote): boolean {
  * Implements retry logic and returns a safe fallback if Ollama fails.
  * A note that rinses or washes raw protein is rejected and retried inside
  * the same attempt limit. If every attempt still says so, it is rewritten
- * to the pat-dry note. The Ollama timeout is unchanged.
+ * to the pat-dry note. The Ollama timeout is unchanged. A busy model (the
+ * shared queue is full or the wait ran out) returns the fallback note at once,
+ * and so does an exhausted per-note time budget.
  */
-export function createCoachNoteGenerator(ollamaClient: OllamaClient): CoachNoteGenerator {
+export function createCoachNoteGenerator(
+  ollamaClient: OllamaClient,
+  options: { queueTimeoutMs?: number; budget?: OllamaBudget } = {}
+): CoachNoteGenerator {
   return {
     async generate(
       rating: 'easy' | 'ok' | 'hard',
@@ -146,10 +153,23 @@ export function createCoachNoteGenerator(ollamaClient: OllamaClient): CoachNoteG
       context: CoachNoteContext = {}
     ): Promise<CoachNote> {
       const prompt = buildCoachNotePrompt(rating, wentWell, wasHard, context);
+      // Keeps queue time plus Ollama time under the check-in's own timeout.
+      const deadline = options.budget ? startDeadline(options.budget) : null;
 
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        let queueTimeoutMs = options.queueTimeoutMs;
+        if (deadline) {
+          queueTimeoutMs = deadline.nextQueueTimeoutMs();
+          if (queueTimeoutMs <= 0) {
+            // Never fail the check-in: the budget ran out, so use the fallback.
+            console.warn('coach_note_budget_exhausted', { attempt: attempt + 1 });
+            return FALLBACK_NOTE;
+          }
+        }
         try {
-          const responseText = await ollamaClient.generate(prompt, COACH_NOTE_JSON_SCHEMA);
+          const responseText = await ollamaClient.generate(prompt, COACH_NOTE_JSON_SCHEMA, {
+            queueTimeoutMs,
+          });
           const note = parseCoachNoteResponse(responseText);
           if (coachNoteRinsesRawProtein(note)) {
             console.warn('Coach note attempt rejected', {
@@ -163,6 +183,11 @@ export function createCoachNoteGenerator(ollamaClient: OllamaClient): CoachNoteG
           }
           return note;
         } catch (error) {
+          // A busy model never fails or delays a check-in: fall back, no retry.
+          if (error instanceof OllamaBusyError) {
+            console.warn('coach_note_busy', { reason: error.reason });
+            return FALLBACK_NOTE;
+          }
           const isLastAttempt = attempt === MAX_RETRIES;
           
           if (error instanceof z.ZodError) {

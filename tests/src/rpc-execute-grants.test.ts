@@ -4,6 +4,7 @@ import { TestDatabase, TestUser } from './db';
 /**
  * EXECUTE lockdown for Supabase advisor warnings on:
  *   public.award_slot_xp(uuid)
+ *   public.refund_cook_anything_generation(uuid, integer, timestamptz)
  */
 describe('RPC EXECUTE grants lockdown', () => {
   let db: TestDatabase;
@@ -74,6 +75,22 @@ describe('RPC EXECUTE grants lockdown', () => {
 
     it('allows EXECUTE to service_role', async () => {
       expect(await db.hasFunctionPrivilege('service_role', 'award_generated_recipe_xp(uuid)')).toBe(true);
+    });
+  });
+
+  describe('has_function_privilege: refund_cook_anything_generation', () => {
+    const fn = 'refund_cook_anything_generation(uuid, integer, timestamp with time zone)';
+
+    it('denies EXECUTE to anon', async () => {
+      expect(await db.hasFunctionPrivilege('anon', fn)).toBe(false);
+    });
+
+    it('denies EXECUTE to authenticated', async () => {
+      expect(await db.hasFunctionPrivilege('authenticated', fn)).toBe(false);
+    });
+
+    it('allows EXECUTE to service_role', async () => {
+      expect(await db.hasFunctionPrivilege('service_role', fn)).toBe(true);
     });
   });
 

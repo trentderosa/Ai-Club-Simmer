@@ -299,6 +299,7 @@ describe('POST /api/recipes/cook-anything', () => {
     const ollama = mockOllama(validRecipe);
     const limiter = new GenerationRateLimiter(60_000, 1);
     const allow = vi.spyOn(limiter, 'allow');
+    const refund = vi.spyOn(limiter, 'refund');
     const { app } = createApp(ollama, mockSupabase(), new InMemoryGeneratedRecipeRepository(), {
       generationLimiter: limiter,
     });
@@ -320,6 +321,7 @@ describe('POST /api/recipes/cook-anything', () => {
     expect(other.status).toBe(429);
     expect(other.body.code).toBe('GENERATION_RATE_LIMITED');
     expect(allow).toHaveBeenCalledTimes(2);
+    expect(refund).not.toHaveBeenCalled();
     expect(ollama.generate).toHaveBeenCalledTimes(1);
   });
 
@@ -354,7 +356,7 @@ describe('POST /api/recipes/cook-anything', () => {
           resolveAllow = resolve;
         })
     );
-    const limiter: CookAnythingGenerationLimiter = { allow };
+    const limiter: CookAnythingGenerationLimiter = { allow, refund: vi.fn().mockResolvedValue(false) };
     const ollama = mockOllama(validRecipe);
     const { app } = createApp(ollama, mockSupabase(), new InMemoryGeneratedRecipeRepository(), {
       generationLimiter: limiter,
@@ -385,7 +387,7 @@ describe('POST /api/recipes/cook-anything', () => {
     const repo = new InMemoryGeneratedRecipeRepository();
     const ollama = mockOllama(validRecipe);
     const allow = vi.fn().mockRejectedValue(new Error('rpc failed: relation does not exist'));
-    const limiter: CookAnythingGenerationLimiter = { allow };
+    const limiter: CookAnythingGenerationLimiter = { allow, refund: vi.fn().mockResolvedValue(false) };
     const { app } = createApp(ollama, mockSupabase(), repo, { generationLimiter: limiter });
     const denied = await request(app)
       .post('/api/recipes/cook-anything')
