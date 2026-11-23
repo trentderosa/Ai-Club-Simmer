@@ -144,7 +144,7 @@ Error responses from the AI server are JSON, never HTML or a stack trace, except
 | `OLLAMA_COACH_NOTE_QUEUE_TIMEOUT_MS` | Longest a check-in coach note waits for a slot before using the fallback note (default `15000`, range 1000 to 600000) |
 | `OLLAMA_COACH_NOTE_BUDGET_MS` | Most time one coach note may spend queueing and running in total, then the fallback note is used (default `120000`, range 5000 to 600000) Must be larger than `OLLAMA_TIMEOUT_MS`; startup warns if it isn't. |
 | `RECIPE_PREWARM` | Default on. After a saved path check-in, the server writes the user's next recipe in the background so it is already saved when they open it. It starts only when the model is idle, never waits in the queue, stops retrying as soon as anyone else is waiting, and is cancelled as soon as a real request (recipe, Cook anything or coach note) needs the model; the cancelled work is discarded. A recipe request that joined a prewarm reruns itself, once and within its remaining budget, if the prewarm is preempted, ends busy, or skips its retries. It never delays the check-in, and is off with `false`, `0` or `off`, with stub auth, or without Supabase. |
-| `PORT` | AI server port (default `3001`) |
+| `PORT` | AI server port (default `3001`). If it is already in use the server prints one `Server error: port ... is already in use (EADDRINUSE)` line and exits 1. |
 | `HOST` | Bind address (default `127.0.0.1`) |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the AI server (Expo web). Default: `http://localhost:8081`, `http://127.0.0.1:8081`, `http://localhost:19006`, `http://127.0.0.1:19006`. Never `*`. |
 | `RATE_LIMIT_WINDOW_MS` | Rate-limit window (default `60000`, range `1000`–`3600000`) |

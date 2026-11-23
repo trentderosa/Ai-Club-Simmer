@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { spawn, type ChildProcess } from 'child_process';
+import net from 'net';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -22,6 +23,12 @@ function serverEnv(overrides: Record<string, string>): NodeJS.ProcessEnv {
   return env;
 }
 
+// PORT=0 lets the OS pick a free port; the startup log prints the one actually bound.
+function parseBoundPort(output: string): number | null {
+  const match = /Simmer AI Server running on http:\/\/[^\s:]+:(\d+)/.exec(output);
+  return match ? Number(match[1]) : null;
+}
+
 describe('Server Startup (B2 fix)', () => {
   let serverProcess: ChildProcess | null = null;
 
@@ -34,7 +41,7 @@ describe('Server Startup (B2 fix)', () => {
 
   // N13: Increased timeouts for cold CI runners
   it('server starts and responds to health check', async () => {
-    const port = 3099 + Math.floor(Math.random() * 100);
+    let port = 0;
 
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -44,7 +51,7 @@ describe('Server Startup (B2 fix)', () => {
       serverProcess = spawn('npx', ['tsx', path.join(__dirname, 'index.ts')], {
         env: {
           ...process.env,
-          PORT: String(port),
+          PORT: '0',
           HOST: '127.0.0.1',
           NODE_ENV: 'test',
           SUPABASE_JWT_SECRET: 'test-secret-for-startup-test-32chars',
@@ -55,7 +62,9 @@ describe('Server Startup (B2 fix)', () => {
       let output = '';
       serverProcess.stdout?.on('data', (data: Buffer) => {
         output += data.toString();
-        if (output.includes('Simmer AI Server running')) {
+        const bound = parseBoundPort(output);
+        if (bound !== null) {
+          port = bound;
           clearTimeout(timeout);
           resolve();
         }
@@ -90,7 +99,7 @@ describe('Server Startup (B2 fix)', () => {
   }, 20000);
 
   it('production boots on loopback when TRUST_PROXY is set', async () => {
-    const port = 3400 + Math.floor(Math.random() * 200);
+    let port = 0;
 
     await new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -99,7 +108,7 @@ describe('Server Startup (B2 fix)', () => {
 
       serverProcess = spawn('npx', ['tsx', path.join(__dirname, 'index.ts')], {
         env: serverEnv({
-          PORT: String(port),
+          PORT: '0',
           HOST: '127.0.0.1',
           NODE_ENV: 'production',
           TRUST_PROXY: 'true',
@@ -112,7 +121,9 @@ describe('Server Startup (B2 fix)', () => {
       let output = '';
       serverProcess.stdout?.on('data', (data: Buffer) => {
         output += data.toString();
-        if (output.includes('Simmer AI Server running')) {
+        const bound = parseBoundPort(output);
+        if (bound !== null) {
+          port = bound;
           clearTimeout(timeout);
           resolve();
         }
@@ -141,6 +152,51 @@ describe('Server Startup (B2 fix)', () => {
 
     const response = await fetch(`http://127.0.0.1:${port}/health`);
     expect(response.ok).toBe(true);
+  }, 20000);
+
+  it('exits 1 with one clean line when the port is already in use', async () => {
+    const blocker = net.createServer();
+    await new Promise<void>((resolve) => blocker.listen(0, '127.0.0.1', resolve));
+    const busyPort = (blocker.address() as net.AddressInfo).port;
+
+    try {
+      const result = await new Promise<{
+        code: number | null;
+        stdout: string;
+        stderr: string;
+      }>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Server did not exit in time')), 15000);
+        serverProcess = spawn('npx', ['tsx', path.join(__dirname, 'index.ts')], {
+          env: serverEnv({
+            PORT: String(busyPort),
+            HOST: '127.0.0.1',
+            NODE_ENV: 'test',
+            SUPABASE_JWT_SECRET: 'test-secret-for-startup-test-32chars',
+          }),
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        serverProcess.stdout?.on('data', (d: Buffer) => (stdout += d.toString()));
+        serverProcess.stderr?.on('data', (d: Buffer) => (stderr += d.toString()));
+        serverProcess.on('error', (err) => {
+          clearTimeout(timeout);
+          reject(err);
+        });
+        serverProcess.on('close', (code) => {
+          clearTimeout(timeout);
+          resolve({ code, stdout, stderr });
+        });
+      });
+
+      expect(result.code).toBe(1);
+      // Other startup warnings may share stderr; the failure itself must be exactly one clean line.
+      const errorLines = result.stderr.split('\n').filter((l) => l.startsWith('Server error'));
+      expect(errorLines).toEqual([`Server error: port ${busyPort} on 127.0.0.1 is already in use (EADDRINUSE)`]);
+      expect(result.stderr).not.toMatch(/\n\s+at /);
+    } finally {
+      await new Promise((resolve) => blocker.close(resolve));
+    }
   }, 20000);
 
   it('a bad env value exits 1 with one Config error line and no stack', async () => {
