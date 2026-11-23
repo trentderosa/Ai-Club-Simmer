@@ -111,7 +111,7 @@ export class SupabaseGeneratedXpAwarder implements XpAwarder {
     signal: AbortSignal
   ): Promise<XpAwardResult | null> {
     const url = new URL(`${this.restUrl}/generated_recipe_xp_events`);
-    url.searchParams.set('select', 'xp_awarded,is_first_completion');
+    url.searchParams.set('select', 'xp_awarded,is_first_completion,generated_recipe_id');
     url.searchParams.set('check_in_id', `eq.${checkInId}`);
     url.searchParams.set('limit', '1');
     const response = await fetch(url.toString(), { method: 'GET', headers: this.headers, signal });
@@ -119,6 +119,7 @@ export class SupabaseGeneratedXpAwarder implements XpAwarder {
     const data = (await response.json()) as Array<{
       xp_awarded?: unknown;
       is_first_completion?: unknown;
+      generated_recipe_id?: unknown;
     }>;
     const row = Array.isArray(data) ? data[0] : undefined;
     if (!row || typeof row.xp_awarded !== 'number' || typeof row.is_first_completion !== 'boolean') {
@@ -128,7 +129,51 @@ export class SupabaseGeneratedXpAwarder implements XpAwarder {
       xp_awarded: row.xp_awarded,
       is_first_completion: row.is_first_completion,
       weekly_repeat_remaining: 0,
-      capped: !row.is_first_completion && row.xp_awarded === 0,
+      capped: await this.awardWasCapped(
+        row.xp_awarded,
+        row.is_first_completion,
+        row.generated_recipe_id,
+        signal
+      ),
     };
+  }
+
+  /**
+   * True when the stored award is below what award_generated_recipe_xp would give
+   * uncapped: the recipe's xp_value for a first completion, or xp_value * 50 / 100
+   * (rounded down) for a repeat. Weekly and daily caps can both trim either kind.
+   * If the recipe's xp_value can't be read, falls back to treating only a 0-XP
+   * repeat as capped.
+   */
+  private async awardWasCapped(
+    xpAwarded: number,
+    isFirstCompletion: boolean,
+    recipeId: unknown,
+    signal: AbortSignal
+  ): Promise<boolean> {
+    const fallback = !isFirstCompletion && xpAwarded === 0;
+    if (typeof recipeId !== 'string') return fallback;
+
+    let xpValue: unknown;
+    try {
+      const url = new URL(`${this.restUrl}/user_generated_recipes`);
+      url.searchParams.set('select', 'xp_value');
+      url.searchParams.set('id', `eq.${recipeId}`);
+      url.searchParams.set('limit', '1');
+      const response = await fetch(url.toString(), { method: 'GET', headers: this.headers, signal });
+      if (!response.ok) return fallback;
+      const data = (await response.json()) as Array<{ xp_value?: unknown }>;
+      xpValue = Array.isArray(data) ? data[0]?.xp_value : undefined;
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return fallback;
+    }
+    if (typeof xpValue !== 'number') return fallback;
+
+    // Edge case: a repeat of an xp_value=1 recipe has expected 0 (effectively unreachable
+    // with current clamps). The SQL can still report capped=true there (a cap forced 0),
+    // but `0 < 0` reads back false.
+    const expected = isFirstCompletion ? xpValue : Math.floor((xpValue * 50) / 100);
+    return xpAwarded < expected;
   }
 }
