@@ -14,11 +14,11 @@ const { Pool } = pg;
  * Do NOT add server-only functions here.
  */
 const CLIENT_FACING_FUNCTIONS = [
-  'get_my_plan',
-  'get_my_plan_summary',
-  'get_my_badges',
-  'get_my_recipe_book',
-  'get_my_recipe_book_v2',
+  'get_my_plan()',
+  'get_my_plan_summary()',
+  'get_my_badges()',
+  'get_my_recipe_book()',
+  'get_my_recipe_book_v2()',
 ];
 
 interface SecDefFunction {
@@ -68,10 +68,16 @@ describe('SECURITY DEFINER function grants catalog', () => {
   it('simulates Supabase default privileges (anon can EXECUTE a new function)', async () => {
     await pool.query('CREATE FUNCTION public.__grant_probe() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$');
     try {
+      // Plain Postgres grants EXECUTE to PUBLIC, which would make anon pass
+      // regardless of the simulation. Remove it so only the default-privilege
+      // grants to anon/authenticated can satisfy the check.
+      await pool.query('REVOKE EXECUTE ON FUNCTION public.__grant_probe() FROM PUBLIC');
       const result = await pool.query(
-        `SELECT has_function_privilege('anon', 'public.__grant_probe()', 'EXECUTE') AS allowed`
+        `SELECT has_function_privilege('anon', 'public.__grant_probe()', 'EXECUTE') AS anon,
+                has_function_privilege('authenticated', 'public.__grant_probe()', 'EXECUTE') AS authenticated`
       );
-      expect(result.rows[0].allowed).toBe(true);
+      expect(result.rows[0].anon).toBe(true);
+      expect(result.rows[0].authenticated).toBe(true);
     } finally {
       await pool.query('DROP FUNCTION IF EXISTS public.__grant_probe()');
     }
@@ -79,9 +85,9 @@ describe('SECURITY DEFINER function grants catalog', () => {
 
   it('finds SECURITY DEFINER functions and every allowlisted function exists', async () => {
     const fns = await listSecurityDefinerFunctions();
-    const names = new Set(fns.map((f) => f.name));
+    const signatures = new Set(fns.map((f) => f.signature));
     expect(fns.length).toBeGreaterThan(0);
-    const missing = CLIENT_FACING_FUNCTIONS.filter((n) => !names.has(n));
+    const missing = CLIENT_FACING_FUNCTIONS.filter((n) => !signatures.has(n));
     expect(missing, `Allowlisted functions not found as SECURITY DEFINER: ${missing.join(', ')}`).toEqual([]);
   });
 
@@ -94,14 +100,14 @@ describe('SECURITY DEFINER function grants catalog', () => {
 
   it('authenticated cannot EXECUTE SECURITY DEFINER functions outside the allowlist', async () => {
     const offenders = (await listSecurityDefinerFunctions())
-      .filter((f) => f.authenticated && !CLIENT_FACING_FUNCTIONS.includes(f.name))
+      .filter((f) => f.authenticated && !CLIENT_FACING_FUNCTIONS.includes(f.signature))
       .map((f) => f.signature);
     expect(offenders, `authenticated can EXECUTE server-only: ${offenders.join(', ')}`).toEqual([]);
   });
 
   it('authenticated can EXECUTE every allowlisted function', async () => {
     const lacking = (await listSecurityDefinerFunctions())
-      .filter((f) => CLIENT_FACING_FUNCTIONS.includes(f.name) && !f.authenticated)
+      .filter((f) => CLIENT_FACING_FUNCTIONS.includes(f.signature) && !f.authenticated)
       .map((f) => f.signature);
     expect(lacking, `authenticated cannot EXECUTE: ${lacking.join(', ')}`).toEqual([]);
   });
