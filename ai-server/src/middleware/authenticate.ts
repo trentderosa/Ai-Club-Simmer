@@ -28,7 +28,18 @@ export function createAuthMiddleware(jwtVerifier: JwtVerifier) {
     }
 
     const token = authHeader.slice(7);
-    const authResult = await jwtVerifier.verify(token);
+    let authResult: Awaited<ReturnType<JwtVerifier['verify']>>;
+    try {
+      authResult = await jwtVerifier.verify(token);
+    } catch (err) {
+      // Defense in depth: log only the error name, never the token or error text.
+      console.error('Auth verifier threw unexpectedly:', err instanceof Error ? err.name : 'unknown');
+      res.status(503).json({
+        error: 'Authentication service unavailable',
+        code: 'AUTH_UNAVAILABLE',
+      });
+      return;
+    }
 
     if (authResult.error === 'service_unavailable') {
       res.status(503).json({
