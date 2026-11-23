@@ -16,6 +16,8 @@ import {
 import { createJwtVerifier, type JwtVerifier } from './services/jwt-verifier.js';
 import { InMemoryUserRecipeRepository } from './repositories/user-recipe-repository.js';
 import { SupabaseUserRecipeRepository } from './repositories/supabase-user-recipe-repository.js';
+import { createPathRecipeService, type PathRecipeService } from './services/path-recipe-service.js';
+import { createRecipePrewarmer } from './services/recipe-prewarmer.js';
 import { createRecipeRouter } from './routes/recipe.js';
 import { createCheckInRouter } from './routes/check-in.js';
 import { createMasteryRouter } from './routes/mastery.js';
@@ -114,6 +116,9 @@ interface ServiceConfig {
   masteryRepository: MasteryRepository | null;
   /** Persistent when generated recipes are. In-memory only in dev without Supabase. */
   generationLimiter: CookAnythingGenerationLimiter;
+  /** One generator (and in-flight map) for the recipe route and the check-in prewarmer. */
+  pathRecipes: PathRecipeService;
+  recipePrewarmEnabled: boolean;
 }
 
 /**
@@ -203,8 +208,11 @@ function createServicesFromConfig(): ServiceConfig {
 
   if (isStubAuthAllowed()) {
     console.warn('STUB AUTH ENABLED - using stub Supabase service');
+    const stubSupabase = createSupabaseStub({ allowStubAuth: true });
     return {
-      supabase: createSupabaseStub({ allowStubAuth: true }),
+      supabase: stubSupabase,
+      pathRecipes: createPathRecipeService({ ollamaClient, generationBudget: recipeBudget, supabase: stubSupabase }),
+      recipePrewarmEnabled: false,
       jwtVerifier: null,
       checkInService: null,
       videoFinder: null,
@@ -220,8 +228,15 @@ function createServicesFromConfig(): ServiceConfig {
     console.warn(
       'No SUPABASE_JWT_SECRET or SUPABASE_JWKS_URI configured - auth will fail closed'
     );
+    const failClosedSupabase = createSupabaseStub({ allowStubAuth: false });
     return {
-      supabase: createSupabaseStub({ allowStubAuth: false }),
+      supabase: failClosedSupabase,
+      pathRecipes: createPathRecipeService({
+        ollamaClient,
+        generationBudget: recipeBudget,
+        supabase: failClosedSupabase,
+      }),
+      recipePrewarmEnabled: false,
       jwtVerifier: null,
       checkInService: null,
       videoFinder: null,
@@ -281,12 +296,27 @@ function createServicesFromConfig(): ServiceConfig {
     url && serviceRoleKey
       ? new SupabaseGeneratedXpAwarder({ url, serviceRoleKey, timeoutMs: config.xpAward.timeoutMs })
       : null;
+  const youtubeQuota = createYouTubeQuotaGate();
+  const supabase = createSupabaseService({ jwtVerifier, userRecipeRepository, pathRepository });
+  const videoFinder = createVideoFinder(youtubeQuota);
+  const pathRecipes = createPathRecipeService({
+    ollamaClient,
+    generationBudget: recipeBudget,
+    supabase,
+    videoFinder,
+  });
+  // Needs real slots (Supabase). Never with stub auth (that returns earlier).
+  const recipePrewarmEnabled = config.recipePrewarm && pathRepository !== undefined;
+  const recipePrewarmer =
+    recipePrewarmEnabled && pathRepository
+      ? createRecipePrewarmer({ pathRecipes, supabase, pathRepository, gate: ollamaClient })
+      : null;
   const checkInService = new CheckInService(
     checkInRepository,
     coachNoteGenerator,
     xpAwarder,
     console,
-    { pathRepository, generatedCheckInRepository, generatedXpAwarder }
+    { pathRepository, generatedCheckInRepository, generatedXpAwarder, recipePrewarmer }
   );
 
   if (!url || !serviceRoleKey) {
@@ -298,16 +328,13 @@ function createServicesFromConfig(): ServiceConfig {
     // behavior; production uses shared Supabase tables.
   }
 
-  const youtubeQuota = createYouTubeQuotaGate();
   return {
-    supabase: createSupabaseService({
-      jwtVerifier,
-      userRecipeRepository,
-      pathRepository,
-    }),
+    supabase,
+    pathRecipes,
+    recipePrewarmEnabled,
     jwtVerifier,
     checkInService,
-    videoFinder: createVideoFinder(youtubeQuota),
+    videoFinder,
     dishVideoFinder: createDishVideoFinder(youtubeQuota),
     photoFinder: createPhotoFinder(),
     generatedRecipes,
@@ -326,6 +353,7 @@ const recipeRouter = createRecipeRouter(
     videoFinder: services.videoFinder,
     photoFinder: services.photoFinder,
     dishVideoFinder: services.dishVideoFinder,
+    pathRecipes: services.pathRecipes,
   },
   {
     enablePreviewRoute: config.enablePreviewRoute,
@@ -431,6 +459,7 @@ const server = app.listen(config.port, config.host, () => {
   console.info(`Model: ${config.ollama.model}`);
   console.info(`Preview route: ${config.enablePreviewRoute ? 'ENABLED' : 'disabled'}`);
   console.info(`Technique videos: ${services.videoFinder ? 'ENABLED' : 'disabled'}`);
+  console.info(`Recipe prewarm: ${services.recipePrewarmEnabled ? 'ENABLED' : 'disabled'}`);
   console.info(`Dish videos: ${services.dishVideoFinder ? 'ENABLED' : 'disabled'}`);
   console.info(
     `YouTube quota cooldown: ${

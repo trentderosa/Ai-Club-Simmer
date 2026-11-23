@@ -3,7 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import { createRecipeRouter } from './recipe.js';
 import { createCookAnythingRouter } from './cook-anything.js';
-import { OllamaBusyError } from '../services/ollama-gate.js';
+import { createOllamaGate, OllamaBusyError } from '../services/ollama-gate.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { UserProfile } from '../schemas/user.js';
@@ -155,6 +155,26 @@ describe('GENERATION_BUSY', () => {
     expect(res.headers['retry-after']).toBe('30');
     expect(allow).not.toHaveBeenCalled();
     expect(client.generate).not.toHaveBeenCalled();
+  });
+
+  it('POST /cook-anything is not refused before allow() while only a background call runs', async () => {
+    const inner: OllamaClient = {
+      generate: (_prompt, _schema, options) =>
+        new Promise<string>((_resolve, reject) => {
+          options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    };
+    const gate = createOllamaGate(inner, { maxConcurrent: 1, maxQueue: 0, queueTimeoutMs: 1000 });
+    // A prewarm-style call holds the only slot.
+    void gate.generate('prewarm', {}, { background: true, queueTimeoutMs: 0 }).catch(() => undefined);
+    await vi.waitFor(() => expect(gate.isIdle()).toBe(false));
+    const allow = vi.fn().mockResolvedValue(false);
+    const res = await request(cookApp(gate, { allow }))
+      .post('/api/recipes/cook-anything')
+      .set('Authorization', 'Bearer t')
+      .send({ dish: 'Pad Thai' });
+    expect(allow).toHaveBeenCalledTimes(1);
+    expect(res.status).toBe(429);
   });
 
   it('POST /cook-anything refuses without calling the model when the queue fills during allow()', async () => {

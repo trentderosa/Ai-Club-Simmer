@@ -53,6 +53,40 @@ describe('SupabasePathRepository', () => {
     });
   });
 
+  describe('getNextPathSlot', () => {
+    it('finds the next slot by slot_order, not by id', async () => {
+      mockFetch
+        .mockResolvedValueOnce(ok([{ slot_order: 4 }]))
+        .mockResolvedValueOnce(
+          ok([{ id: 41, dish_name: 'Pasta', technique_focus: 'Boiling', is_final: false }])
+        );
+      const slot = await repo.getNextPathSlot(37);
+      expect(slot).toEqual({ id: 41, dishName: 'Pasta', techniqueFocus: 'Boiling', isFinal: false });
+      expect(calledUrl(0).searchParams.get('id')).toBe('eq.37');
+      expect(calledUrl(1).searchParams.get('slot_order')).toBe('gt.4');
+      expect(calledUrl(1).searchParams.get('order')).toBe('slot_order.asc');
+      expect(calledUrl(1).searchParams.get('limit')).toBe('1');
+    });
+
+    it('skips a gap in slot_order (3 to 5) by taking the next higher slot', async () => {
+      mockFetch
+        .mockResolvedValueOnce(ok([{ slot_order: 3 }]))
+        .mockResolvedValueOnce(
+          ok([{ id: 55, dish_name: 'Soup', technique_focus: 'Simmering', is_final: false }])
+        );
+      const slot = await repo.getNextPathSlot(33);
+      expect(slot?.id).toBe(55);
+      expect(calledUrl(1).searchParams.get('slot_order')).toBe('gt.3');
+    });
+
+    it('returns null after the last slot or for an unknown slot', async () => {
+      mockFetch.mockResolvedValueOnce(ok([{ slot_order: 10 }])).mockResolvedValueOnce(ok([]));
+      expect(await repo.getNextPathSlot(50)).toBeNull();
+      mockFetch.mockResolvedValueOnce(ok([]));
+      expect(await repo.getNextPathSlot(999)).toBeNull();
+    });
+  });
+
   describe('getEquipment', () => {
     it('reads only the equipment column and normalizes it', async () => {
       mockFetch.mockResolvedValueOnce(ok([{ equipment: [' stove ', 'Oven', 'oven', ''] }]));
