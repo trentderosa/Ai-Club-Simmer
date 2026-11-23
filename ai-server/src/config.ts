@@ -17,6 +17,13 @@ export interface Config {
     windowMs: number;
     maxRequests: number;
   };
+  /**
+   * Per-IP cap (per preAuthIpRateLimitWindowMs) on check-ins and mastery,
+   * applied before auth. One campus NAT can put a whole room on one IP.
+   */
+  preAuthIpRateLimitMax: number;
+  /** Window for the pre-auth per-IP cap. Separate from rateLimit.windowMs. */
+  preAuthIpRateLimitWindowMs: number;
   supabase: {
     url?: string;
     serviceRoleKey?: string;
@@ -54,6 +61,17 @@ export interface Config {
 type Env = Record<string, string | undefined>;
 
 /**
+ * A bad or missing setting. Messages name variables and allowed ranges only,
+ * never values, so index.ts can print one as a single stderr line.
+ */
+export class ConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConfigError';
+  }
+}
+
+/**
  * Parse an optional integer env var within [min, max]. Unset or empty uses the
  * default; anything else that is not a whole number in range throws, naming
  * only the variable and the allowed range.
@@ -70,11 +88,17 @@ export function parseBoundedIntEnv(
   const trimmed = raw.trim();
   const value = Number(trimmed);
   if (!/^\d+$/.test(trimmed) || !Number.isSafeInteger(value) || value < min || value > max) {
-    throw new Error(`${name} must be a whole number from ${min} to ${max}`);
+    throw new ConfigError(`${name} must be a whole number from ${min} to ${max}`);
   }
   return value;
 }
 
+export const OLLAMA_MAX_TOKENS = { default: 1500, min: 256, max: 8192 } as const;
+export const OLLAMA_TIMEOUT_MS = { default: 60000, min: 5000, max: 600000 } as const;
+export const RATE_LIMIT_WINDOW_MS = { default: 60000, min: 1000, max: 3600000 } as const;
+export const RATE_LIMIT_MAX_REQUESTS = { default: 10, min: 1, max: 1000 } as const;
+export const PREAUTH_IP_RATE_LIMIT_MAX = { default: 60, min: 1, max: 10000 } as const;
+export const PREAUTH_IP_RATE_LIMIT_WINDOW_MS = { default: 60000, min: 1000, max: 3600000 } as const;
 export const XP_AWARD_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
 export const YOUTUBE_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
 export const VIDEO_LOOKUP_BUDGET_MS = { default: 8000, min: 100, max: 60000 } as const;
@@ -108,19 +132,19 @@ export function parseAllowedOrigins(env: Env = process.env): string[] {
     .map((part) => part.trim().replace(/\/+$/, ''))
     .filter((part) => part.length > 0);
   if (entries.some((entry) => entry === '*')) {
-    throw new Error(
+    throw new ConfigError(
       'ALLOWED_ORIGINS must not include * (wildcard). List explicit origins instead.'
     );
   }
   if (entries.length === 0) {
-    throw new Error(
+    throw new ConfigError(
       'ALLOWED_ORIGINS is set but contains no origins. List explicit origins, or unset it to use the defaults.'
     );
   }
   return entries.map((entry) => {
     const canonical = canonicalizeOrigin(entry);
     if (!canonical) {
-      throw new Error(
+      throw new ConfigError(
         'ALLOWED_ORIGINS entries must be origins like http://localhost:8081 (scheme + host, optional port, no path)'
       );
     }
@@ -219,13 +243,15 @@ export function loadConfig(): Config {
     ollama: {
       baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
       model: process.env.OLLAMA_MODEL || 'llama3.2',
-      maxTokens: parseInt(process.env.OLLAMA_MAX_TOKENS || '1500', 10),
-      timeoutMs: parseInt(process.env.OLLAMA_TIMEOUT_MS || '60000', 10),
+      maxTokens: parseBoundedIntEnv(process.env, 'OLLAMA_MAX_TOKENS', OLLAMA_MAX_TOKENS.default, OLLAMA_MAX_TOKENS.min, OLLAMA_MAX_TOKENS.max),
+      timeoutMs: parseBoundedIntEnv(process.env, 'OLLAMA_TIMEOUT_MS', OLLAMA_TIMEOUT_MS.default, OLLAMA_TIMEOUT_MS.min, OLLAMA_TIMEOUT_MS.max),
     },
     rateLimit: {
-      windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000', 10),
-      maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || '10', 10),
+      windowMs: parseBoundedIntEnv(process.env, 'RATE_LIMIT_WINDOW_MS', RATE_LIMIT_WINDOW_MS.default, RATE_LIMIT_WINDOW_MS.min, RATE_LIMIT_WINDOW_MS.max),
+      maxRequests: parseBoundedIntEnv(process.env, 'RATE_LIMIT_MAX_REQUESTS', RATE_LIMIT_MAX_REQUESTS.default, RATE_LIMIT_MAX_REQUESTS.min, RATE_LIMIT_MAX_REQUESTS.max),
     },
+    preAuthIpRateLimitMax: parseBoundedIntEnv(process.env, 'PREAUTH_IP_RATE_LIMIT_MAX', PREAUTH_IP_RATE_LIMIT_MAX.default, PREAUTH_IP_RATE_LIMIT_MAX.min, PREAUTH_IP_RATE_LIMIT_MAX.max),
+    preAuthIpRateLimitWindowMs: parseBoundedIntEnv(process.env, 'PREAUTH_IP_RATE_LIMIT_WINDOW_MS', PREAUTH_IP_RATE_LIMIT_WINDOW_MS.default, PREAUTH_IP_RATE_LIMIT_WINDOW_MS.min, PREAUTH_IP_RATE_LIMIT_WINDOW_MS.max),
     supabase: {
       url: process.env.SUPABASE_URL,
       serviceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
@@ -297,7 +323,7 @@ export function assertProductionConfig(supabase: Config['supabase']): void {
     missing.push('SUPABASE_JWT_SECRET or SUPABASE_JWKS_URI');
   }
   if (missing.length > 0) {
-    throw new Error(
+    throw new ConfigError(
       `Missing required config for NODE_ENV=production: ${missing.join(', ')}. ` +
         'See ai-server/README.md (Production config).'
     );
@@ -328,7 +354,7 @@ export function loadXpReconcileIntervalMs(env: Env = process.env): number {
   const { default: def, min, max } = XP_RECONCILE_INTERVAL_MS;
   const value = parseBoundedIntEnv(env, 'XP_RECONCILE_INTERVAL_MS', def, 0, max);
   if (value !== 0 && value < min) {
-    throw new Error(`XP_RECONCILE_INTERVAL_MS must be 0 (off) or a whole number from ${min} to ${max}`);
+    throw new ConfigError(`XP_RECONCILE_INTERVAL_MS must be 0 (off) or a whole number from ${min} to ${max}`);
   }
   return value;
 }
@@ -354,7 +380,7 @@ export function loadReconcileConfig(env: Env = process.env): ReconcileConfig {
   if (!env.SUPABASE_URL) missing.push('SUPABASE_URL');
   if (!env.SUPABASE_SERVICE_ROLE_KEY) missing.push('SUPABASE_SERVICE_ROLE_KEY');
   if (missing.length > 0) {
-    throw new Error(`Missing required config for XP reconcile: ${missing.join(', ')}`);
+    throw new ConfigError(`Missing required config for XP reconcile: ${missing.join(', ')}`);
   }
   const bounded = (
     name: string,
