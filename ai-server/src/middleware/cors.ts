@@ -6,8 +6,11 @@ export const CORS_ALLOWED_HEADERS = ['Authorization', 'Content-Type', 'Idempoten
 /** Methods used by /health (GET) and the recipe and check-in routes (POST). */
 export const CORS_ALLOWED_METHODS = ['GET', 'POST', 'OPTIONS'] as const;
 
+/** Response headers browsers may read cross-origin. Retry-After is not CORS-safelisted. */
+export const CORS_EXPOSED_HEADERS = ['Retry-After'] as const;
+
 /**
- * Echo an allowed Origin back, add Vary: Origin, and answer OPTIONS preflight.
+ * Echo an allowed Origin back, expose Retry-After to it, add Vary: Origin, and answer OPTIONS preflight.
  * Unknown or missing origins get no Access-Control-Allow-* headers. Never
  * emits Access-Control-Allow-Origin: * or Access-Control-Allow-Credentials.
  */
@@ -22,6 +25,7 @@ export function createCorsMiddleware(allowedOrigins: readonly string[]): Request
 
     if (allowedOrigin) {
       res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+      res.setHeader('Access-Control-Expose-Headers', CORS_EXPOSED_HEADERS.join(', '));
     }
 
     if (req.method === 'OPTIONS') {

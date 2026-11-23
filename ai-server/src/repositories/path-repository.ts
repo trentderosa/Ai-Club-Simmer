@@ -22,6 +22,12 @@ export interface EarnedBadge {
 export interface PathRepository {
   getPathSlot(slotId: number): Promise<PathSlot | null>;
   /**
+   * The slot whose slot_order follows this slot's, or null for the last slot
+   * (or an unknown id). Slot ids are a serial column, not the path order, so
+   * the order column decides.
+   */
+  getNextPathSlot?(slotId: number): Promise<PathSlot | null>;
+  /**
    * The user's onboarding answers plus their last few check-ins (oldest
    * first), or null when onboarding isn't finished.
    */
@@ -77,6 +83,8 @@ const SlotRowSchema = z.object({
   is_final: z.boolean().nullable().optional(),
 });
 
+const OrderRowSchema = z.object({ slot_order: z.number().int() });
+
 const ProfileRowSchema = z.object({
   id: z.string(),
   experience_level: z.string().nullable(),
@@ -113,6 +121,29 @@ export class SupabasePathRepository implements PathRepository {
     const rows = await this.rest.select<unknown>('path_slots', {
       select: 'id,dish_name,technique_focus,is_final',
       id: `eq.${slotId}`,
+    });
+    if (rows.length === 0) return null;
+    const row = SlotRowSchema.parse(rows[0]);
+    return {
+      id: row.id,
+      dishName: row.dish_name,
+      techniqueFocus: row.technique_focus,
+      isFinal: row.is_final ?? false,
+    };
+  }
+
+  async getNextPathSlot(slotId: number): Promise<PathSlot | null> {
+    const current = await this.rest.select<unknown>('path_slots', {
+      select: 'slot_order',
+      id: `eq.${slotId}`,
+    });
+    if (current.length === 0) return null;
+    const { slot_order } = OrderRowSchema.parse(current[0]);
+    const rows = await this.rest.select<unknown>('path_slots', {
+      select: 'id,dish_name,technique_focus,is_final',
+      slot_order: `gt.${slot_order}`,
+      order: 'slot_order.asc',
+      limit: '1',
     });
     if (rows.length === 0) return null;
     const row = SlotRowSchema.parse(rows[0]);
