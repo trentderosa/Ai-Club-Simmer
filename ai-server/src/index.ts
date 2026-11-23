@@ -496,6 +496,7 @@ const shutdown = createShutdown(server, reconcileScheduler, {
   forceExitMs: config.ollama.timeoutMs + SHUTDOWN_GRACE_MS,
   exit: (code: number): void => process.exit(code),
   logger: console,
+  closeGate: () => ollamaClient.close(),
 });
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));

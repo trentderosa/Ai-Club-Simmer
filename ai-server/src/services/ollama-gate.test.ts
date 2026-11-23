@@ -396,3 +396,122 @@ describe('createOllamaGate preemption of background calls', () => {
     expect(gate.isIdle()).toBe(true);
   });
 });
+
+describe('createOllamaGate close', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  /** Inner client whose calls settle on demand and reject when their signal aborts. */
+  function abortableClient(): { client: OllamaClient; settle: Array<(v: string) => void>; signals: Array<AbortSignal | undefined> } {
+    const settle: Array<(v: string) => void> = [];
+    const signals: Array<AbortSignal | undefined> = [];
+    const client: OllamaClient = {
+      generate: (_prompt, _schema, options) =>
+        new Promise<string>((resolve, reject) => {
+          settle.push(resolve);
+          signals.push(options?.signal);
+          options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    };
+    return { client, settle, signals };
+  }
+
+  it('rejects queued waiters at once with shutting_down and clears their timers', async () => {
+    const { client, settle } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    const running = gate.generate('a', {});
+    await flush();
+    const queued = gate.generate('b', {}).catch((e: unknown) => e);
+    await flush();
+    gate.close();
+    const error = await queued;
+    expect(error).toBeInstanceOf(OllamaBusyError);
+    expect((error as OllamaBusyError).reason).toBe('shutting_down');
+    expect(vi.getTimerCount()).toBe(0);
+    expect(settle).toHaveLength(1);
+    settle[0]('done');
+    await running;
+    expect(settle).toHaveLength(1);
+  });
+
+  it('refuses new calls, including retries, and reports saturated', async () => {
+    const { client, settle } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    gate.close();
+    expect(gate.isSaturated()).toBe(true);
+    await expect(gate.generate('x', {})).rejects.toMatchObject({ reason: 'shutting_down' });
+    await expect(gate.generate('y', {}, { background: true })).rejects.toMatchObject({ reason: 'shutting_down' });
+    expect(settle).toHaveLength(0);
+  });
+
+  it('lets a running foreground call finish and release its slot', async () => {
+    const { client, settle, signals } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    const running = gate.generate('a', {});
+    await flush();
+    gate.close();
+    expect(signals[0]).toBeUndefined();
+    settle[0]('result');
+    await expect(running).resolves.toBe('result');
+    expect(gate.isIdle()).toBe(true);
+  });
+
+  it('aborts a running background call, which ends with shutting_down busy', async () => {
+    const { client } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    const bg = gate.generate('bg', {}, { background: true }).catch((e: unknown) => e);
+    await flush();
+    gate.close();
+    const error = await bg;
+    expect(error).toBeInstanceOf(OllamaBusyError);
+    expect((error as OllamaBusyError).reason).toBe('shutting_down');
+    expect(gate.isIdle()).toBe(true);
+  });
+
+  it('is idempotent', async () => {
+    const { client } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    gate.close();
+    expect(() => gate.close()).not.toThrow();
+    await expect(gate.generate('x', {})).rejects.toBeInstanceOf(OllamaBusyError);
+  });
+
+  it('a background call granted a slot just before close is refused before it calls the model', async () => {
+    const { client, signals } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    // The slot is free, so acquire resolves at once, but the call only registers
+    // as preemptible after that await. close() lands in between.
+    const bg = gate.generate('bg', {}, { background: true }).catch((e: unknown) => e);
+    gate.close();
+    const error = await bg;
+    expect(error).toBeInstanceOf(OllamaBusyError);
+    expect((error as OllamaBusyError).reason).toBe('shutting_down');
+    expect(signals).toHaveLength(0);
+    expect(gate.isIdle()).toBe(true);
+  });
+
+  it('close with a waiter that preempted a prewarm: the waiter is shutting_down, the prewarm stays preempted', async () => {
+    const { client, signals } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    const prewarm = gate.generate('bg', {}, { background: true, queueTimeoutMs: 0 }).catch((e: unknown) => e);
+    await flush();
+    // The waiter cancels the prewarm but has not been handed the slot yet.
+    const waiter = gate.generate('fg', {}).catch((e: unknown) => e);
+    gate.close();
+    const waiterError = await waiter;
+    const prewarmError = await prewarm;
+    expect(waiterError).toBeInstanceOf(OllamaBusyError);
+    expect((waiterError as OllamaBusyError).reason).toBe('shutting_down');
+    expect(prewarmError).toBeInstanceOf(OllamaPreemptedError);
+    expect(signals).toHaveLength(1);
+    expect(gate.isIdle()).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});

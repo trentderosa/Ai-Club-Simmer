@@ -131,4 +131,30 @@ describe('prewarm retries against a real gate', () => {
     calls[0].resolve('ok');
     await running;
   });
+
+  it('a request joined to a prewarm that shutdown aborts gets busy, with no rerun loop or hang', async () => {
+    const calls: Array<() => void> = [];
+    const client: OllamaClient = {
+      generate: (_p, _s, options) =>
+        new Promise<string>((_resolve, reject) => {
+          calls.push(() => undefined);
+          options?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+        }),
+    };
+    const { gate, pathRecipes, prewarmer } = setup(client);
+    const prewarm = prewarmer.prewarm(USER, 21);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(calls).toHaveLength(1);
+    const joined = pathRecipes.generate(USER, next, profile);
+    await vi.advanceTimersByTimeAsync(0);
+    gate.close();
+    await vi.advanceTimersByTimeAsync(0);
+    const result = await joined;
+    await prewarm;
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.type).toBe('busy');
+    // The rerun hit the closed gate and never reached the model.
+    expect(calls).toHaveLength(1);
+    expect(gate.isIdle()).toBe(true);
+  });
 });

@@ -9,7 +9,7 @@ export interface OllamaGateConfig {
   queueTimeoutMs: number;
 }
 
-export type OllamaBusyReason = 'queue_full' | 'queue_timeout';
+export type OllamaBusyReason = 'queue_full' | 'queue_timeout' | 'shutting_down';
 
 /** Thrown when the model is too busy to take a call. Callers must not retry it. */
 export class OllamaBusyError extends Error {
@@ -42,6 +42,13 @@ export interface OllamaGate extends OllamaClient {
   isSaturated(): boolean;
   /** True when nothing is running and nothing is waiting. */
   isIdle(): boolean;
+  /**
+   * Shutdown: rejects every queued waiter and every later call with a busy
+   * error (reason shutting_down) and aborts running background calls, which
+   * also end with that busy error. Running foreground calls keep their slot
+   * and finish on their own timeout. Idempotent.
+   */
+  close(): void;
 }
 
 interface Waiter {
@@ -51,6 +58,7 @@ interface Waiter {
    */
   reserved: boolean;
   grant: () => void;
+  reject: (error: OllamaBusyError) => void;
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -65,6 +73,9 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
   const queue: Waiter[] = [];
   // Running background calls that have not been told to stop, oldest first.
   const preemptible: Array<{ controller: AbortController; preempted: boolean }> = [];
+  // Background calls cut short by close(), so they end busy rather than preempted.
+  const closedEntries = new WeakSet<object>();
+  let closed = false;
 
   /** Waiters that count against maxQueue (those not waiting on a preempted call). */
   function queuedCount(): number {
@@ -97,6 +108,9 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
   }
 
   function acquire(queueTimeoutMs: number, background: boolean): Promise<void> {
+    if (closed) {
+      return Promise.reject(busy('shutting_down'));
+    }
     if (running < config.maxConcurrent) {
       running += 1;
       return Promise.resolve();
@@ -115,6 +129,7 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
       const waiter: Waiter = {
         reserved: false,
         grant: resolve,
+        reject,
         timer: setTimeout(() => {
           const index = queue.indexOf(waiter);
           if (index !== -1) queue.splice(index, 1);
@@ -148,11 +163,18 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
           release();
         }
       }
+      // close() may have run while acquire() was resolving; this call is not in
+      // `preemptible` yet, so close() could not abort it. Refuse it here instead.
+      if (closed) {
+        release();
+        throw busy('shutting_down');
+      }
       const entry = { controller: new AbortController(), preempted: false };
       preemptible.push(entry);
       try {
         return await inner.generate(prompt, jsonSchema, { signal: entry.controller.signal });
       } catch (error) {
+        if (closedEntries.has(entry)) throw busy('shutting_down');
         if (entry.preempted) throw new OllamaPreemptedError();
         throw error;
       } finally {
@@ -161,10 +183,31 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
         release();
       }
     },
+    // A closed gate reports saturated so routes refuse before spending anything.
     isSaturated: () =>
+      closed ||
       running >= config.maxConcurrent &&
       preemptible.length === 0 &&
       queuedCount() >= config.maxQueue,
     isIdle: () => running === 0 && queue.length === 0,
+    close(): void {
+      if (closed) return;
+      closed = true;
+      const waiting = queue.splice(0, queue.length);
+      const background = preemptible.splice(0, preemptible.length);
+      console.warn('ollama_gate_closed', {
+        running,
+        rejectedQueued: waiting.length,
+        abortedBackground: background.length,
+      });
+      for (const waiter of waiting) {
+        clearTimeout(waiter.timer);
+        waiter.reject(new OllamaBusyError('shutting_down'));
+      }
+      for (const entry of background) {
+        closedEntries.add(entry);
+        entry.controller.abort();
+      }
+    },
   };
 }

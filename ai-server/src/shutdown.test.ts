@@ -32,6 +32,21 @@ describe('createShutdown', () => {
     expect(exit).not.toHaveBeenCalled();
   });
 
+  it('closes the model gate on the first signal only', () => {
+    const closeGate = vi.fn();
+    const server = { close: vi.fn() };
+    const handler = createShutdown(server, { enabled: false }, {
+      forceExitMs: 1000,
+      exit: vi.fn(),
+      logger: { info: vi.fn(), warn: vi.fn() },
+      closeGate,
+    });
+    handler('SIGTERM');
+    expect(closeGate).toHaveBeenCalledTimes(1);
+    handler('SIGTERM');
+    expect(closeGate).toHaveBeenCalledTimes(1);
+  });
+
   it('does not call stop when the scheduler is disabled', () => {
     const server = { close: vi.fn() };
     const stop = vi.fn();
