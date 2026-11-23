@@ -95,7 +95,7 @@ NODE_ENV=production HOST=127.0.0.1 TRUST_PROXY=true npm start
 | `HOST` | `127.0.0.1` for the https tunnel (the command above). Same-Wi-Fi (`0.0.0.0`) is for the Expo dev client only, with no tunnel. The GitHub Pages app needs the https tunnel, because an https page cannot call an http LAN address. |
 | `TRUST_PROXY` | Exactly `true` for the tunnel. Express then trusts `X-Forwarded-For` only when the direct peer is loopback. A LAN client cannot spoof `req.ip`, so `HOST=0.0.0.0` is safe with this setting. |
 | `ALLOWED_ORIGINS` | Include `https://trentderosa.github.io` (scheme and host only; `/Ai-Club-Simmer` is not part of the origin). Setting `ALLOWED_ORIGINS` replaces the localhost defaults, so list any dev origins you still want. The Pages origin is not in the default list. |
-| `PORT` | Default `3001`. |
+| `PORT` | Default `3001`. If the port is taken (or not allowed), the server prints one line such as `Server error: port 3001 on 127.0.0.1 is already in use (EADDRINUSE)` and exits 1. `PORT=0` lets the OS pick a free port, and the startup log shows the one it bound. |
 
 Point the tunnel at loopback, for example `cloudflared tunnel --url http://127.0.0.1:3001` or `ngrok http 127.0.0.1:3001`, and set the app's `EXPO_PUBLIC_AI_SERVER_URL` to that https URL. Auth is unchanged: production still requires the Supabase settings above, stub auth stays off, and the unauthenticated preview route stays off.
 

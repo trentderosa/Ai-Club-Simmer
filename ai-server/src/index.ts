@@ -66,6 +66,7 @@ import {
 } from './cook-anything/rate-limit.js';
 import { SupabaseGenerationRateLimiter } from './cook-anything/supabase-rate-limit.js';
 import { mountHealthRoutes } from './health.js';
+import { boundPort, handleListenError } from './listen-errors.js';
 import { startReconcileScheduler } from './jobs/reconcile-scheduler.js';
 import type { GeneratedRecipeRepository } from './repositories/generated-recipe-repository.js';
 
@@ -454,7 +455,7 @@ const reconcileScheduler = await runWithConfigErrors(
 );
 
 const server = app.listen(config.port, config.host, () => {
-  console.info(`Simmer AI Server running on http://${config.host}:${config.port}`);
+  console.info(`Simmer AI Server running on http://${config.host}:${boundPort(server, config.port)}`);
   console.info(`Ollama endpoint: ${config.ollama.baseUrl}`);
   console.info(`Model: ${config.ollama.model}`);
   console.info(`Preview route: ${config.enablePreviewRoute ? 'ENABLED' : 'disabled'}`);
@@ -484,6 +485,7 @@ const server = app.listen(config.port, config.host, () => {
   );
   console.info(`CORS origins: ${config.allowedOrigins.join(', ')}`);
 });
+server.on('error', (err) => handleListenError(err, config.host, config.port));
 
 // Graceful shutdown: stop the scheduler, stop accepting connections, and wait
 // for in-flight requests. The force-exit waits for the model timeout plus a
