@@ -22,8 +22,8 @@ export const SHUTDOWN_GRACE_MS = 5000;
 
 /**
  * Graceful shutdown handler for SIGTERM and SIGINT. The first signal stops the
- * reconcile timer, closes the model gate and the listener, then force-exits after forceExitMs (the
- * timer is unref'd). A second signal exits right away. A clean close exits 0.
+ * reconcile timer, closes the model gate and the listener, then force-exits
+ * after forceExitMs (the timer is unref'd). A second signal exits right away. A clean close exits 0.
  */
 export function createShutdown(
   server: ShutdownServer,

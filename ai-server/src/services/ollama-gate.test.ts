@@ -482,4 +482,22 @@ describe('createOllamaGate close', () => {
     expect(() => gate.close()).not.toThrow();
     await expect(gate.generate('x', {})).rejects.toBeInstanceOf(OllamaBusyError);
   });
+
+  it('close with a waiter that preempted a prewarm: the waiter is shutting_down, the prewarm stays preempted', async () => {
+    const { client, signals } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    const prewarm = gate.generate('bg', {}, { background: true, queueTimeoutMs: 0 }).catch((e: unknown) => e);
+    await flush();
+    // The waiter cancels the prewarm but has not been handed the slot yet.
+    const waiter = gate.generate('fg', {}).catch((e: unknown) => e);
+    gate.close();
+    const waiterError = await waiter;
+    const prewarmError = await prewarm;
+    expect(waiterError).toBeInstanceOf(OllamaBusyError);
+    expect((waiterError as OllamaBusyError).reason).toBe('shutting_down');
+    expect(prewarmError).toBeInstanceOf(OllamaPreemptedError);
+    expect(signals).toHaveLength(1);
+    expect(gate.isIdle()).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
