@@ -310,7 +310,8 @@ describe('GENERATION_BUSY', () => {
     };
     const gate = createOllamaGate(inner, { maxConcurrent: 1, maxQueue: 2, queueTimeoutMs: 60_000 });
     const allow = vi.fn().mockResolvedValue(true);
-    const app = cookApp(gate, { allow });
+    const refund = vi.fn().mockResolvedValue(true);
+    const app = cookApp(gate, { allow, refund });
     // Occupy the only slot, then send a request that waits in the queue.
     const holder = gate.generate('hold', {});
     await vi.waitFor(() => expect(calls).toHaveLength(1));
@@ -326,6 +327,8 @@ describe('GENERATION_BUSY', () => {
     expect(res.status).toBe(503);
     expect(res.body).toEqual(BUSY_BODY);
     expect(res.headers['retry-after']).toBe('30');
+    // Busy before any model output, after allow(): the charge is refunded once.
+    expect(refund).toHaveBeenCalledTimes(1);
     expect(calls).toHaveLength(1);
     calls[0]();
     await holder;
@@ -338,12 +341,15 @@ describe('GENERATION_BUSY', () => {
     );
     gate.close();
     const allow = vi.fn().mockResolvedValue(true);
-    const res = await request(cookApp(gate, { allow }))
+    const refund = vi.fn().mockResolvedValue(true);
+    const res = await request(cookApp(gate, { allow, refund }))
       .post('/api/recipes/cook-anything')
       .set('Authorization', 'Bearer t')
       .send({ dish: 'Pad Thai' });
     expect(res.status).toBe(503);
     expect(res.body).toEqual(BUSY_BODY);
     expect(allow).not.toHaveBeenCalled();
+    // Never charged, so nothing to refund.
+    expect(refund).not.toHaveBeenCalled();
   });
 });
