@@ -87,6 +87,7 @@ Each recipe step with a technique name gets an instructional video found through
 
 **Acceptance criteria**
 - [ ] For each distinct technique in a recipe, the AI server runs one YouTube search (e.g., "how to dice an onion beginner") and saves the first result whose title matches that technique. A poor match is not saved. The step still works with no video.
+- [ ] To protect the daily YouTube quota, one recipe opening makes at most 6 new technique searches (`MAX_VIDEO_SEARCHES_PER_RECIPE`). Techniques past the cap are not saved as "no video" (`video_search_skipped_cap` is logged), so they are searched on a later visit once the first ones are cached.
 - [ ] Each path recipe and each Cook anything recipe also gets a "Watch someone make it" section with 1–3 YouTube videos of that dish (search: "{dish} recipe"). Videos must be embeddable, safe-search strict, and about 3–20 minutes, preferring higher view counts. The title has to name that dish, not a different one. The section is hidden when the search fails, the quota runs out, or nothing matches. The YouTube key stays on the AI server.
 - [ ] Video results are cached per technique so the same search isn't repeated for other users (this saves API quota).
 - [ ] In cook mode, a step with a video shows a thumbnail or button that plays the video inside the app.
