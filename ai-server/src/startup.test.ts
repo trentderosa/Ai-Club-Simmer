@@ -198,4 +198,26 @@ describe('Server Startup (B2 fix)', () => {
       await new Promise((resolve) => blocker.close(resolve));
     }
   }, 20000);
+
+  it('a bad env value exits 1 with one Config error line and no stack', async () => {
+    const child = spawn('npx', ['tsx', path.join(__dirname, 'index.ts')], {
+      env: serverEnv({ PORT: '0', HOST: '127.0.0.1', NODE_ENV: 'test', OLLAMA_TIMEOUT_MS: 'abc' }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    serverProcess = child;
+    let stderr = '';
+    child.stderr?.on('data', (data: Buffer) => {
+      stderr += data.toString();
+    });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Server did not exit')), 15000);
+      child.on('exit', (exitCode) => {
+        clearTimeout(timeout);
+        resolve(exitCode);
+      });
+    });
+    expect(code).toBe(1);
+    expect(stderr).toMatch(/^Config error: OLLAMA_TIMEOUT_MS must be .*$/m);
+    expect(stderr).not.toMatch(/\n {4}at /);
+  }, 20000);
 });

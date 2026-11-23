@@ -129,6 +129,14 @@ export class SupabaseGeneratedRecipeRepository implements GeneratedRecipeReposit
   ): Promise<SavedGeneratedRecipe | null> {
     const pending = this.inFlight.get(this.key(userId, normalizedDishName));
     if (pending) return pending;
+    return this.selectByUserAndNormalizedName(userId, normalizedDishName);
+  }
+
+  // Plain GET that never consults inFlight, so save() can call it without awaiting itself.
+  private async selectByUserAndNormalizedName(
+    userId: string,
+    normalizedDishName: string
+  ): Promise<SavedGeneratedRecipe | null> {
     const url = new URL(`${this.baseUrl}/user_generated_recipes`);
     url.searchParams.set('select', '*');
     url.searchParams.set('user_id', `eq.${userId}`);
@@ -157,7 +165,7 @@ export class SupabaseGeneratedRecipeRepository implements GeneratedRecipeReposit
 
     const savePromise = (async (): Promise<SavedGeneratedRecipe> => {
       try {
-        const existing = await this.findByUserAndNormalizedName(input.userId, input.normalizedDishName);
+        const existing = await this.selectByUserAndNormalizedName(input.userId, input.normalizedDishName);
         if (existing) return existing;
         const url = `${this.baseUrl}/user_generated_recipes`;
         const rows = await this.request<Row[]>(
@@ -183,7 +191,7 @@ export class SupabaseGeneratedRecipeRepository implements GeneratedRecipeReposit
       } catch (error) {
         // Unique conflict: another request won the insert. Return that row.
         if (error instanceof SupabaseRestError && error.status === 409) {
-          const existing = await this.findByUserAndNormalizedName(input.userId, input.normalizedDishName);
+          const existing = await this.selectByUserAndNormalizedName(input.userId, input.normalizedDishName);
           if (existing) return existing;
         }
         throw error;

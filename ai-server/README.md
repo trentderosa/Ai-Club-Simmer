@@ -82,6 +82,9 @@ NODE_ENV=production HOST=127.0.0.1 TRUST_PROXY=true npm start
 | `SUPABASE_JWKS_URI` or `SUPABASE_JWT_SECRET` | One of these. Required in production. Prefer the JWKS URL. |
 | `OLLAMA_BASE_URL` | Default `http://localhost:11434`. |
 | `OLLAMA_MODEL` | Default `llama3.2`. Must match a pulled model. |
+| `OLLAMA_MAX_TOKENS`, `OLLAMA_TIMEOUT_MS`, `RATE_LIMIT_WINDOW_MS`, `RATE_LIMIT_MAX_REQUESTS` | Optional. Whole numbers only: `256`–`8192` (default `1500`), `5000`–`600000` (default `60000`), `1000`–`3600000` (default `60000`), `1`–`1000` (default `10`). Anything else stops startup with an error naming the variable. |
+| `PREAUTH_IP_RATE_LIMIT_MAX` | Optional. Per-IP cap on check-ins and mastery before auth, per `PREAUTH_IP_RATE_LIMIT_WINDOW_MS` window. Whole number `1`–`10000` (default `60`). Raise it when many students share one campus NAT IP. Anything else stops startup with an error naming the variable. |
+| `PREAUTH_IP_RATE_LIMIT_WINDOW_MS` | Optional. Window in ms for the pre-auth per-IP cap on check-ins and mastery. Whole number `1000`–`3600000` (default `60000`). Separate from `RATE_LIMIT_WINDOW_MS`. Anything else stops startup with an error naming the variable. |
 | `HOST` | `127.0.0.1` for the https tunnel (the command above). Same-Wi-Fi (`0.0.0.0`) is for the Expo dev client only, with no tunnel. The GitHub Pages app needs the https tunnel, because an https page cannot call an http LAN address. |
 | `TRUST_PROXY` | Exactly `true` for the tunnel. Express then trusts `X-Forwarded-For` only when the direct peer is loopback. A LAN client cannot spoof `req.ip`, so `HOST=0.0.0.0` is safe with this setting. |
 | `ALLOWED_ORIGINS` | Include `https://trentderosa.github.io` (scheme and host only; `/Ai-Club-Simmer` is not part of the origin). Setting `ALLOWED_ORIGINS` replaces the localhost defaults, so list any dev origins you still want. The Pages origin is not in the default list. |
@@ -340,3 +343,11 @@ something. The CLI stays available for dry runs and one-off retries.
 
 The weekly cap is computed for the week the award runs (UTC), so a repeat retried in a later
 week counts toward that week's cap (PRD open question 10).
+
+## Shutdown
+
+On SIGTERM or SIGINT the server stops the XP reconcile timer and stops accepting connections. It waits up to the model timeout (`OLLAMA_TIMEOUT_MS`) plus 5 s for in-flight requests, so a generation attempt that is running can finish. After that it exits anyway. A second Ctrl-C exits right away.
+
+## Bad config
+
+An invalid value for the bounded numeric settings, `ALLOWED_ORIGINS`, or the reconcile settings, or a missing production setting, stops startup with one line on stderr, `Config error: <message>`, and exit code 1, with no stack trace. The message names the variable and the allowed range, never a value. Other startup errors are not converted and print normally.

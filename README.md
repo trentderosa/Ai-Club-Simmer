@@ -1,6 +1,6 @@
 # Simmer
 
-Simmer is the JMU AI Club "Duolingo of cooking" app for new cooks. The MVP is a single fixed path, **"Weeknight basics"**: 10 weeknight dishes in a set order, each teaching a technique, with check-ins, XP, and AI-tailored tips after each cook. Users can also type a dish outside the path ("Cook anything") and get a generated recipe, then cook and check in the same way. Free-form XP uses the same slot formula; the mock canned recipe is 84 XP. A fully clamped recipe has `xp_value` 177, below roast chicken (181). The daily cap on free-form awards remains 200.
+Simmer is the JMU AI Club "Duolingo of cooking" app for new cooks. The MVP is a single fixed path, **"Weeknight basics"**: 10 weeknight dishes in a set order, each teaching a technique, with check-ins, XP, and AI-tailored tips after each cook. Users can also type a dish outside the path ("Cook anything") and get a generated recipe, then cook and check in the same way. When two saves of the same dish race, the losing insert returns the already-saved recipe instead of failing. Free-form XP uses the same slot formula; the mock canned recipe is 84 XP. A fully clamped recipe has `xp_value` 177, below roast chicken (181). The daily cap on free-form awards remains 200.
 
 This repo holds the product requirements, the Expo app, the AI server, and the database migrations and tests.
 
@@ -129,17 +129,21 @@ Slot 10 recipe generation retries unless the recipe has at least 3 non-safety (h
 
 Copy `ai-server/.env.example` to `ai-server/.env` and fill in values locally. Placeholders only — no real keys or production URLs belong in the repo.
 
+Error responses from the AI server are JSON, never HTML or a stack trace, except when a response has already started streaming (the connection is then closed instead). A request body that is not valid JSON returns `400` with code `INVALID_JSON`, a body over 100kb returns `413` with code `PAYLOAD_TOO_LARGE`, an unsupported charset or `Content-Encoding` returns `415` with code `UNSUPPORTED_MEDIA_TYPE`, any other client body error (for example an aborted request) returns its `4xx` with code `BAD_REQUEST`, an unknown route returns `404 { error: "Not found" }`, and an unexpected failure returns `500 { error: "Internal server error" }`. `POST /api/check-ins` and the `/api/mastery` routes also have a per-IP limit that runs before auth (default 60 per window, set with `PREAUTH_IP_RATE_LIMIT_MAX`; the window is `PREAUTH_IP_RATE_LIMIT_WINDOW_MS`, default 60000). On SIGTERM or SIGINT the server stops the XP reconcile timer, closes the listener, and waits up to the model timeout (`OLLAMA_TIMEOUT_MS`) plus 5 seconds for in-flight requests before it exits. A second Ctrl-C exits right away. An invalid value for the bounded numeric settings, `ALLOWED_ORIGINS`, or the reconcile settings, or a missing production setting, stops startup with one `Config error: <message>` line and exit code 1, with no stack trace.
+
 | Variable | Purpose |
 | --- | --- |
 | `OLLAMA_BASE_URL` | Ollama base URL (default `http://localhost:11434`) |
 | `OLLAMA_MODEL` | Model name (default `llama3.2`) |
-| `OLLAMA_MAX_TOKENS` | Max generation tokens (default `1500`) |
-| `OLLAMA_TIMEOUT_MS` | Ollama timeout in ms (default `60000`) |
+| `OLLAMA_MAX_TOKENS` | Max generation tokens (default `1500`, range `256`–`8192`) |
+| `OLLAMA_TIMEOUT_MS` | Ollama timeout in ms (default `60000`, range `5000`–`600000`) |
 | `PORT` | AI server port (default `3001`). If it is already in use the server prints one `Server error: port ... is already in use (EADDRINUSE)` line and exits 1. |
 | `HOST` | Bind address (default `127.0.0.1`) |
 | `ALLOWED_ORIGINS` | Comma-separated browser origins allowed to call the AI server (Expo web). Default: `http://localhost:8081`, `http://127.0.0.1:8081`, `http://localhost:19006`, `http://127.0.0.1:19006`. Never `*`. |
-| `RATE_LIMIT_WINDOW_MS` | Rate-limit window (default `60000`) |
-| `RATE_LIMIT_MAX_REQUESTS` | Max requests per window (default `10`) |
+| `RATE_LIMIT_WINDOW_MS` | Rate-limit window (default `60000`, range `1000`–`3600000`) |
+| `PREAUTH_IP_RATE_LIMIT_WINDOW_MS` | Window for the per-IP cap on check-ins and mastery (default `60000`, range `1000`–`3600000`). Separate from `RATE_LIMIT_WINDOW_MS`. A value that is not a whole number in range stops the server at startup, naming the variable. |
+| `PREAUTH_IP_RATE_LIMIT_MAX` | Per-IP cap on `POST /api/check-ins` and the `/api/mastery` routes, checked before auth, per `PREAUTH_IP_RATE_LIMIT_WINDOW_MS` window (default `60`, range `1`–`10000`). Raise it when a whole room shares one campus NAT IP. A value that is not a whole number in range stops the server at startup, naming the variable. |
+| `RATE_LIMIT_MAX_REQUESTS` | Max requests per window (default `10`, range `1`–`1000`). A value that is not a whole number in range stops the server at startup, naming the variable. |
 | `COOK_ANYTHING_MAX_DISH_LENGTH` | Max length of a Cook anything dish name (default `80`, range `10`–`200`) |
 | `COOK_ANYTHING_RATE_LIMIT_WINDOW_MS` | Per-user window for uncached Cook anything generations (default `3600000`, range `1000`–`86400000`). With Supabase configured, the count is stored in Postgres and survives a restart. |
 | `COOK_ANYTHING_RATE_LIMIT_MAX` | Max uncached Cook anything generations per user per window (default `5`, range `1`–`100`) |
@@ -179,4 +183,4 @@ npm run reconcile:xp -- --dry-run   # list check-ins missing XP, award nothing
 npm run reconcile:xp                # award path slots via award_slot_xp and Cook anything via award_generated_recipe_xp
 ```
 
-Path check-ins missing an `xp_events` row and Cook anything check-ins missing a `generated_recipe_xp_events` row are both included in one batch: never-attempted first, then least recently attempted, then oldest, skipping check-ins that already failed `XP_RECONCILE_MAX_ATTEMPTS` times, so check-ins that keep failing can't starve newer ones. The batch is processed oldest first. It's safe to run repeatedly. See [ai-server/README.md](ai-server/README.md#reconcile-missing-xp-awards).
+Path check-ins missing an `xp_events` row and Cook anything check-ins missing a `generated_recipe_xp_events` row are both included in one batch: never-attempted first, then least recently attempted, then oldest, skipping check-ins that already failed `XP_RECONCILE_MAX_ATTEMPTS` times, so check-ins that keep failing can't starve newer ones. The batch is processed oldest first. It's safe to run repeatedly. When a Cook anything award already exists and is read back, it reports `capped` the same way the live award did (if the recipe can't be read, only a 0-XP repeat is treated as capped). See [ai-server/README.md](ai-server/README.md#reconcile-missing-xp-awards).

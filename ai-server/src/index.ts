@@ -1,8 +1,11 @@
 import express from 'express';
 import { loadEnvFile } from './load-env.js';
 import { assertProductionConfig, loadConfig } from './config.js';
+import { runWithConfigErrors } from './run-with-config-errors.js';
+import { createShutdown, SHUTDOWN_GRACE_MS } from './shutdown.js';
 import { applyTrustProxy } from './trust-proxy.js';
 import { createCorsMiddleware } from './middleware/cors.js';
+import { mountErrorHandlers } from './middleware/error-handler.js';
 import { createOllamaClient } from './services/ollama-client.js';
 import {
   createSupabaseService,
@@ -66,9 +69,17 @@ import type { GeneratedRecipeRepository } from './repositories/generated-recipe-
 
 loadEnvFile();
 
-const config = loadConfig();
+// A bad setting prints one `Config error:` line and exits 1, with no stack.
+// The exit runs after stderr flushes; the awaited call never resolves meanwhile.
+const configErrorIo = {
+  exit: (code: number): never => process.exit(code),
+  stderr: process.stderr,
+};
+
+const config = await runWithConfigErrors(() => loadConfig(), configErrorIo);
 
 const app = express();
+app.disable('x-powered-by');
 
 // TRUST_PROXY=true trusts X-Forwarded-For only from a loopback peer, which is
 // the tunnel process on this laptop. A direct LAN client is not that peer, so
@@ -289,7 +300,7 @@ function createServicesFromConfig(): ServiceConfig {
   };
 }
 
-const services = createServicesFromConfig();
+const services = await runWithConfigErrors(() => createServicesFromConfig(), configErrorIo);
 
 const recipeRouter = createRecipeRouter(
   {
@@ -341,6 +352,13 @@ app.use(
   })
 );
 
+// Per-IP pre-auth cap for check-ins and mastery (PREAUTH_IP_RATE_LIMIT_MAX and
+// PREAUTH_IP_RATE_LIMIT_WINDOW_MS).
+const preAuthIpRateLimit = {
+  windowMs: config.preAuthIpRateLimitWindowMs,
+  maxRequests: config.preAuthIpRateLimitMax,
+};
+
 // Mount check-in router if JWT verifier and check-in service are available
 if (services.jwtVerifier && services.checkInService) {
   const checkInRouter = createCheckInRouter(
@@ -350,6 +368,7 @@ if (services.jwtVerifier && services.checkInService) {
     },
     {
       rateLimit: config.rateLimit,
+      ipRateLimit: preAuthIpRateLimit,
     }
   );
   app.use('/api/check-ins', checkInRouter);
@@ -361,7 +380,10 @@ if (services.jwtVerifier && services.checkInService) {
 if (services.jwtVerifier && services.masteryRepository) {
   app.use(
     '/api/mastery',
-    createMasteryRouter({ jwtVerifier: services.jwtVerifier, masteryRepository: services.masteryRepository })
+    createMasteryRouter(
+      { jwtVerifier: services.jwtVerifier, masteryRepository: services.masteryRepository },
+      { ipRateLimit: preAuthIpRateLimit }
+    )
   );
   console.info('Mastery route: ENABLED');
 } else {
@@ -376,8 +398,14 @@ mountHealthRoutes(app, {
   youtubeApiKey: config.youtube.apiKey,
 });
 
+// After every router and health route: JSON 404 and the final error handler.
+mountErrorHandlers(app);
+
 // Retry failed XP awards on a timer (same job as npm run reconcile:xp).
-const reconcileScheduler = startReconcileScheduler(process.env, { stubAuth: isStubAuthAllowed() });
+const reconcileScheduler = await runWithConfigErrors(
+  () => startReconcileScheduler(process.env, { stubAuth: isStubAuthAllowed() }),
+  configErrorIo
+);
 
 const server = app.listen(config.port, config.host, () => {
   console.info(`Simmer AI Server running on http://${config.host}:${boundPort(server, config.port)}`);
@@ -410,3 +438,16 @@ const server = app.listen(config.port, config.host, () => {
   console.info(`CORS origins: ${config.allowedOrigins.join(', ')}`);
 });
 server.on('error', (err) => handleListenError(err, config.host, config.port));
+
+// Graceful shutdown: stop the scheduler, stop accepting connections, and wait
+// for in-flight requests. The force-exit waits for the model timeout plus a
+// grace period so an in-flight generation attempt can finish (the timer is
+// unref'd). A second signal exits right away. Registered here, never in tests
+// (this module is not imported by them).
+const shutdown = createShutdown(server, reconcileScheduler, {
+  forceExitMs: config.ollama.timeoutMs + SHUTDOWN_GRACE_MS,
+  exit: (code: number): void => process.exit(code),
+  logger: console,
+});
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
