@@ -72,6 +72,71 @@ describe('parseResponse: recipe', () => {
     expect(await kindOf(parseResponse(res(status, body), RecipeResponseSchema, 'recipe'))).toBe(kind);
   });
 
+  describe('503 GENERATION_BUSY', () => {
+    const busyBody = { error: 'The kitchen is busy right now. Try again in a minute.', code: 'GENERATION_BUSY' };
+    function busyRes(retryAfter?: string): Response {
+      const r = res(503, busyBody) as unknown as { headers: Headers };
+      r.headers = new Headers(retryAfter === undefined ? {} : { 'Retry-After': retryAfter });
+      return r as unknown as Response;
+    }
+    async function busyError(retryAfter?: string): Promise<ApiError> {
+      try {
+        await parseResponse(busyRes(retryAfter), RecipeResponseSchema, 'recipe');
+      } catch (e) {
+        return e as ApiError;
+      }
+      throw new Error('expected a rejection');
+    }
+
+    it.each([
+      ['30', 30],
+      [' 45 ', 45],
+      ['0', 1],
+      ['9999', 300],
+      ['99999999999999999999999', 300],
+    ])('reads Retry-After %j as %i seconds', async (header, seconds) => {
+      const e = await busyError(header);
+      expect(e.kind).toBe('busy');
+      expect(e.status).toBe(503);
+      expect(e.code).toBe('GENERATION_BUSY');
+      expect(e.retryAfterSeconds).toBe(seconds);
+    });
+
+    it.each([undefined, '', 'abc', '-5', '1.5', '1e3', 'Wed, 21 Oct 2026 07:28:00 GMT'])(
+      'ignores Retry-After %j',
+      async (header) => {
+        const e = await busyError(header);
+        expect(e.kind).toBe('busy');
+        expect(e.retryAfterSeconds).toBeUndefined();
+      },
+    );
+
+    it('still maps a 503 without the code to unavailable, with no retry value', async () => {
+      const r = res(503, { error: 'busy' }) as unknown as { headers: Headers };
+      r.headers = new Headers({ 'Retry-After': '30' });
+      try {
+        await parseResponse(r as unknown as Response, RecipeResponseSchema, 'recipe');
+      } catch (e) {
+        expect((e as ApiError).kind).toBe('unavailable');
+        expect((e as ApiError).retryAfterSeconds).toBeUndefined();
+        return;
+      }
+      throw new Error('expected a rejection');
+    });
+
+    it('works when the response has no headers object', async () => {
+      let caught: ApiError | undefined;
+      try {
+        // res() builds a response with no headers property at all.
+        await parseResponse(res(503, busyBody), RecipeResponseSchema, 'recipe');
+      } catch (e) {
+        caught = e as ApiError;
+      }
+      expect(caught?.kind).toBe('busy');
+      expect(caught?.retryAfterSeconds).toBeUndefined();
+    });
+  });
+
   it('handles a non-JSON error page', async () => {
     expect(await kindOf(parseResponse(res(502, null, { json: false }), RecipeResponseSchema, 'recipe'))).toBe('server');
   });

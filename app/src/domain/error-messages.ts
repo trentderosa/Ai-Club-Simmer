@@ -24,6 +24,7 @@ const COPY: Record<ApiErrorKind, ErrorCopy> = {
   mastery_session_used: { title: 'Already checked in', body: 'This cook was already saved. Open cook mode again to start a fresh mastery run.', action: 'back' },
   validation: { title: 'Something’s off with that', body: 'Some of the details weren’t accepted. Check them and try again.', action: 'retry' },
   unavailable: { title: 'Sign-in service is down', body: 'The server couldn’t check your login just now. Try again in a moment.', action: 'retry' },
+  busy: { title: 'The kitchen is busy', body: 'The kitchen is busy right now. Try again in a minute.', action: 'retry' },
   server: { title: 'Something went wrong', body: 'The server hit an error. Try again in a moment.', action: 'retry' },
   timeout: { title: 'This is taking too long', body: 'The AI server didn’t answer in time. Try again in a moment.', action: 'retry' },
   network: { title: 'Can’t reach the kitchen', body: 'Check your connection. The AI server laptop and its tunnel have to be running.', action: 'retry' },
@@ -60,9 +61,23 @@ function isAuthUnavailable(error: { code?: string; message: string }): boolean {
   return /authentication/i.test(error.message);
 }
 
+/** 503 GENERATION_BUSY: "about N seconds", or minutes from 60 s up, or "a minute" with no hint. */
+function busyCopy(retryAfterSeconds: number | undefined): ErrorCopy {
+  if (retryAfterSeconds === undefined) return COPY.busy;
+  let wait: string;
+  if (retryAfterSeconds >= 60) {
+    const minutes = Math.round(retryAfterSeconds / 60);
+    wait = `${minutes} ${minutes === 1 ? 'minute' : 'minutes'}`;
+  } else {
+    wait = `${retryAfterSeconds} ${retryAfterSeconds === 1 ? 'second' : 'seconds'}`;
+  }
+  return { ...COPY.busy, body: `The kitchen is busy right now. Try again in about ${wait}.` };
+}
+
 export function errorCopy(e: unknown): ErrorCopy {
   if (isApiError(e)) {
     if (e.kind === 'timeout') return COPY.timeout;
+    if (e.kind === 'busy') return busyCopy(e.retryAfterSeconds);
     if (e.code === 'GENERATION_RATE_LIMIT_UNAVAILABLE') return NEW_RECIPES_PAUSED;
     if (e.kind === 'unavailable' && !isAuthUnavailable(e)) return SERVER_DOWN;
     const base = COPY[e.kind];
@@ -83,6 +98,6 @@ export function errorCopy(e: unknown): ErrorCopy {
  */
 export function isAiServerOutage(e: unknown): boolean {
   if (!isApiError(e)) return false;
-  if (e.kind === 'network' || e.kind === 'timeout' || e.kind === 'rate_limited' || e.kind === 'unavailable') return true;
+  if (e.kind === 'network' || e.kind === 'timeout' || e.kind === 'rate_limited' || e.kind === 'unavailable' || e.kind === 'busy') return true;
   return e.status === 503;
 }
