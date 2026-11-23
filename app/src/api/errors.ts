@@ -13,6 +13,7 @@ export type ApiErrorKind =
   | 'validation' // 400 VALIDATION_ERROR / other 400s
   | 'mastery_session_used' // 409 MASTERY_SESSION_USED: that cook is already checked in
   | 'unavailable' // 503: auth service down, or the AI server cannot take the request
+  | 'busy' // 503 GENERATION_BUSY: the shared model queue is full, retry shortly
   | 'server' // other 5xx, including GENERATION_RATE_LIMIT_UNAVAILABLE
   | 'timeout' // the AI server did not answer before the client gave up
   | 'network' // fetch failed: the AI server was unreachable
@@ -25,6 +26,8 @@ export class ApiError extends Error {
     message: string,
     public readonly status?: number,
     public readonly code?: string,
+    /** Seconds from a valid integer `Retry-After` header (1-300), else undefined. */
+    public readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = 'ApiError';
@@ -56,7 +59,24 @@ export function kindForHttpError(
   if (status === 409 && code === 'MASTERY_SESSION_USED') return 'mastery_session_used';
   if (status === 400 || (status === 409 && code === 'IDEMPOTENCY_CONFLICT')) return 'validation';
   if (status === 503 && code === 'GENERATION_RATE_LIMIT_UNAVAILABLE') return 'server';
+  if (status === 503 && code === 'GENERATION_BUSY') return 'busy';
   if (status === 503) return 'unavailable';
   if (status === 500 && route === 'recipe') return 'generation_failed';
   return 'server';
+}
+
+export const RETRY_AFTER_MIN_SECONDS = 1;
+export const RETRY_AFTER_MAX_SECONDS = 300;
+
+/**
+ * Reads a `Retry-After` header value as whole seconds, clamped to 1-300.
+ * HTTP-dates and anything that is not a plain non-negative integer give
+ * undefined, so the message falls back to "in a minute".
+ */
+export function parseRetryAfterSeconds(value: string | null | undefined): number | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const seconds = Number(trimmed);
+  return Math.min(RETRY_AFTER_MAX_SECONDS, Math.max(RETRY_AFTER_MIN_SECONDS, seconds));
 }

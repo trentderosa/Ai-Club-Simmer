@@ -7,7 +7,7 @@
 import type { z } from 'zod';
 
 import { CHECK_IN_TIMEOUT_MS, RECIPE_TIMEOUT_MS } from '../domain/check-in-retry';
-import { ApiError, kindForHttpError, type ApiRoute } from './errors';
+import { ApiError, kindForHttpError, parseRetryAfterSeconds, type ApiRoute } from './errors';
 import {
   ApiErrorBodySchema,
   CheckInResponseSchema,
@@ -114,7 +114,9 @@ export async function parseResponse<S extends z.ZodTypeAny>(
     const body = ApiErrorBodySchema.safeParse(json);
     const message = (body.success && body.data.error) || `Request failed (${res.status}).`;
     const code = body.success ? body.data.code : undefined;
-    throw new ApiError(kindForHttpError(res.status, code, message, route), message, res.status, code);
+    const kind = kindForHttpError(res.status, code, message, route);
+    const retryAfter = kind === 'busy' ? parseRetryAfterSeconds(res.headers?.get('Retry-After')) : undefined;
+    throw new ApiError(kind, message, res.status, code, retryAfter);
   }
   const parsed = schema.safeParse(json);
   if (!parsed.success) {
