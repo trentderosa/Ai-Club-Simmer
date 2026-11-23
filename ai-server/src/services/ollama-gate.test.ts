@@ -483,6 +483,20 @@ describe('createOllamaGate close', () => {
     await expect(gate.generate('x', {})).rejects.toBeInstanceOf(OllamaBusyError);
   });
 
+  it('a background call granted a slot just before close is refused before it calls the model', async () => {
+    const { client, signals } = abortableClient();
+    const gate = createOllamaGate(client, config);
+    // The slot is free, so acquire resolves at once, but the call only registers
+    // as preemptible after that await. close() lands in between.
+    const bg = gate.generate('bg', {}, { background: true }).catch((e: unknown) => e);
+    gate.close();
+    const error = await bg;
+    expect(error).toBeInstanceOf(OllamaBusyError);
+    expect((error as OllamaBusyError).reason).toBe('shutting_down');
+    expect(signals).toHaveLength(0);
+    expect(gate.isIdle()).toBe(true);
+  });
+
   it('close with a waiter that preempted a prewarm: the waiter is shutting_down, the prewarm stays preempted', async () => {
     const { client, signals } = abortableClient();
     const gate = createOllamaGate(client, config);

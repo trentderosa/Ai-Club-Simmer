@@ -163,6 +163,12 @@ export function createOllamaGate(inner: OllamaClient, config: OllamaGateConfig):
           release();
         }
       }
+      // close() may have run while acquire() was resolving; this call is not in
+      // `preemptible` yet, so close() could not abort it. Refuse it here instead.
+      if (closed) {
+        release();
+        throw busy('shutting_down');
+      }
       const entry = { controller: new AbortController(), preempted: false };
       preemptible.push(entry);
       try {
