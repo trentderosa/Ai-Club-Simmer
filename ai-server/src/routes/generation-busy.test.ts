@@ -181,12 +181,14 @@ describe('GENERATION_BUSY', () => {
     void gate.generate('prewarm', {}, { background: true, queueTimeoutMs: 0 }).catch(() => undefined);
     await vi.waitFor(() => expect(gate.isIdle()).toBe(false));
     const allow = vi.fn().mockResolvedValue(false);
-    const res = await request(cookApp(gate, { allow }))
+    const refund = vi.fn().mockResolvedValue(true);
+    const res = await request(cookApp(gate, { allow, refund }))
       .post('/api/recipes/cook-anything')
       .set('Authorization', 'Bearer t')
       .send({ dish: 'Pad Thai' });
     expect(allow).toHaveBeenCalledTimes(1);
     expect(res.status).toBe(429);
+    expect(refund).not.toHaveBeenCalled();
   });
 
   it('POST /cook-anything refuses without calling the model when the queue fills during allow()', async () => {
