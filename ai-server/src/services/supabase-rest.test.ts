@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { inspect } from 'node:util';
-import { SupabaseRest, SupabaseRestError, httpFailureMessage, postgrestCode } from './supabase-rest.js';
+import { SupabaseRest, SupabaseRestError, httpFailureMessage, postgrestCode, readJson } from './supabase-rest.js';
 
 const config = { url: 'https://db.simmer.invalid', serviceRoleKey: 'test-service-role', timeoutMs: 100 };
 
@@ -60,6 +60,10 @@ describe('SupabaseRestError kind', () => {
     );
     const error = await failure(new SupabaseRest(config).rpc('fn', {}));
     expect(error.kind).toBe('invalid_response');
+    expect(error.message).toBe('Supabase rpc fn request failed: invalid JSON response');
+    // Node's SyntaxError quotes the body, so it is not kept as the cause either.
+    expect(error.cause).toBeUndefined();
+    expect(inspect(error)).not.toContain('not json');
   });
 });
 
@@ -90,5 +94,25 @@ describe('SupabaseRestError body handling', () => {
     expect(postgrestCode('not json')).toBeUndefined();
     expect(postgrestCode('{"code":"PGRST202"}')).toBe('PGRST202');
     expect(httpFailureMessage('x failed', 500, 'oops')).toBe('x failed: 500');
+  });
+});
+
+describe('readJson', () => {
+  it('turns a SyntaxError into a body-free invalid_response error', async () => {
+    const response = {
+      status: 200,
+      json: (): Promise<unknown> => Promise.resolve().then(() => JSON.parse('cook@simmer.invalid') as unknown),
+    };
+    const error = await failure(readJson(response, 'Supabase check-in read'));
+    expect(error.message).toBe('Supabase check-in read: invalid JSON response');
+    expect(error.kind).toBe('invalid_response');
+    expect(error.status).toBe(200);
+    expect(inspect(error)).not.toContain('cook@simmer.invalid');
+  });
+
+  it('returns parsed JSON and passes other errors through', async () => {
+    await expect(readJson({ status: 200, json: () => Promise.resolve([1]) }, 'x')).resolves.toEqual([1]);
+    const boom = new TypeError('body already used');
+    await expect(readJson({ status: 200, json: () => Promise.reject(boom) }, 'x')).rejects.toBe(boom);
   });
 });

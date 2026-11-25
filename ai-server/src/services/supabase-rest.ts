@@ -63,6 +63,11 @@ export class SupabaseRestError extends Error {
     }
   }
 
+  /** Error for a 2xx response whose body is not valid JSON (no cause: its message quotes the body). */
+  static invalidJson(prefix: string, status?: number): SupabaseRestError {
+    return new SupabaseRestError(`${prefix}: invalid JSON response`, status, { kind: 'invalid_response' });
+  }
+
   /** Error for a non-2xx response: message has status and safe code, body kept aside. */
   static fromResponse(prefix: string, status: number, body: string): SupabaseRestError {
     return new SupabaseRestError(httpFailureMessage(prefix, status, body), status, { body });
@@ -143,12 +148,34 @@ export class SupabaseRest {
           kind: 'timeout',
         });
       }
-      const detail = error instanceof Error ? error.message : String(error);
       // JSON.parse of a 200 body is inside the try; that is a bad response, not a network failure.
-      const kind = error instanceof SyntaxError ? 'invalid_response' : 'network';
-      throw new SupabaseRestError(`Supabase ${label} request failed: ${detail}`, undefined, { kind, cause: error });
+      if (error instanceof SyntaxError) throw SupabaseRestError.invalidJson(`Supabase ${label} request failed`);
+      const detail = safeErrorDetail(error);
+      throw new SupabaseRestError(`Supabase ${label} request failed: ${detail}`, undefined, {
+        kind: 'network',
+        cause: error,
+      });
     } finally {
       clearTimeout(timer);
     }
+  }
+}
+
+/**
+ * Message detail for a wrapped request failure. A SyntaxError from JSON.parse
+ * quotes the start of the body on recent Node, so it becomes a fixed string.
+ */
+export function safeErrorDetail(error: unknown): string {
+  if (error instanceof SyntaxError) return 'invalid JSON response';
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** response.json() that throws a body-free SupabaseRestError instead of a SyntaxError. */
+export async function readJson<T>(response: { json(): Promise<unknown>; status: number }, prefix: string): Promise<T> {
+  try {
+    return (await response.json()) as T;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw SupabaseRestError.invalidJson(prefix, response.status);
+    throw error;
   }
 }

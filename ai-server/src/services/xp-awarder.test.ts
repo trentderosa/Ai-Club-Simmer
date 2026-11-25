@@ -69,6 +69,18 @@ describe('SupabaseXpAwarder', () => {
     expect((err as Error).message).not.toContain(KEY);
   });
 
+  it('reports an unparseable 200 body without quoting it', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve().then(() => JSON.parse('cook@simmer.invalid') as unknown),
+    });
+    const err = (await awarder.award(randomUUID()).catch((e: unknown) => e)) as XpAwardError;
+    expect(err).toBeInstanceOf(XpAwardError);
+    expect(err.reason).toBe('network');
+    expect(err.message).toBe('award_slot_xp request failed: invalid JSON response');
+    expect(err.message).not.toContain('cook@simmer.invalid');
+  });
+
   it('throws when the RPC returns no row', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve([]) });
     await expect(awarder.award(randomUUID())).rejects.toThrow('no result row');

@@ -10,7 +10,7 @@ import {
   type XpAwardResult,
   type SupabaseXpAwarderConfig,
 } from './xp-awarder.js';
-import { httpFailureMessage } from './supabase-rest.js';
+import { httpFailureMessage, safeErrorDetail } from './supabase-rest.js';
 
 interface AwardRow {
   out_xp_awarded: number;
@@ -61,7 +61,7 @@ export class SupabaseGeneratedXpAwarder implements XpAwarder {
           `award_generated_recipe_xp timed out after ${this.timeoutMs}ms`
         );
       }
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = safeErrorDetail(error);
       throw new XpAwardError('network', `award_generated_recipe_xp request failed: ${detail}`);
     } finally {
       clearTimeout(timer);
