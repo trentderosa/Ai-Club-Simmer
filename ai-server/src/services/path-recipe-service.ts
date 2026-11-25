@@ -25,6 +25,10 @@ export interface PathGenerationOptions {
   immediateOnly?: boolean;
 }
 
+export interface PathRecipeServiceLogger {
+  warn(message: string, context: Record<string, unknown>): void;
+}
+
 export interface PathRecipeServiceDeps {
   ollamaClient: OllamaClient;
   /** Per-request time budget for the model queue and calls. No deadline when unset. */
@@ -32,6 +36,8 @@ export interface PathRecipeServiceDeps {
   supabase: SupabaseService;
   /** F4 technique videos. Without it (no YOUTUBE_API_KEY) recipes have no videos. */
   videoFinder?: VideoFinder | null;
+  /** Warning sink. Defaults to the console, like the dish photo and video finders. */
+  logger?: PathRecipeServiceLogger;
   /** Test hooks only. Production leaves this unset (no-ops). */
   hooks?: {
     /** Called after a joiner removes an ended entry, before it checks for or starts a rerun. */
@@ -60,6 +66,7 @@ export interface PathRecipeService {
  * and pass it to both: the in-flight map lives here.
  */
 export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipeService {
+  const logger = deps.logger ?? console;
   // background: started with immediateOnly (a prewarm). Its failures can come
   // from those limits, so a foreground joiner may rerun instead of inheriting them.
   const inFlightGenerations = new Map<
@@ -122,20 +129,20 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
     try {
       lookup = await deps.videoFinder.findForRecipe(recipe);
     } catch (error) {
-      console.warn('recipe_videos_failed', {
+      logger.warn('recipe_videos_failed', {
         slot_id: slotId,
         error: error instanceof Error ? error.message : String(error),
       });
       return {};
     }
     if (!lookup.complete) {
-      console.warn('recipe_videos_incomplete', { slot_id: slotId, found: Object.keys(lookup.videos).length });
+      logger.warn('recipe_videos_incomplete', { slot_id: slotId, found: Object.keys(lookup.videos).length });
       return lookup.videos;
     }
     try {
       await deps.supabase.saveVideos(userId, slotId, lookup.videos);
     } catch (error) {
-      console.warn('recipe_videos_save_failed', {
+      logger.warn('recipe_videos_save_failed', {
         slot_id: slotId,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -164,7 +171,7 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
       // just stops.
       const reason = generationOptions.immediateOnly ? null : joinerRerunReason(shared, inFlight.background);
       if (!reason) return shared;
-      console.warn('recipe_joined_generation_rerun', { slot_id: slot.id, reason });
+      logger.warn('recipe_joined_generation_rerun', { slot_id: slot.id, reason });
       if (inFlightGenerations.get(key) === inFlight) inFlightGenerations.delete(key);
       deps.hooks?.beforeRerun?.();
       const budget = deps.generationBudget && {
@@ -198,7 +205,7 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
       const shared = await prewarm.promise;
       const reason = joinerRerunReason(shared, true);
       if (!reason) return shared;
-      console.warn('recipe_joined_generation_rerun', { slot_id: slot.id, reason });
+      logger.warn('recipe_joined_generation_rerun', { slot_id: slot.id, reason });
       if (inFlightGenerations.get(key) === prewarm) inFlightGenerations.delete(key);
       deps.hooks?.beforeRerun?.();
       // Another stranded joiner may have started the rerun already: share it.

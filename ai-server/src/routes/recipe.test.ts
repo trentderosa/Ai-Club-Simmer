@@ -435,6 +435,33 @@ describe('POST /api/recipes/generate-preview', () => {
     expect(response.status).toBe(404);
   });
 
+  it('logs only a sanitized type and attempt count when preview generation fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const ollamaClient: OllamaClient = {
+        generate: vi.fn().mockResolvedValue('not json sk-test-secret-token'),
+      };
+      const app = createApp(
+        { ollamaClient, supabase: createMockSupabase() },
+        { enablePreviewRoute: true }
+      );
+
+      const response = await request(app)
+        .post('/api/recipes/generate-preview')
+        .send({ slot: mockSlot, userProfile: mockUserProfile });
+
+      expect(response.status).toBe(500);
+      const call = errorSpy.mock.calls.find((c) => c[0] === 'recipe_generation_preview_failed');
+      expect(call).toBeDefined();
+      expect(Object.keys(call?.[1] as object).sort()).toEqual(['attempts', 'type']);
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('sk-test-secret-token');
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
   it('works when preview route is explicitly enabled', async () => {
     const app = createApp(
       {

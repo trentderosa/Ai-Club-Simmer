@@ -6,6 +6,8 @@ import type { OllamaClient } from './ollama-client.js';
 import type { SupabaseService } from './supabase.js';
 import type { PathSlot } from './recipe-generator.js';
 import type { UserProfile } from '../schemas/user.js';
+import type { Recipe } from '../schemas/recipe.js';
+import type { VideoFinder } from './video-finder.js';
 
 const USER = 'user-1';
 const next: PathSlot = { id: 22, dishName: 'Scrambled Eggs', techniqueFocus: 'Heat control', isFinal: false };
@@ -47,6 +49,36 @@ function setup(client: OllamaClient): {
   };
   return { gate, pathRecipes, prewarmer: createRecipePrewarmer(deps), logger };
 }
+
+describe('path recipe service logging', () => {
+  it('sends video warnings through the injected logger, not the console', async () => {
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const logger = { warn: vi.fn() };
+      const supabase = { saveVideos: vi.fn() } as unknown as SupabaseService;
+      const videoFinder = {
+        findForRecipe: vi.fn().mockRejectedValue(new Error('quota exceeded')),
+      } as unknown as VideoFinder;
+      const service = createPathRecipeService({
+        ollamaClient: pendingClient().client,
+        supabase,
+        videoFinder,
+        logger,
+      });
+
+      const videos = await service.attachVideos(USER, 22, {} as Recipe);
+
+      expect(videos).toEqual({});
+      expect(logger.warn).toHaveBeenCalledWith('recipe_videos_failed', {
+        slot_id: 22,
+        error: 'quota exceeded',
+      });
+      expect(consoleWarn).not.toHaveBeenCalled();
+    } finally {
+      consoleWarn.mockRestore();
+    }
+  });
+});
 
 describe('prewarm retries against a real gate', () => {
   beforeEach(() => {

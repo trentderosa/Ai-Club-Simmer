@@ -357,7 +357,10 @@ export function createRecipeRouter(
             sendGenerationBusy(res);
             return;
           }
-          console.error('Recipe generation preview failed:', result.error);
+          console.error('recipe_generation_preview_failed', {
+            type: result.error.type,
+            attempts: result.error.attempts,
+          });
           res.status(500).json({
             error: 'Recipe generation failed. Please try again.',
             type: result.error.type,
@@ -370,7 +373,9 @@ export function createRecipeRouter(
           recipe: result.recipe,
         });
       } catch (error) {
-        console.error('Recipe generation preview error:', error);
+        console.error('recipe_generation_preview_error', {
+          error: error instanceof Error ? error.name : 'unknown',
+        });
         res.status(500).json({
           error: 'Internal server error',
         });
