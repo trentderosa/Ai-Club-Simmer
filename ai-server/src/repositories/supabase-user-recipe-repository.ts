@@ -17,7 +17,7 @@ const RecipeVideosSchema = z.record(
 export interface SupabaseConfig {
   url: string;
   serviceRoleKey: string;
-  /** Abort the video update after this many ms (default 5000, like SupabaseRest). */
+  /** Abort each request after this many ms (default 5000, like SupabaseRest). */
   timeoutMs?: number;
 }
 
@@ -45,6 +45,25 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
       'Prefer': 'return=representation',
     };
     this.timeoutMs = config.timeoutMs ?? DEFAULT_SUPABASE_REST_TIMEOUT_MS;
+  }
+
+  /** Runs a request under one timer that covers the fetch and reading the body. */
+  private async withTimeout<T>(label: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      return await run(controller.signal);
+    } catch (error) {
+      if (error instanceof SupabaseRestError) throw error;
+      if (controller.signal.aborted) {
+        throw new SupabaseRestError(`Supabase ${label} timed out after ${this.timeoutMs}ms`, undefined, {
+          kind: 'timeout',
+        });
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private makeKey(userId: string, slotId: number): string {
@@ -91,17 +110,20 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
     url.searchParams.set('slot_id', `eq.${slotId}`);
     url.searchParams.set('select', '*');
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: this.headers,
+    const rows = await this.withTimeout('recipe query', async (signal) => {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: this.headers,
+        signal,
+      });
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw SupabaseRestError.fromResponse('Supabase query failed', response.status, error);
+      }
+
+      return readJson<SupabaseUserRecipeRow[]>(response, 'Supabase user recipe read');
     });
-
-    if (!response.ok) {
-      const error = await response.text();
-      throw SupabaseRestError.fromResponse('Supabase query failed', response.status, error);
-    }
-
-    const rows = await readJson<SupabaseUserRecipeRow[]>(response, 'Supabase user recipe read');
     if (rows.length === 0) {
       return null;
     }
@@ -164,20 +186,35 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
     const url = new URL(`${this.baseUrl}/user_recipes`);
     url.searchParams.set('on_conflict', 'user_id,slot_id');
 
-    const response = await fetch(url.toString(), {
-      method: 'POST',
-      headers: {
-        ...this.headers,
-        'Prefer': 'return=representation,resolution=ignore-duplicates',
-      },
-      body: JSON.stringify({
-        user_id: userId,
-        slot_id: slotId,
-        recipe_json: recipe,
-      }),
+    const outcome = await this.withTimeout('recipe insert', async (signal) => {
+      const response = await fetch(url.toString(), {
+        method: 'POST',
+        headers: {
+          ...this.headers,
+          'Prefer': 'return=representation,resolution=ignore-duplicates',
+        },
+        body: JSON.stringify({
+          user_id: userId,
+          slot_id: slotId,
+          recipe_json: recipe,
+        }),
+        signal,
+      });
+
+      if (response.status === 409) {
+        return { kind: 'conflict' as const };
+      }
+
+      if (!response.ok) {
+        const error = await response.text();
+        throw SupabaseRestError.fromResponse('Supabase insert failed', response.status, error);
+      }
+
+      const rows = await readJson<SupabaseUserRecipeRow[]>(response, 'Supabase user recipe read');
+      return { kind: 'rows' as const, rows };
     });
 
-    if (response.status === 409) {
+    if (outcome.kind === 'conflict') {
       const existing = await this.fetchRecipe(userId, slotId);
       if (existing) {
         return existing;
@@ -185,12 +222,7 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
       throw new Error('Conflict but no existing record found');
     }
 
-    if (!response.ok) {
-      const error = await response.text();
-      throw SupabaseRestError.fromResponse('Supabase insert failed', response.status, error);
-    }
-
-    const rows = await readJson<SupabaseUserRecipeRow[]>(response, 'Supabase user recipe read');
+    const rows = outcome.rows;
 
     if (rows.length === 0) {
       const existing = await this.fetchRecipe(userId, slotId);

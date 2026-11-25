@@ -1,10 +1,12 @@
 import { CheckInIdempotencyConflict, CheckInMasterySessionError, type CheckInRecord } from '../types/check-in.js';
 import type { CheckInRepository, CreateCheckInParams, CreatedCheckIn } from './check-in-repository.js';
-import { SupabaseRestError, readJson } from '../services/supabase-rest.js';
+import { DEFAULT_SUPABASE_REST_TIMEOUT_MS, SupabaseRestError, readJson } from '../services/supabase-rest.js';
 
 export interface SupabaseCheckInConfig {
   url: string;
   serviceRoleKey: string;
+  /** Abort each request (including reading its body) after this many ms (default 5000, like SupabaseRest). */
+  timeoutMs?: number;
 }
 
 interface CheckInRow {
@@ -27,6 +29,7 @@ interface CheckInRow {
 export class SupabaseCheckInRepository implements CheckInRepository {
   private baseUrl: string;
   private headers: Record<string, string>;
+  private readonly timeoutMs: number;
 
   constructor(config: SupabaseCheckInConfig) {
     this.baseUrl = `${config.url}/rest/v1`;
@@ -36,6 +39,26 @@ export class SupabaseCheckInRepository implements CheckInRepository {
       'Authorization': `Bearer ${config.serviceRoleKey}`,
       'Prefer': 'return=representation',
     };
+    this.timeoutMs = config.timeoutMs ?? DEFAULT_SUPABASE_REST_TIMEOUT_MS;
+  }
+
+  /** Runs a request under one timer that covers the fetch and reading the body. */
+  private async withTimeout<T>(label: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    try {
+      return await run(controller.signal);
+    } catch (error) {
+      if (error instanceof SupabaseRestError) throw error;
+      if (controller.signal.aborted) {
+        throw new SupabaseRestError(`Supabase ${label} timed out after ${this.timeoutMs}ms`, undefined, {
+          kind: 'timeout',
+        });
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   async validateUserRecipe(userId: string, userRecipeId: string, slotId: number): Promise<boolean> {
@@ -46,62 +69,73 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     url.searchParams.set('user_id', `eq.${userId}`);
     url.searchParams.set('slot_id', `eq.${slotId}`);
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: this.headers,
+    const data = await this.withTimeout('check-in read', async (signal) => {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: this.headers,
+        signal,
+      });
+
+      if (!response.ok) {
+        // DB error - throw rather than returning false
+        const errorText = await response.text();
+        throw SupabaseRestError.fromResponse('Database error validating recipe', response.status, errorText);
+      }
+
+      return readJson<unknown>(response, 'Supabase check-in read');
     });
-
-    if (!response.ok) {
-      // DB error - throw rather than returning false
-      const errorText = await response.text();
-      throw SupabaseRestError.fromResponse('Database error validating recipe', response.status, errorText);
-    }
-
-    const data = await readJson<unknown>(response, 'Supabase check-in read');
     return Array.isArray(data) && data.length > 0;
   }
 
   async create(params: CreateCheckInParams): Promise<CreatedCheckIn> {
     const url = `${this.baseUrl}/check_ins`;
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: this.headers,
-      body: JSON.stringify({
-        ...(params.id ? { id: params.id } : {}),
-        user_id: params.user_id,
-        user_recipe_id: params.user_recipe_id,
-        slot_id: params.slot_id,
-        difficulty_rating: params.difficulty_rating,
-        went_well: params.went_well,
-        was_hard: params.was_hard,
-        // Only when set, so ordinary check-ins don't depend on the column existing.
-        ...(params.mastery_session_id ? { mastery_session_id: params.mastery_session_id } : {}),
-      }),
+    const outcome = await this.withTimeout('check-in create', async (signal) => {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: this.headers,
+        body: JSON.stringify({
+          ...(params.id ? { id: params.id } : {}),
+          user_id: params.user_id,
+          user_recipe_id: params.user_recipe_id,
+          slot_id: params.slot_id,
+          difficulty_rating: params.difficulty_rating,
+          went_well: params.went_well,
+          was_hard: params.was_hard,
+          // Only when set, so ordinary check-ins don't depend on the column existing.
+          ...(params.mastery_session_id ? { mastery_session_id: params.mastery_session_id } : {}),
+        }),
+        signal,
+      });
+
+      if (!response.ok) {
+        return { ok: false as const, status: response.status, errorText: await response.text() };
+      }
+      const data = await readJson<CheckInRow | CheckInRow[]>(response, 'Supabase check-in read');
+      return { ok: true as const, data };
     });
 
-    if (response.status === 409) {
-      const errorText = await response.text();
-      if (params.id) {
-        // A replay of the same attempt conflicts on the id (and on the session).
-        const replay = await this.resolveIdempotentConflict(params, !!params.mastery_session_id);
-        if (replay) return replay;
+    if (!outcome.ok) {
+      const { status, errorText } = outcome;
+      if (status === 409) {
+        if (params.id) {
+          // A replay of the same attempt conflicts on the id (and on the session).
+          const replay = await this.resolveIdempotentConflict(params, !!params.mastery_session_id);
+          if (replay) return replay;
+        }
+        if (params.mastery_session_id && /mastery_session_id/.test(errorText)) {
+          throw new CheckInMasterySessionError('MASTERY_SESSION_USED');
+        }
+        throw SupabaseRestError.fromResponse('Failed to create check-in', status, errorText);
       }
-      if (params.mastery_session_id && /mastery_session_id/.test(errorText)) {
-        throw new CheckInMasterySessionError('MASTERY_SESSION_USED');
-      }
-      throw SupabaseRestError.fromResponse('Failed to create check-in', response.status, errorText);
-    }
 
-    if (!response.ok) {
-      const errorText = await response.text();
       if (params.mastery_session_id && /mastery session does not match/.test(errorText)) {
         throw new CheckInMasterySessionError('INVALID_MASTERY_SESSION');
       }
-      throw SupabaseRestError.fromResponse('Failed to create check-in', response.status, errorText);
+      throw SupabaseRestError.fromResponse('Failed to create check-in', status, errorText);
     }
 
-    const data = await readJson<CheckInRow | CheckInRow[]>(response, 'Supabase check-in read');
+    const data = outcome.data;
     const row: CheckInRow = Array.isArray(data) ? data[0] : data;
     return { ...this.toRecord(row), created: true };
   }
@@ -131,17 +165,20 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     const url = new URL(`${this.baseUrl}/check_ins`);
     url.searchParams.set('id', `eq.${id}`);
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: this.headers,
+    const data = await this.withTimeout('check-in read', async (signal) => {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: this.headers,
+        signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw SupabaseRestError.fromResponse('Database error fetching check-in', response.status, errorText);
+      }
+
+      return readJson<CheckInRow[]>(response, 'Supabase check-in read');
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw SupabaseRestError.fromResponse('Database error fetching check-in', response.status, errorText);
-    }
-
-    const data = await readJson<CheckInRow[]>(response, 'Supabase check-in read');
     if (!Array.isArray(data) || data.length === 0) {
       return null;
     }
@@ -167,17 +204,20 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     url.searchParams.set('id', `eq.${id}`);
     url.searchParams.set('user_id', `eq.${userId}`);
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: this.headers,
+    const data = await this.withTimeout('check-in read', async (signal) => {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: this.headers,
+        signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw SupabaseRestError.fromResponse('Database error fetching check-in', response.status, errorText);
+      }
+
+      return readJson<CheckInRow[]>(response, 'Supabase check-in read');
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw SupabaseRestError.fromResponse('Database error fetching check-in', response.status, errorText);
-    }
-
-    const data = await readJson<CheckInRow[]>(response, 'Supabase check-in read');
     if (!Array.isArray(data) || data.length === 0) {
       return null;
     }
@@ -191,17 +231,20 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     url.searchParams.set('order', 'created_at.desc');
     url.searchParams.set('limit', String(limit));
 
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: this.headers,
+    const data = await this.withTimeout('check-in read', async (signal) => {
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: this.headers,
+        signal,
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw SupabaseRestError.fromResponse('Database error fetching check-ins', response.status, errorText);
+      }
+
+      return readJson<CheckInRow[]>(response, 'Supabase check-in read');
     });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw SupabaseRestError.fromResponse('Database error fetching check-ins', response.status, errorText);
-    }
-
-    const data = await readJson<CheckInRow[]>(response, 'Supabase check-in read');
     if (!Array.isArray(data)) {
       return [];
     }
