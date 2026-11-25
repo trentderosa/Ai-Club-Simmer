@@ -2,6 +2,7 @@ import { CheckInIdempotencyConflict } from '../types/check-in.js';
 import {
   DEFAULT_SUPABASE_REST_TIMEOUT_MS,
   SupabaseRestError,
+  parseJsonText,
 } from '../services/supabase-rest.js';
 import type {
   CreateGeneratedCheckInParams,
@@ -49,7 +50,7 @@ export class SupabaseGeneratedCheckInRepository implements GeneratedCheckInRepos
       if (!response.ok) {
         throw SupabaseRestError.fromResponse(`${label} failed`, response.status, text);
       }
-      return (text ? JSON.parse(text) : null) as T;
+      return text ? parseJsonText<T>(text, `${label} failed`, response.status) : (null as T);
     } finally {
       clearTimeout(timer);
     }

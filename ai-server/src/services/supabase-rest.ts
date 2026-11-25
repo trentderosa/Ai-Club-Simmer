@@ -179,3 +179,13 @@ export async function readJson<T>(response: { json(): Promise<unknown>; status: 
     throw error;
   }
 }
+
+/** JSON.parse of a response body that throws a body-free SupabaseRestError instead of a SyntaxError. */
+export function parseJsonText<T>(text: string, prefix: string, status: number): T {
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    if (error instanceof SyntaxError) throw SupabaseRestError.invalidJson(prefix, status);
+    throw error;
+  }
+}

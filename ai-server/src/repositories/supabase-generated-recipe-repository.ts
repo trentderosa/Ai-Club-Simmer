@@ -3,6 +3,7 @@ import { FreeformRecipeSchema } from '../cook-anything/recipe-schema.js';
 import {
   DEFAULT_SUPABASE_REST_TIMEOUT_MS,
   SupabaseRestError,
+  parseJsonText,
 } from '../services/supabase-rest.js';
 import type { DishPhoto } from '../services/dish-photo.js';
 import { isAllowedCommonsFileUrl, isAllowedImageUrl } from '../services/dish-photo.js';
@@ -117,7 +118,7 @@ export class SupabaseGeneratedRecipeRepository implements GeneratedRecipeReposit
       if (!response.ok) {
         throw SupabaseRestError.fromResponse(`${label} failed`, response.status, text);
       }
-      return (text ? JSON.parse(text) : null) as T;
+      return text ? parseJsonText<T>(text, `${label} failed`, response.status) : (null as T);
     } finally {
       clearTimeout(timer);
     }

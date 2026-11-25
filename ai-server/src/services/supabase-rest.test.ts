@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { inspect } from 'node:util';
-import { SupabaseRest, SupabaseRestError, httpFailureMessage, postgrestCode, readJson } from './supabase-rest.js';
+import { SupabaseRest, SupabaseRestError, httpFailureMessage, parseJsonText, postgrestCode, readJson } from './supabase-rest.js';
 
 const config = { url: 'https://db.simmer.invalid', serviceRoleKey: 'test-service-role', timeoutMs: 100 };
 
@@ -114,5 +114,26 @@ describe('readJson', () => {
     await expect(readJson({ status: 200, json: () => Promise.resolve([1]) }, 'x')).resolves.toEqual([1]);
     const boom = new TypeError('body already used');
     await expect(readJson({ status: 200, json: () => Promise.reject(boom) }, 'x')).rejects.toBe(boom);
+  });
+});
+
+describe('parseJsonText', () => {
+  it('turns a SyntaxError into a body-free invalid_response error', () => {
+    let error: unknown;
+    try {
+      parseJsonText('<html>cook@simmer.invalid</html>', 'Supabase generated recipe read failed', 200);
+    } catch (caught) {
+      error = caught;
+    }
+    expect(error).toBeInstanceOf(SupabaseRestError);
+    const restError = error as SupabaseRestError;
+    expect(restError.message).toBe('Supabase generated recipe read failed: invalid JSON response');
+    expect(restError.kind).toBe('invalid_response');
+    expect(restError.status).toBe(200);
+    expect(inspect(restError)).not.toContain('cook@simmer.invalid');
+  });
+
+  it('returns parsed JSON', () => {
+    expect(parseJsonText<number[]>('[1]', 'x', 200)).toEqual([1]);
   });
 });
