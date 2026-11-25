@@ -122,7 +122,9 @@ export function createDishPhotoRouter(
       );
       res.json({ photos });
     } catch (error) {
-      console.error('Dish photo lookup error:', error);
+      console.error('dish_photo_lookup_error', {
+        error: error instanceof Error ? error.name : 'unknown',
+      });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

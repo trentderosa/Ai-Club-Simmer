@@ -119,3 +119,22 @@ describe('POST /api/dish-photos', () => {
     expect(findForDish).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('POST /api/dish-photos unexpected error logging', () => {
+  it('logs only the error name, not the raw error', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      // A malformed allowlist (no .has) throws a TypeError outside the per-dish catch.
+      const { app } = setup({ allowed: {} as unknown as ReadonlySet<string> });
+
+      const res = await request(app).post('/api/dish-photos').set(auth).send({ dishes: ['pho'] });
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Internal server error' });
+      expect(errorSpy).toHaveBeenCalledWith('dish_photo_lookup_error', { error: 'TypeError' });
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('allowed.has');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+});
