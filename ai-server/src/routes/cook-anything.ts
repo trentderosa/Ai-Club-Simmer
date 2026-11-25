@@ -394,7 +394,9 @@ export function createCookAnythingRouter(
         inFlight.delete(flightKey);
       }
     } catch (error) {
-      console.error('Cook-anything generation error:', error);
+      console.error('cook_anything_error', {
+        error: error instanceof Error ? error.name : 'unknown',
+      });
       res.status(500).json({ error: 'Internal server error' });
     }
   });

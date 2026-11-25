@@ -682,3 +682,43 @@ describe('POST /api/check-ins per-IP limiter before auth', () => {
     expect(limited.body).toEqual({ error: 'Too many requests, please try again later' });
   });
 });
+
+describe('Check-in unexpected error logging', () => {
+  it('logs only the error name, not the raw error', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const processSpy = vi
+      .spyOn(CheckInService.prototype, 'processCheckIn')
+      .mockRejectedValue(new TypeError('row for cook@simmer.invalid is malformed'));
+    try {
+      const userId = randomUUID();
+      const recipeId = randomUUID();
+      const repository = new InMemoryCheckInRepository();
+      repository.seedUserRecipe({ id: recipeId, user_id: userId, slot_id: 1 });
+      const app = express();
+      app.use(express.json());
+      app.use(
+        '/api/check-ins',
+        createCheckInRouter(
+          {
+            checkInService: new CheckInService(repository, createMockCoachNoteGenerator()),
+            jwtVerifier: createMockJwtVerifier({ valid: true, userId }),
+          },
+          { rateLimit: { windowMs: 60000, maxRequests: 100 } }
+        )
+      );
+
+      const response = await request(app)
+        .post('/api/check-ins')
+        .set('Authorization', 'Bearer valid-token')
+        .send({ user_recipe_id: recipeId, slot_id: 1, rating: 'ok' });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({ error: 'Internal server error' });
+      expect(errorSpy).toHaveBeenCalledWith('check_in_error', { error: 'TypeError' });
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('cook@simmer.invalid');
+    } finally {
+      processSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  });
+});

@@ -503,3 +503,30 @@ describe('POST /api/recipes/cook-anything', () => {
     expect(res.body.photo).toBeNull();
   });
 });
+
+describe('Cook anything unexpected error logging', () => {
+  it('logs only the error name, not the raw error', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const supabase = mockSupabase();
+      supabase.getUserProfile = vi
+        .fn()
+        .mockRejectedValue(new TypeError('profile for cook@simmer.invalid is malformed'));
+      const { app } = createApp(mockOllama(validRecipe), supabase);
+
+      const res = await request(app)
+        .post('/api/recipes/cook-anything')
+        .set('Authorization', 'Bearer token')
+        .send({ dish: 'pad thai' });
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Internal server error' });
+      expect(errorSpy).toHaveBeenCalledWith('cook_anything_error', { error: 'TypeError' });
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('cook@simmer.invalid');
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+});

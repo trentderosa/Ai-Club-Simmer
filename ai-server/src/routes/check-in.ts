@@ -159,7 +159,9 @@ export function createCheckInRouter(
         return;
       }
 
-      console.error('Check-in error:', error);
+      console.error('check_in_error', {
+        error: error instanceof Error ? error.name : 'unknown',
+      });
       res.status(500).json({ error: 'Internal server error' });
     }
   });
