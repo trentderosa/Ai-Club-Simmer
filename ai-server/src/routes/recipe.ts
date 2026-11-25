@@ -283,7 +283,12 @@ export function createRecipeRouter(
           sendGenerationBusy(res);
           return;
         }
-        console.error('Recipe generation failed:', result.error);
+        // Only safe enum/number fields: the error message can carry model output.
+        console.error('recipe_generate_route_failed', {
+          slot_id: slot.id,
+          type: result.error.type,
+          attempts: result.error.attempts,
+        });
         res.status(500).json({
           error: 'Recipe generation failed. Please try again.',
           type: result.error.type,
@@ -300,7 +305,9 @@ export function createRecipeRouter(
         ...media,
       });
     } catch (error) {
-      console.error('Recipe generation error:', error);
+      console.error('recipe_generate_route_error', {
+        error: error instanceof Error ? error.name : 'unknown',
+      });
       res.status(500).json({
         error: 'Internal server error',
       });
