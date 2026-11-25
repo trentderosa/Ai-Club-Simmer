@@ -3,7 +3,7 @@ import { RecipeSchema } from '../schemas/recipe.js';
 import type { UserRecipeRepository, SavedRecipe } from './user-recipe-repository.js';
 import { z } from 'zod';
 import type { RecipeVideos } from '../services/video-finder.js';
-import { DEFAULT_SUPABASE_REST_TIMEOUT_MS, SupabaseRestError, readJson } from '../services/supabase-rest.js';
+import { DEFAULT_SUPABASE_REST_TIMEOUT_MS, SupabaseRestError, readJson, withSupabaseTimeout } from '../services/supabase-rest.js';
 
 const RecipeVideosSchema = z.record(
   z.string(),
@@ -45,25 +45,6 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
       'Prefer': 'return=representation',
     };
     this.timeoutMs = config.timeoutMs ?? DEFAULT_SUPABASE_REST_TIMEOUT_MS;
-  }
-
-  /** Runs a request under one timer that covers the fetch and reading the body. */
-  private async withTimeout<T>(label: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    try {
-      return await run(controller.signal);
-    } catch (error) {
-      if (error instanceof SupabaseRestError) throw error;
-      if (controller.signal.aborted) {
-        throw new SupabaseRestError(`Supabase ${label} timed out after ${this.timeoutMs}ms`, undefined, {
-          kind: 'timeout',
-        });
-      }
-      throw error;
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   private makeKey(userId: string, slotId: number): string {
@@ -110,7 +91,7 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
     url.searchParams.set('slot_id', `eq.${slotId}`);
     url.searchParams.set('select', '*');
 
-    const rows = await this.withTimeout('recipe query', async (signal) => {
+    const rows = await withSupabaseTimeout('recipe query', this.timeoutMs, async (signal) => {
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: this.headers,
@@ -186,7 +167,7 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
     const url = new URL(`${this.baseUrl}/user_recipes`);
     url.searchParams.set('on_conflict', 'user_id,slot_id');
 
-    const outcome = await this.withTimeout('recipe insert', async (signal) => {
+    const outcome = await withSupabaseTimeout('recipe insert', this.timeoutMs, async (signal) => {
       const response = await fetch(url.toString(), {
         method: 'POST',
         headers: {

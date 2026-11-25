@@ -115,6 +115,7 @@ The first call generates the recipe with Ollama, which can take 10–60 s, so sh
   - `503 { error, code: "AUTH_UNAVAILABLE" }`: sign-in could not be checked (the auth service was unreachable, or verification hit an unexpected error), so the request was not processed. Retry shortly.
   - `503 { code: "GENERATION_BUSY" }` with a `Retry-After` header (seconds): the model queue is full, the wait ran out, or the per-request time budget (`OLLAMA_REQUEST_BUDGET_MS`) ran out. Nothing was generated and the call is not retried server side. Show a short message and a way to try again.
     `Retry-After` is exposed to browsers through CORS (`Access-Control-Expose-Headers: Retry-After`, sent only to allowed origins), so the web build can read it. The JSON `error` text says "The kitchen is busy right now. Try again in about 30 seconds."
+  - `503 { code: "DATABASE_UNAVAILABLE" }`: reading or saving the recipe timed out in the database (5 seconds). Retry shortly.
   - `429`: rate limited.
 
 
@@ -229,6 +230,7 @@ Response `201`:
   - `409 MASTERY_SESSION_USED`: that session already backs another check-in. Start a new one.
   - `400 VALIDATION_ERROR`
   - `409 IDEMPOTENCY_CONFLICT`: the key was already used for a different check-in
+  - `503 { code: "DATABASE_UNAVAILABLE" }`: a database request timed out (5 seconds). The check-in may or may not have been saved; retry with the same `idempotency_key`, which replays safely.
   - `401`
   - `429`
 

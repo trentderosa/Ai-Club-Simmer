@@ -1,6 +1,6 @@
 import { CheckInIdempotencyConflict, CheckInMasterySessionError, type CheckInRecord } from '../types/check-in.js';
 import type { CheckInRepository, CreateCheckInParams, CreatedCheckIn } from './check-in-repository.js';
-import { DEFAULT_SUPABASE_REST_TIMEOUT_MS, SupabaseRestError, readJson } from '../services/supabase-rest.js';
+import { DEFAULT_SUPABASE_REST_TIMEOUT_MS, SupabaseRestError, readJson, withSupabaseTimeout } from '../services/supabase-rest.js';
 
 export interface SupabaseCheckInConfig {
   url: string;
@@ -42,25 +42,6 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     this.timeoutMs = config.timeoutMs ?? DEFAULT_SUPABASE_REST_TIMEOUT_MS;
   }
 
-  /** Runs a request under one timer that covers the fetch and reading the body. */
-  private async withTimeout<T>(label: string, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    try {
-      return await run(controller.signal);
-    } catch (error) {
-      if (error instanceof SupabaseRestError) throw error;
-      if (controller.signal.aborted) {
-        throw new SupabaseRestError(`Supabase ${label} timed out after ${this.timeoutMs}ms`, undefined, {
-          kind: 'timeout',
-        });
-      }
-      throw error;
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-
   async validateUserRecipe(userId: string, userRecipeId: string, slotId: number): Promise<boolean> {
     // N7: Use separate error handling - don't conflate DB errors with "not found"
     const url = new URL(`${this.baseUrl}/user_recipes`);
@@ -69,7 +50,7 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     url.searchParams.set('user_id', `eq.${userId}`);
     url.searchParams.set('slot_id', `eq.${slotId}`);
 
-    const data = await this.withTimeout('check-in read', async (signal) => {
+    const data = await withSupabaseTimeout('check-in read', this.timeoutMs, async (signal) => {
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: this.headers,
@@ -90,7 +71,7 @@ export class SupabaseCheckInRepository implements CheckInRepository {
   async create(params: CreateCheckInParams): Promise<CreatedCheckIn> {
     const url = `${this.baseUrl}/check_ins`;
 
-    const outcome = await this.withTimeout('check-in create', async (signal) => {
+    const outcome = await withSupabaseTimeout('check-in create', this.timeoutMs, async (signal) => {
       const response = await fetch(url, {
         method: 'POST',
         headers: this.headers,
@@ -165,7 +146,7 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     const url = new URL(`${this.baseUrl}/check_ins`);
     url.searchParams.set('id', `eq.${id}`);
 
-    const data = await this.withTimeout('check-in read', async (signal) => {
+    const data = await withSupabaseTimeout('check-in read', this.timeoutMs, async (signal) => {
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: this.headers,
@@ -204,7 +185,7 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     url.searchParams.set('id', `eq.${id}`);
     url.searchParams.set('user_id', `eq.${userId}`);
 
-    const data = await this.withTimeout('check-in read', async (signal) => {
+    const data = await withSupabaseTimeout('check-in read', this.timeoutMs, async (signal) => {
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: this.headers,
@@ -231,7 +212,7 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     url.searchParams.set('order', 'created_at.desc');
     url.searchParams.set('limit', String(limit));
 
-    const data = await this.withTimeout('check-in read', async (signal) => {
+    const data = await withSupabaseTimeout('check-in read', this.timeoutMs, async (signal) => {
       const response = await fetch(url.toString(), {
         method: 'GET',
         headers: this.headers,
