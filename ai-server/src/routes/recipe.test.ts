@@ -375,9 +375,9 @@ describe('POST /api/recipes/generate/:slotId', () => {
         .set('Authorization', 'Bearer valid-token');
 
       expect(response.status).toBe(500);
-      const call = errorSpy.mock.calls.find((c) => c[0] === 'recipe_generate_route_failed');
+      const call = errorSpy.mock.calls.find((c) => c[0] === 'recipe_generation_route_failed');
       expect(call).toBeDefined();
-      expect(Object.keys(call?.[1] as object).sort()).toEqual(['attempts', 'slot_id', 'type']);
+      expect(Object.keys(call?.[1] as object).sort()).toEqual(['attempts', 'retry_skipped', 'slot_id', 'type']);
       expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('sk-test-secret-token');
     } finally {
       errorSpy.mockRestore();
@@ -403,7 +403,7 @@ describe('POST /api/recipes/generate/:slotId', () => {
         .set('Authorization', 'Bearer valid-token');
 
       expect(response.status).toBe(500);
-      expect(errorSpy).toHaveBeenCalledWith('recipe_generate_route_error', { error: 'TypeError' });
+      expect(errorSpy).toHaveBeenCalledWith('recipe_generation_route_error', { error: 'TypeError' });
       expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('cook@simmer.invalid');
     } finally {
       errorSpy.mockRestore();
