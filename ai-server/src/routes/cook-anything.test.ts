@@ -4,6 +4,7 @@ import request from 'supertest';
 import { createCookAnythingRouter } from './cook-anything.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 import type { Recipe } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 import { InMemoryGeneratedRecipeRepository } from '../repositories/in-memory-generated-recipe-repository.js';
@@ -527,6 +528,71 @@ describe('Cook anything unexpected error logging', () => {
     } finally {
       errorSpy.mockRestore();
       warnSpy.mockRestore();
+    }
+  });
+});
+
+describe('Cook anything database timeouts', () => {
+  function timeoutError(): SupabaseRestError {
+    return new SupabaseRestError('Supabase generated recipe select timed out after 5000ms', undefined, { kind: 'timeout' });
+  }
+
+  it('returns 503 DATABASE_UNAVAILABLE when the saved-recipe lookup times out', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const repo = new InMemoryGeneratedRecipeRepository();
+      repo.findByUserAndNormalizedName = vi.fn().mockRejectedValue(timeoutError());
+      const { app } = createApp(mockOllama(validRecipe), mockSupabase(), repo);
+
+      const res = await request(app)
+        .post('/api/recipes/cook-anything')
+        .set('Authorization', 'Bearer token')
+        .send({ dish: 'pad thai' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.code).toBe('DATABASE_UNAVAILABLE');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('returns 503 DATABASE_UNAVAILABLE when saving a new recipe times out', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const repo = new InMemoryGeneratedRecipeRepository();
+      repo.save = vi.fn().mockRejectedValue(timeoutError());
+      const { app } = createApp(mockOllama(validRecipe), mockSupabase(), repo);
+
+      const res = await request(app)
+        .post('/api/recipes/cook-anything')
+        .set('Authorization', 'Bearer token')
+        .send({ dish: 'pad thai' });
+
+      expect(res.status).toBe(503);
+      expect(res.body.code).toBe('DATABASE_UNAVAILABLE');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  it('keeps a non-timeout repository error as 500', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const repo = new InMemoryGeneratedRecipeRepository();
+      repo.findByUserAndNormalizedName = vi
+        .fn()
+        .mockRejectedValue(new SupabaseRestError('select user_generated_recipes failed: 500', 500));
+      const { app } = createApp(mockOllama(validRecipe), mockSupabase(), repo);
+
+      const res = await request(app)
+        .post('/api/recipes/cook-anything')
+        .set('Authorization', 'Bearer token')
+        .send({ dish: 'pad thai' });
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Internal server error' });
+    } finally {
+      errorSpy.mockRestore();
     }
   });
 });

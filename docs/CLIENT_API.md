@@ -174,6 +174,7 @@ const { data } = await supabase
   - `429`: per-user uncached generation rate limit (default 5 per hour). The count is stored in the database and survives an AI server restart. Cache hits are not limited.
   - `503 { code: "GENERATION_RATE_LIMIT_UNAVAILABLE" }`: the generation limit could not be checked, so a new recipe was not started. A saved dish still loads. This is not the auth-service 503.
   - `503 { code: "GENERATION_BUSY" }` with a `Retry-After` header (seconds): the model queue is full, the wait ran out, or the per-request time budget (`OLLAMA_REQUEST_BUDGET_MS`) ran out. Requests that are busy before any model output do not count toward the 5 per hour: a request that arrives when the queue is already full skips the per-user generation limit, and one that finds the queue full right after the limit check, or waited in the queue and timed out on the first try, is refunded (best effort, by migration `20261121200000_cook_anything_generation_refund.sql`, applied after merge; until it is applied those requests still count). Busy after a completed model call (a later try) and other failures still count. Show "The kitchen is busy right now. Try again in about N seconds." (minutes from 60 s up) with **Retry**. Only an integer `Retry-After` is used, clamped to 1-300; an HTTP-date or invalid value is ignored and the message says "in a minute". The app's error kind is `busy`.
+  - `503 { code: "DATABASE_UNAVAILABLE" }`: looking up or saving the recipe timed out in the database (5 seconds). Retry shortly. Distinct from the other 503 codes above.
   - `500`: generation failed after 3 tries. Show a **Retry** button.
 
 To check in, `POST /api/check-ins` with `generated_recipe_id` instead of `user_recipe_id` / `slot_id` (do not send both). The same idempotency rules apply. Repeats of that normalized dish earn 50% XP and share the 100 XP/week repeat cap with path-slot repeats. Free-form awards also apply a daily cap (default 200) that counts today's slot XP and free-form XP together.
@@ -258,7 +259,7 @@ Response `201`:
 }
 ```
 
-The server keeps one open session per user until a check-in uses it. Calling this again (after an app restart, say) returns the same session with its reveals, so the count can't be reset. Errors: `400 SLOT_NOT_FINAL`, `404 RECIPE_NOT_FOUND` (open the recipe first), `403 SLOT_LOCKED`, `401`, `429`.
+The server keeps one open session per user until a check-in uses it. Calling this again (after an app restart, say) returns the same session with its reveals, so the count can't be reset. Errors: `400 SLOT_NOT_FINAL`, `404 RECIPE_NOT_FOUND` (open the recipe first), `403 SLOT_LOCKED`, `401`, `429`, `503 { code: "DATABASE_UNAVAILABLE" }` (a database request timed out after 5 seconds; retry shortly).
 
 To reveal a step:
 
@@ -268,7 +269,7 @@ Authorization: Bearer <access_token>
 { "step_index": 3 }
 ```
 
-Response `200`: `{ "step_index": 3, "step": { ...full step... }, "hidden_step_indices": [...], "revealed_step_indices": [...] }`. The server records the reveal before it sends the text, and repeating a reveal is safe. Errors: `400 STEP_NOT_HIDDEN` (a safety step or out-of-range index), `404 MASTERY_SESSION_NOT_FOUND`, `409 MASTERY_SESSION_USED` (already checked in).
+Response `200`: `{ "step_index": 3, "step": { ...full step... }, "hidden_step_indices": [...], "revealed_step_indices": [...] }`. The server records the reveal before it sends the text, and repeating a reveal is safe. Errors: `400 STEP_NOT_HIDDEN` (a safety step or out-of-range index), `404 MASTERY_SESSION_NOT_FOUND`, `409 MASTERY_SESSION_USED` (already checked in), `503 { code: "DATABASE_UNAVAILABLE" }` (a database request timed out after 5 seconds; retry shortly, repeating a reveal is safe).
 
 Show "Revealed X of Y hidden steps", where Y is `hidden_step_indices.length` and X is the number of steps revealed. Send `mastery_session_id` with the check-in. The server copies the counts from the session; the app never sends them. Finishing and checking in completes the slot (XP and the book entry labeled Mastered are unchanged). The `mastery` badge is awarded only when the session has zero reveals. A check-in without a session earns no badge. Finishing slot 10 last also earns `path_weeknight_basics`.
 
