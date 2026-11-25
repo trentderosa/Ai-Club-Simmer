@@ -101,7 +101,7 @@ export type Recipe = z.infer<typeof RecipeSchema>;
  * always validate with Zod after parsing. The JSON schema just improves
  * the success rate on the first attempt.
  */
-export function getRecipeJsonSchema(): object {
+export function getRecipeJsonSchema(options: { requireCoachNote?: boolean } = {}): object {
   return {
     type: 'object',
     properties: {
@@ -152,9 +152,12 @@ export function getRecipeJsonSchema(): object {
       },
       coachNote: {
         type: 'string',
+        maxLength: MAX_COACH_NOTE_LENGTH,
         description: 'Optional personalized tip based on user feedback',
       },
     },
-    required: ['title', 'ingredients', 'timeEstimateMinutes', 'steps'],
+    required: options.requireCoachNote
+      ? ['title', 'ingredients', 'timeEstimateMinutes', 'steps', 'coachNote']
+      : ['title', 'ingredients', 'timeEstimateMinutes', 'steps'],
   };
 }
