@@ -8,7 +8,8 @@
  * - `status`: an integer HTTP status from our own error classes.
  * - `kind`: SupabaseRestError's fixed category (http, timeout, network,
  *   invalid_response), so an outage and a slow request look different.
- * - `code`: a fixed-vocabulary code (mastery codes, XP award reasons) or a
+ * - `code`: a PostgREST/Postgres code (PGRST202, 23505), a fixed-vocabulary
+ *   code (mastery codes, XP award reasons), or a
  *   Node system code like `ECONNREFUSED` from the cause chain.
  */
 import { CheckInMasterySessionError } from '../types/check-in.js';
@@ -39,7 +40,9 @@ export function safeErrorFields(error: unknown): SafeErrorFields {
   if (error instanceof SupabaseRestError) fields.kind = error.kind;
 
   let code: string | undefined;
-  if (error instanceof MasteryError || error instanceof CheckInMasterySessionError) {
+  if (error instanceof SupabaseRestError && error.pgCode) {
+    code = error.pgCode;
+  } else if (error instanceof MasteryError || error instanceof CheckInMasterySessionError) {
     code = error.code;
   } else if (error instanceof XpAwardError) {
     code = error.reason;

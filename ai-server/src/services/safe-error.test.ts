@@ -16,6 +16,17 @@ describe('safeErrorFields', () => {
     expect(JSON.stringify(fields)).not.toContain('cook@simmer.invalid');
   });
 
+  it('keeps the Postgres code of a Supabase error built from a response', () => {
+    const error = SupabaseRestError.fromResponse(
+      'Supabase insert failed',
+      409,
+      '{"code":"23505","details":"Key (email)=(cook@simmer.invalid) already exists"}'
+    );
+    const fields = safeErrorFields(error);
+    expect(fields).toEqual({ error: 'SupabaseRestError', status: 409, kind: 'http', code: '23505' });
+    expect(JSON.stringify(fields)).not.toContain('cook@simmer.invalid');
+  });
+
   it('omits status when a Supabase error has none (timeout or network)', () => {
     expect(
       safeErrorFields(new SupabaseRestError('Supabase read timed out after 5000ms', undefined, { kind: 'timeout' }))

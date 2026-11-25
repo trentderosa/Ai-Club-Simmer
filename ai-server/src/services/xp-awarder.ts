@@ -9,6 +9,7 @@
  * repeat cap, the per-user advisory lock and UNIQUE(check_in_id), so this
  * module is a thin, injectable transport.
  */
+import { httpFailureMessage, safeErrorDetail } from './supabase-rest.js';
 
 export interface XpAwardResult {
   xp_awarded: number;
@@ -113,7 +114,7 @@ export class SupabaseXpAwarder implements XpAwarder {
       if (controller.signal.aborted) {
         throw new XpAwardError('timeout', `award_slot_xp timed out after ${this.timeoutMs}ms`);
       }
-      const detail = error instanceof Error ? error.message : String(error);
+      const detail = safeErrorDetail(error);
       throw new XpAwardError('network', `award_slot_xp request failed: ${detail}`);
     } finally {
       clearTimeout(timer);
@@ -139,13 +140,13 @@ export class SupabaseXpAwarder implements XpAwarder {
         if (existing) return existing;
         throw new XpAwardError(
           'already_awarded',
-          `award_slot_xp failed: ${response.status} ${errorText}`,
+          httpFailureMessage('award_slot_xp failed', response.status, errorText),
           response.status
         );
       }
       throw new XpAwardError(
         'http',
-        `award_slot_xp failed: ${response.status} ${errorText}`,
+        httpFailureMessage('award_slot_xp failed', response.status, errorText),
         response.status
       );
     }

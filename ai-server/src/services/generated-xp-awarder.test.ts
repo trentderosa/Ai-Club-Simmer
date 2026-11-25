@@ -134,7 +134,8 @@ describe('SupabaseGeneratedXpAwarder', () => {
     });
     await expect(awarder.award(randomUUID())).rejects.toMatchObject({
       reason: 'network',
-      message: 'award_generated_recipe_xp request failed: Unexpected token < in JSON',
+      // The SyntaxError message can quote the body, so it is replaced by a fixed string.
+      message: 'award_generated_recipe_xp request failed: invalid JSON response',
     });
   });
 

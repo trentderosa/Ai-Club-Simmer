@@ -1,5 +1,6 @@
 import { CheckInIdempotencyConflict, CheckInMasterySessionError, type CheckInRecord } from '../types/check-in.js';
 import type { CheckInRepository, CreateCheckInParams, CreatedCheckIn } from './check-in-repository.js';
+import { SupabaseRestError, readJson } from '../services/supabase-rest.js';
 
 export interface SupabaseCheckInConfig {
   url: string;
@@ -53,10 +54,10 @@ export class SupabaseCheckInRepository implements CheckInRepository {
     if (!response.ok) {
       // DB error - throw rather than returning false
       const errorText = await response.text();
-      throw new Error(`Database error validating recipe: ${response.status} ${errorText}`);
+      throw SupabaseRestError.fromResponse('Database error validating recipe', response.status, errorText);
     }
 
-    const data = await response.json();
+    const data = await readJson<unknown>(response, 'Supabase check-in read');
     return Array.isArray(data) && data.length > 0;
   }
 
@@ -89,7 +90,7 @@ export class SupabaseCheckInRepository implements CheckInRepository {
       if (params.mastery_session_id && /mastery_session_id/.test(errorText)) {
         throw new CheckInMasterySessionError('MASTERY_SESSION_USED');
       }
-      throw new Error(`Failed to create check-in: ${response.status} ${errorText}`);
+      throw SupabaseRestError.fromResponse('Failed to create check-in', response.status, errorText);
     }
 
     if (!response.ok) {
@@ -97,10 +98,10 @@ export class SupabaseCheckInRepository implements CheckInRepository {
       if (params.mastery_session_id && /mastery session does not match/.test(errorText)) {
         throw new CheckInMasterySessionError('INVALID_MASTERY_SESSION');
       }
-      throw new Error(`Failed to create check-in: ${response.status} ${errorText}`);
+      throw SupabaseRestError.fromResponse('Failed to create check-in', response.status, errorText);
     }
 
-    const data = (await response.json()) as CheckInRow | CheckInRow[];
+    const data = await readJson<CheckInRow | CheckInRow[]>(response, 'Supabase check-in read');
     const row: CheckInRow = Array.isArray(data) ? data[0] : data;
     return { ...this.toRecord(row), created: true };
   }
@@ -137,10 +138,10 @@ export class SupabaseCheckInRepository implements CheckInRepository {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Database error fetching check-in: ${response.status} ${errorText}`);
+      throw SupabaseRestError.fromResponse('Database error fetching check-in', response.status, errorText);
     }
 
-    const data = (await response.json()) as CheckInRow[];
+    const data = await readJson<CheckInRow[]>(response, 'Supabase check-in read');
     if (!Array.isArray(data) || data.length === 0) {
       return null;
     }
@@ -173,10 +174,10 @@ export class SupabaseCheckInRepository implements CheckInRepository {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Database error fetching check-in: ${response.status} ${errorText}`);
+      throw SupabaseRestError.fromResponse('Database error fetching check-in', response.status, errorText);
     }
 
-    const data = (await response.json()) as CheckInRow[];
+    const data = await readJson<CheckInRow[]>(response, 'Supabase check-in read');
     if (!Array.isArray(data) || data.length === 0) {
       return null;
     }
@@ -197,10 +198,10 @@ export class SupabaseCheckInRepository implements CheckInRepository {
 
     if (!response.ok) {
       const errorText = await response.text();
-      throw new Error(`Database error fetching check-ins: ${response.status} ${errorText}`);
+      throw SupabaseRestError.fromResponse('Database error fetching check-ins', response.status, errorText);
     }
 
-    const data = (await response.json()) as CheckInRow[];
+    const data = await readJson<CheckInRow[]>(response, 'Supabase check-in read');
     if (!Array.isArray(data)) {
       return [];
     }
