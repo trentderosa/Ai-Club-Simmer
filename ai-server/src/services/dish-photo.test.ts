@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { OutboundLimiter } from './outbound-limiter.js';
 import {
   DISH_PHOTO_ERROR_COOLDOWN_MS,
   DISH_PHOTO_NEGATIVE_CACHE_TTL_MS,
@@ -11,6 +12,7 @@ import {
   commonsDisplayUrl,
   commonsFileUrlFromTitle,
   dishPhotoQueries,
+  DISH_PHOTO_GOOD_MATCH_SCORE,
   dishTitleScore,
   isAllowedCommonsFileUrl,
   isAllowedCommonsLicense,
@@ -407,5 +409,74 @@ describe('WikimediaCommonsClient timeout', () => {
     });
     const client = new WikimediaCommonsClient({ fetchFn: fetchFn as unknown as typeof fetch });
     await expect(client.search('chicken parm')).resolves.toEqual(better);
+  });
+});
+
+describe('Commons outbound cap', () => {
+  it('returns null without fetching, does not cache, and cools down when capped', async () => {
+    const fetchFn = vi.fn();
+    const limiter = new OutboundLimiter(1, 60_000, () => 0);
+    expect(limiter.tryAcquire()).toBe(true); // use up the only slot
+    const client = new WikimediaCommonsClient({ fetchFn: fetchFn as unknown as typeof fetch, limiter });
+    const cache = new InMemoryDishPhotoCache();
+    const warn = vi.fn();
+    const now = new Date('2026-02-01T00:00:00.000Z');
+    const finder = new DishPhotoFinder(cache, client, { warn }, () => now);
+
+    await expect(finder.findForDish('pad thai')).resolves.toEqual({ photo: null, complete: false });
+    expect(fetchFn).not.toHaveBeenCalled();
+    expect(cache.entries.size).toBe(0);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith('dish_photo_commons_rate_limited', { dish: 'pad thai' });
+
+    // Per-dish cooldown applies: a repeat does not reach the client again.
+    await expect(finder.findForDish('pad thai')).resolves.toEqual({ photo: null, complete: false });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('counts each variant query as one outbound request', async () => {
+    const fetchFn = vi.fn().mockResolvedValue({ ok: true, json: () => Promise.resolve({}) });
+    const limiter = new OutboundLimiter(2, 60_000, () => 0);
+    const client = new WikimediaCommonsClient({ fetchFn: fetchFn as unknown as typeof fetch, limiter });
+    // A one-word dish with no alias expands to 3 queries; the 3rd hits the cap.
+    expect(dishPhotoQueries('jollof')).toHaveLength(3);
+    await expect(client.search('jollof')).rejects.toMatchObject({ name: 'CommonsRateLimitedError' });
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops a weak partial match when a later variant hits the cap, so nothing is cached', async () => {
+    const weakPage = {
+      title: 'File:Jollof.jpg',
+      index: 1,
+      imageinfo: [
+        {
+          url: 'https://upload.wikimedia.org/jollof.jpg',
+          descriptionurl: 'https://commons.wikimedia.org/wiki/File:Jollof.jpg',
+          mime: 'image/jpeg',
+          extmetadata: {
+            Artist: { value: 'Test Uploader' },
+            LicenseShortName: { value: 'CC BY 4.0' },
+            LicenseUrl: { value: 'https://creativecommons.org/licenses/by/4.0/' },
+          },
+        },
+      ],
+    };
+    // Found, but below the "good match" bar, so the client would try the next variant.
+    expect(dishTitleScore(weakPage.title, 'jollof')).toBeGreaterThan(0);
+    expect(dishTitleScore(weakPage.title, 'jollof')).toBeLessThan(DISH_PHOTO_GOOD_MATCH_SCORE);
+    const fetchFn = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ query: { pages: { '1': weakPage } } }),
+    });
+    const limiter = new OutboundLimiter(1, 60_000, () => 0);
+    const client = new WikimediaCommonsClient({ fetchFn: fetchFn as unknown as typeof fetch, limiter });
+    const cache = new InMemoryDishPhotoCache();
+    const warn = vi.fn();
+    const finder = new DishPhotoFinder(cache, client, { warn }, () => new Date('2026-02-01T00:00:00.000Z'));
+
+    await expect(finder.findForDish('jollof')).resolves.toEqual({ photo: null, complete: false });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(cache.entries.size).toBe(0);
+    expect(warn).toHaveBeenCalledWith('dish_photo_commons_rate_limited', { dish: 'jollof' });
   });
 });

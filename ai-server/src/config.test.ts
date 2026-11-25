@@ -186,8 +186,17 @@ describe('loadCookAnythingConfig', () => {
 });
 
 describe('loadDishPhotoConfig', () => {
+  it('reads a bounded server-wide Commons cap and rejects bad values', () => {
+    expect(loadDishPhotoConfig({ DISH_PHOTO_COMMONS_MAX_PER_MINUTE: '120' }).commonsMaxPerMinute).toBe(120);
+    for (const bad of ['0', '-1', '10001', 'abc', '1.5']) {
+      expect(() => loadDishPhotoConfig({ DISH_PHOTO_COMMONS_MAX_PER_MINUTE: bad })).toThrow(
+        'DISH_PHOTO_COMMONS_MAX_PER_MINUTE must be a whole number from 1 to 10000'
+      );
+    }
+  });
+
   it('uses the default timeout when unset', () => {
-    expect(loadDishPhotoConfig({})).toEqual({ timeoutMs: 2500 });
+    expect(loadDishPhotoConfig({})).toEqual({ timeoutMs: 2500, commonsMaxPerMinute: 60 });
   });
 
   it('reads a bounded timeout and rejects bad values at startup', () => {

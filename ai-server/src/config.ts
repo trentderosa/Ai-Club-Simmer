@@ -55,6 +55,8 @@ export interface Config {
   dishPhoto: {
     /** Timeout for one Wikimedia Commons lookup, in ms. */
     timeoutMs: number;
+    /** Process-wide cap on outbound Commons requests per minute. */
+    commonsMaxPerMinute: number;
   };
   /** Generate the next path recipe in the background after a check-in (RECIPE_PREWARM). */
   recipePrewarm: boolean;
@@ -117,6 +119,8 @@ export const XP_AWARD_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as co
 export const YOUTUBE_TIMEOUT_MS = { default: 5000, min: 100, max: 60000 } as const;
 export const VIDEO_LOOKUP_BUDGET_MS = { default: 8000, min: 100, max: 60000 } as const;
 export const DISH_PHOTO_LOOKUP_TIMEOUT_MS = { default: 2500, min: 500, max: 10000 } as const;
+/** Server-wide outbound Commons requests per minute. No "off" value: min is 1. */
+export const DISH_PHOTO_COMMONS_MAX_PER_MINUTE = { default: 60, min: 1, max: 10000 } as const;
 
 /**
  * Default CORS allowlist when ALLOWED_ORIGINS is unset or empty.
@@ -301,6 +305,13 @@ export function loadDishPhotoConfig(env: Env = process.env): Config['dishPhoto']
       DISH_PHOTO_LOOKUP_TIMEOUT_MS.default,
       DISH_PHOTO_LOOKUP_TIMEOUT_MS.min,
       DISH_PHOTO_LOOKUP_TIMEOUT_MS.max
+    ),
+    commonsMaxPerMinute: parseBoundedIntEnv(
+      env,
+      'DISH_PHOTO_COMMONS_MAX_PER_MINUTE',
+      DISH_PHOTO_COMMONS_MAX_PER_MINUTE.default,
+      DISH_PHOTO_COMMONS_MAX_PER_MINUTE.min,
+      DISH_PHOTO_COMMONS_MAX_PER_MINUTE.max
     ),
   };
 }
