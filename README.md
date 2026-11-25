@@ -173,6 +173,7 @@ Error responses from the AI server are JSON, never HTML or a stack trace, except
 | `YOUTUBE_TIMEOUT_MS` | Timeout for each YouTube search in ms (default `5000`, range `100`–`60000`). |
 | `VIDEO_LOOKUP_BUDGET_MS` | Time budget in ms for all of one recipe's YouTube searches together (default `8000`, range `100`–`60000`). Past it, the recipe is returned with the videos found so far and the rest are retried on the next visit. |
 | `DISH_PHOTO_LOOKUP_TIMEOUT_MS` | Timeout in ms for one Wikimedia Commons dish-photo lookup (default `2500`, range `500`–`10000`). Used for path recipes, Cook anything, and `POST /api/dish-photos` (which is rate-limited per IP before auth, 60 per minute by default, and per user after auth). A timeout or failure returns `photo: null` and never fails the recipe. No API key. |
+| `DISH_PHOTO_COMMONS_MAX_PER_MINUTE` | Optional. Server-wide cap on outbound Wikimedia Commons requests across all users (default `60`, range `1`–`10000`; no off value). Each Commons API call counts, so one dish lookup can use several. At the cap a lookup returns `photo: null`, is not cached, and retries after the short cooldown. |
 | `EXPO_PUBLIC_SUPABASE_URL` | App: Supabase project URL. In `app/.env.local`; bundled into the app, so public values only. |
 | `EXPO_PUBLIC_SUPABASE_ANON_KEY` | App: Supabase anon (public) key. Never the service-role key. |
 | `EXPO_PUBLIC_AI_SERVER_URL` | App: AI server base URL. Prefer an HTTPS tunnel (ngrok or Cloudflare) for phones; a LAN `http://` URL with `HOST=0.0.0.0` is for local dev. |

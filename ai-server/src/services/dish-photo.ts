@@ -545,7 +545,9 @@ export class WikimediaCommonsClient implements DishPhotoSearchClient {
         try {
           pages = await this.fetchPages(query, controller.signal);
         } catch (error) {
-          if (picked.best) return picked.best.photo;
+          // At the outbound cap, drop any weak partial match: a capped lookup
+          // returns no photo and is not cached, so it retries after the cooldown.
+          if (picked.best && !(error instanceof CommonsRateLimitedError)) return picked.best.photo;
           throw error;
         }
         for (const page of pages) {

@@ -12,6 +12,7 @@ import {
   commonsDisplayUrl,
   commonsFileUrlFromTitle,
   dishPhotoQueries,
+  DISH_PHOTO_GOOD_MATCH_SCORE,
   dishTitleScore,
   isAllowedCommonsFileUrl,
   isAllowedCommonsLicense,
@@ -441,5 +442,41 @@ describe('Commons outbound cap', () => {
     expect(dishPhotoQueries('jollof')).toHaveLength(3);
     await expect(client.search('jollof')).rejects.toMatchObject({ name: 'CommonsRateLimitedError' });
     expect(fetchFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('drops a weak partial match when a later variant hits the cap, so nothing is cached', async () => {
+    const weakPage = {
+      title: 'File:Jollof.jpg',
+      index: 1,
+      imageinfo: [
+        {
+          url: 'https://upload.wikimedia.org/jollof.jpg',
+          descriptionurl: 'https://commons.wikimedia.org/wiki/File:Jollof.jpg',
+          mime: 'image/jpeg',
+          extmetadata: {
+            Artist: { value: 'Test Uploader' },
+            LicenseShortName: { value: 'CC BY 4.0' },
+            LicenseUrl: { value: 'https://creativecommons.org/licenses/by/4.0/' },
+          },
+        },
+      ],
+    };
+    // Found, but below the "good match" bar, so the client would try the next variant.
+    expect(dishTitleScore(weakPage.title, 'jollof')).toBeGreaterThan(0);
+    expect(dishTitleScore(weakPage.title, 'jollof')).toBeLessThan(DISH_PHOTO_GOOD_MATCH_SCORE);
+    const fetchFn = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ query: { pages: { '1': weakPage } } }),
+    });
+    const limiter = new OutboundLimiter(1, 60_000, () => 0);
+    const client = new WikimediaCommonsClient({ fetchFn: fetchFn as unknown as typeof fetch, limiter });
+    const cache = new InMemoryDishPhotoCache();
+    const warn = vi.fn();
+    const finder = new DishPhotoFinder(cache, client, { warn }, () => new Date('2026-02-01T00:00:00.000Z'));
+
+    await expect(finder.findForDish('jollof')).resolves.toEqual({ photo: null, complete: false });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(cache.entries.size).toBe(0);
+    expect(warn).toHaveBeenCalledWith('dish_photo_commons_rate_limited', { dish: 'jollof' });
   });
 });
