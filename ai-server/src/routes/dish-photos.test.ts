@@ -154,6 +154,7 @@ describe('POST /api/dish-photos allowlist failure logging', () => {
       expect(warnSpy).toHaveBeenCalledWith('dish_photo_allowlist_failed', {
         error: 'SupabaseRestError',
         status: 500,
+        kind: 'http',
       });
       expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('cook@simmer.invalid');
     } finally {

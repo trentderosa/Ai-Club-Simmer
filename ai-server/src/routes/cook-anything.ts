@@ -198,9 +198,7 @@ export function createCookAnythingRouter(
         console.info('cook_anything_generation_refunded');
       }
     } catch (error) {
-      console.error('cook_anything_refund_failed', {
-        error: error instanceof Error ? error.name : 'UnknownError',
-      });
+      console.error('cook_anything_refund_failed', safeErrorFields(error));
     }
   }
 

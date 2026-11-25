@@ -13,13 +13,23 @@ export interface SupabaseRestConfig {
 
 export const DEFAULT_SUPABASE_REST_TIMEOUT_MS = 5000;
 
+/**
+ * Fixed failure category, safe to log (the message may hold a response body).
+ * Defaults to 'http' when a status is given, else 'invalid_response'.
+ */
+export type SupabaseRestErrorKind = 'http' | 'timeout' | 'network' | 'invalid_response';
+
 export class SupabaseRestError extends Error {
+  readonly kind: SupabaseRestErrorKind;
+
   constructor(
     message: string,
-    readonly status?: number
+    readonly status?: number,
+    options: { kind?: SupabaseRestErrorKind; cause?: unknown } = {}
   ) {
-    super(message);
+    super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'SupabaseRestError';
+    this.kind = options.kind ?? (status === undefined ? 'invalid_response' : 'http');
   }
 }
 
@@ -93,10 +103,14 @@ export class SupabaseRest {
     } catch (error) {
       if (error instanceof SupabaseRestError) throw error;
       if (controller.signal.aborted) {
-        throw new SupabaseRestError(`Supabase ${label} timed out after ${this.timeoutMs}ms`);
+        throw new SupabaseRestError(`Supabase ${label} timed out after ${this.timeoutMs}ms`, undefined, {
+          kind: 'timeout',
+        });
       }
       const detail = error instanceof Error ? error.message : String(error);
-      throw new SupabaseRestError(`Supabase ${label} request failed: ${detail}`);
+      // JSON.parse of a 200 body is inside the try; that is a bad response, not a network failure.
+      const kind = error instanceof SyntaxError ? 'invalid_response' : 'network';
+      throw new SupabaseRestError(`Supabase ${label} request failed: ${detail}`, undefined, { kind, cause: error });
     } finally {
       clearTimeout(timer);
     }

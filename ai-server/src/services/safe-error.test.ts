@@ -12,13 +12,17 @@ describe('safeErrorFields', () => {
       409
     );
     const fields = safeErrorFields(error);
-    expect(fields).toEqual({ error: 'SupabaseRestError', status: 409 });
+    expect(fields).toEqual({ error: 'SupabaseRestError', status: 409, kind: 'http' });
     expect(JSON.stringify(fields)).not.toContain('cook@simmer.invalid');
   });
 
   it('omits status when a Supabase error has none (timeout or network)', () => {
-    expect(safeErrorFields(new SupabaseRestError('Supabase read timed out after 5000ms'))).toEqual({
+    expect(
+      safeErrorFields(new SupabaseRestError('Supabase read timed out after 5000ms', undefined, { kind: 'timeout' }))
+    ).toEqual({ error: 'SupabaseRestError', kind: 'timeout' });
+    expect(safeErrorFields(new SupabaseRestError('rpc returned a non-boolean'))).toEqual({
       error: 'SupabaseRestError',
+      kind: 'invalid_response',
     });
   });
 
@@ -45,6 +49,24 @@ describe('safeErrorFields', () => {
     const fields = safeErrorFields(error);
     expect(fields).toEqual({ error: 'TypeError', code: 'ECONNREFUSED' });
     expect(JSON.stringify(fields)).not.toContain('10.0.0.5');
+  });
+
+  it('keeps the network cause code of a wrapped Supabase failure', () => {
+    const fetchError = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:443'), { code: 'ECONNREFUSED' }),
+    });
+    const error = new SupabaseRestError('Supabase read request failed: fetch failed', undefined, {
+      kind: 'network',
+      cause: fetchError,
+    });
+    expect(safeErrorFields(error)).toEqual({ error: 'SupabaseRestError', kind: 'network', code: 'ECONNREFUSED' });
+  });
+
+  it('skips an unsafe outer code and finds a safe one deeper in the chain', () => {
+    const error = Object.assign(new Error('outer', { cause: Object.assign(new Error('inner'), { code: 'ETIMEDOUT' }) }), {
+      code: 'not safe',
+    });
+    expect(safeErrorFields(error)).toEqual({ error: 'Error', code: 'ETIMEDOUT' });
   });
 
   it('drops a code that is not an upper-case identifier', () => {
