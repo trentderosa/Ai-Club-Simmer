@@ -18,6 +18,7 @@ import {
   UserProfileSchema,
   DietaryNeedsSchema,
 } from '../schemas/user.js';
+import { safeErrorFields } from '../services/safe-error.js';
 
 const SLOT_ID_REGEX = /^\d+$/;
 
@@ -116,7 +117,7 @@ export function createRecipeRouter(
           return lookup.photo;
         } catch (error) {
           console.warn('recipe_photo_failed', {
-            error: error instanceof Error ? error.message : String(error),
+            ...safeErrorFields(error),
           });
           return null;
         }
@@ -131,7 +132,7 @@ export function createRecipeRouter(
           });
         } catch (error) {
           console.warn('recipe_dish_videos_failed', {
-            error: error instanceof Error ? error.message : String(error),
+            ...safeErrorFields(error),
           });
           return [];
         }
@@ -307,7 +308,7 @@ export function createRecipeRouter(
       });
     } catch (error) {
       console.error('recipe_generation_route_error', {
-        error: error instanceof Error ? error.name : 'unknown',
+        ...safeErrorFields(error),
       });
       res.status(500).json({
         error: 'Internal server error',

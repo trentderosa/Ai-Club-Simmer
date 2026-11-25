@@ -18,6 +18,7 @@ import {
 } from '../cook-anything/rate-limit.js';
 import { generateCookAnythingRecipe } from '../cook-anything/generator.js';
 import { sanitizeRecipeVideos, youtubeWatchUrl } from '../cook-anything/youtube-url.js';
+import { safeErrorFields } from '../services/safe-error.js';
 
 export interface CookAnythingRouterDeps {
   /** The shared gate in production. A plain client (tests) has no isSaturated. */
@@ -80,7 +81,7 @@ export function createCookAnythingRouter(
       lookup = await deps.videoFinder.findForRecipe(recipe);
     } catch (error) {
       console.warn('cook_anything_videos_failed', {
-        error: error instanceof Error ? error.message : String(error),
+        ...safeErrorFields(error),
       });
       return {};
     }
@@ -90,7 +91,7 @@ export function createCookAnythingRouter(
       await deps.generatedRecipes.saveVideos(userId, recipeId, videos);
     } catch (error) {
       console.warn('cook_anything_videos_save_failed', {
-        error: error instanceof Error ? error.message : String(error),
+        ...safeErrorFields(error),
       });
     }
     return videos;
@@ -109,7 +110,7 @@ export function createCookAnythingRouter(
       lookup = await deps.photoFinder.findForDish(normalizedDishName);
     } catch (error) {
       console.warn('cook_anything_photo_failed', {
-        error: error instanceof Error ? error.message : String(error),
+        ...safeErrorFields(error),
       });
       return null;
     }
@@ -118,7 +119,7 @@ export function createCookAnythingRouter(
       await deps.generatedRecipes.savePhoto(userId, recipeId, lookup.photo);
     } catch (error) {
       console.warn('cook_anything_photo_save_failed', {
-        error: error instanceof Error ? error.message : String(error),
+        ...safeErrorFields(error),
       });
     }
     return lookup.photo;
@@ -134,7 +135,7 @@ export function createCookAnythingRouter(
       });
     } catch (error) {
       console.warn('cook_anything_dish_videos_failed', {
-        error: error instanceof Error ? error.message : String(error),
+        ...safeErrorFields(error),
       });
       return [];
     }
@@ -333,7 +334,7 @@ export function createCookAnythingRouter(
           allowed = await generationLimiter.allow(userId);
         } catch (error) {
           console.error('cook_anything_rate_limit_failed', {
-            error: error instanceof Error ? error.message : String(error),
+            ...safeErrorFields(error),
           });
           return { limit: 'unavailable' };
         }
@@ -395,7 +396,7 @@ export function createCookAnythingRouter(
       }
     } catch (error) {
       console.error('cook_anything_error', {
-        error: error instanceof Error ? error.name : 'unknown',
+        ...safeErrorFields(error),
       });
       res.status(500).json({ error: 'Internal server error' });
     }
