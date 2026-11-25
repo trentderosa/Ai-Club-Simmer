@@ -353,6 +353,62 @@ describe('POST /api/recipes/generate/:slotId', () => {
       else process.env.OLLAMA_BASE_URL = previousBaseUrl;
     }
   });
+
+  it('logs only slot id, type and attempt count when generation fails', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const ollamaClient: OllamaClient = {
+        generate: vi.fn().mockResolvedValue('not json sk-test-secret-token'),
+      };
+      const app = createApp({
+        ollamaClient,
+        supabase: createMockSupabase({
+          tokenValid: true,
+          pathSlot: mockSlot,
+          userProfile: mockUserProfile,
+        }),
+      });
+
+      const response = await request(app)
+        .post('/api/recipes/generate/1')
+        .set('Authorization', 'Bearer valid-token');
+
+      expect(response.status).toBe(500);
+      const call = errorSpy.mock.calls.find((c) => c[0] === 'recipe_generation_route_failed');
+      expect(call).toBeDefined();
+      expect(Object.keys(call?.[1] as object).sort()).toEqual(['attempts', 'retry_skipped', 'slot_id', 'type']);
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('sk-test-secret-token');
+    } finally {
+      errorSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('logs only the error name when the generate route throws unexpectedly', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const supabase = createMockSupabase({
+        tokenValid: true,
+        pathSlot: mockSlot,
+        userProfile: mockUserProfile,
+      });
+      supabase.getUserProfile = vi
+        .fn()
+        .mockRejectedValue(new TypeError('profile row for cook@simmer.invalid is malformed'));
+      const app = createApp({ ollamaClient: createMockOllamaClient(), supabase });
+
+      const response = await request(app)
+        .post('/api/recipes/generate/1')
+        .set('Authorization', 'Bearer valid-token');
+
+      expect(response.status).toBe(500);
+      expect(errorSpy).toHaveBeenCalledWith('recipe_generation_route_error', { error: 'TypeError' });
+      expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('cook@simmer.invalid');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 describe('POST /api/recipes/generate-preview', () => {
