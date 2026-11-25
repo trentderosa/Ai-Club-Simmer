@@ -164,6 +164,12 @@ function sanitizeUserText(text: string, maxLength = 500): string {
 export const FOOD_SAFETY_RULE =
   'FOOD SAFETY: NEVER tell the user to rinse or wash raw chicken, poultry, or meat (it spreads bacteria). Pat it dry with paper towels instead.';
 
+/** Shared by the path and Cook anything prompts. */
+export const RECIPE_CONSISTENCY_RULES = `INGREDIENTS AND STEPS MUST MATCH: Every food a step uses (including oil, butter, and seasonings) must be in the ingredients list, and every listed ingredient must be used in a step. Do not add foods the dish does not need.
+POULTRY DONENESS: If the recipe cooks chicken, turkey, or other poultry, the step that finishes cooking it must say to check that the thickest part reaches 165°F (74°C).
+AMOUNTS: Write each amount in plain words and numbers, such as "2", "1 cup", "1/2 tsp", or "to taste".
+ORDER: Write the steps in the order the cook does them.`;
+
 const RATING_WORDS: Record<'easy' | 'ok' | 'hard', string> = {
   easy: 'easy',
   ok: 'okay / mostly fine',
@@ -260,7 +266,8 @@ CRITICAL CONSTRAINTS:
 4. Flag any step involving heat, knives, boiling water, raw meat, or hot oil as a safety step (isSafetyStep: true).
 5. Include "whyItMatters" explanations for key technique steps to help them learn.
 6. Include "techniqueName" for steps that could benefit from a video demonstration. Write it as a short plain-English phrase such as "pan toast" or "dice onion", with no label or prefix.
-${FOOD_SAFETY_RULE}${dietaryConstraint}${masteryConstraint}
+${FOOD_SAFETY_RULE}
+${RECIPE_CONSISTENCY_RULES}${dietaryConstraint}${masteryConstraint}
 ${coachContext}
 
 Generate a complete recipe with:
@@ -295,6 +302,7 @@ const NON_PROTEIN_RINSE_RE =
 const POULTRY_DONENESS_RE = /\b(?:chickens?|poultry|turkeys?|ducks?|birds?|thighs?|hens?)\b/i;
 const TEMPERATURE_RE =
   /[°˚º]\s*[fc]\b|\b\d{2,3}\s*[fc]\b|\bdegrees?\b|\b(?:fahrenheit|celsius)\b/i;
+const THERMOMETER_RE = /\bthermometers?\b|\binternal temperature\b/i;
 const JUICES_CLEAR_RE = /\bjuices?\b/i;
 const CLEAR_WORD_RE = /\bclear\b/i;
 const PINK_DONENESS_RE =
@@ -515,12 +523,21 @@ function isPoultryDonenessWithoutTemperature(instruction: string): boolean {
 }
 
 /**
+ * A temperature check step: a thermometer or "internal temperature". Only adds
+ * a flag, so slot 10 never hides it. A bare "thigh should reach 165°F" with no
+ * thermometer is deliberately not flagged (existing test).
+ */
+function isTemperatureCheckStep(instruction: string): boolean {
+  return THERMOMETER_RE.test(instruction);
+}
+
+/**
  * Post-processes a validated recipe to ensure all safety steps are flagged.
  *
  * Even though we ask the LLM to flag safety steps, small models sometimes miss them.
  * This function scans each step's instruction and sets isSafetyStep=true when it
  * finds a safety keyword, a rinse or wash of raw chicken, poultry, meat, or bird,
- * or a poultry doneness step with no temperature. Existing true flags are preserved.
+ * a poultry doneness step with no temperature, or a thermometer check. Existing true flags are preserved.
  * Instruction text is not rewritten.
  *
  * A safe sentence ("pat dry", "do not rinse") is marked too, so slot 10 cannot
@@ -536,7 +553,8 @@ function ensureSafetyFlags(recipe: Recipe): Recipe {
       const dangerous =
         SAFETY_KEYWORD_PATTERNS.some((pattern) => pattern.test(step.instruction)) ||
         hasAffirmativeProteinRinse(step.instruction) ||
-        isPoultryDonenessWithoutTemperature(step.instruction);
+        isPoultryDonenessWithoutTemperature(step.instruction) ||
+        isTemperatureCheckStep(step.instruction);
       const protective = hasProtectiveProteinHandling(step.instruction);
 
       return {
