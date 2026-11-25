@@ -115,7 +115,7 @@ export class SupabaseGeneratedRecipeRepository implements GeneratedRecipeReposit
       const response = await fetch(url, { ...init, headers: { ...this.headers, ...(init.headers as Record<string, string> | undefined) }, signal: controller.signal });
       const text = await response.text();
       if (!response.ok) {
-        throw new SupabaseRestError(`${label} failed: ${response.status} ${text}`, response.status);
+        throw SupabaseRestError.fromResponse(`${label} failed`, response.status, text);
       }
       return (text ? JSON.parse(text) : null) as T;
     } finally {

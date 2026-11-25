@@ -193,7 +193,8 @@ export function createCoachNoteGenerator(
           if (error instanceof z.ZodError) {
             console.warn(`Coach note validation failed (attempt ${attempt + 1}):`, error.issues);
           } else if (error instanceof SyntaxError) {
-            console.warn(`Coach note JSON parse failed (attempt ${attempt + 1}):`, error.message);
+            // The parse message quotes model output, so log only that it failed.
+            console.warn(`Coach note JSON parse failed (attempt ${attempt + 1}):`, error.name);
           } else if (error instanceof Error && error.name === 'AbortError') {
             console.warn(`Coach note request timed out (attempt ${attempt + 1})`);
           } else {

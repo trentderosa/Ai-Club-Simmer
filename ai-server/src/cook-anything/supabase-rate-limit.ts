@@ -77,5 +77,5 @@ export class SupabaseGenerationRateLimiter implements CookAnythingGenerationLimi
 }
 
 function isMissingFunction(error: SupabaseRestError): boolean {
-  return error.status === 404 || error.message.includes('PGRST202');
+  return error.status === 404 || error.pgCode === 'PGRST202';
 }

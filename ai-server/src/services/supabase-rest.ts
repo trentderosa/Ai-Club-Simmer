@@ -2,8 +2,10 @@
  * Minimal PostgREST client for the ai-server's service-role reads and RPCs.
  *
  * - Every request aborts after `timeoutMs` (request and body read).
- * - Error messages include the status and PostgREST body, never the headers,
- *   so the service-role key cannot leak into logs.
+ * - Error messages include the status and, when safe, the PostgREST error
+ *   code. Never the headers (so the service-role key cannot leak) and never
+ *   the response body (it can echo row values such as user emails). The body
+ *   stays on the error's non-enumerable `body` field for code that parses it.
  */
 export interface SupabaseRestConfig {
   url: string;
@@ -14,22 +16,56 @@ export interface SupabaseRestConfig {
 export const DEFAULT_SUPABASE_REST_TIMEOUT_MS = 5000;
 
 /**
- * Fixed failure category, safe to log (the message may hold a response body).
+ * Fixed failure category, safe to log.
  * Defaults to 'http' when a status is given, else 'invalid_response'.
  */
 export type SupabaseRestErrorKind = 'http' | 'timeout' | 'network' | 'invalid_response';
 
+/** PostgREST (PGRST202) and Postgres SQLSTATE (23505, P0001) codes. */
+const PG_CODE = /^[A-Z0-9]{5,8}$/;
+
+/** The `code` field of a PostgREST error body, when it is a plain code. */
+export function postgrestCode(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    const code = typeof parsed === 'object' && parsed !== null ? (parsed as { code?: unknown }).code : undefined;
+    return typeof code === 'string' && PG_CODE.test(code) ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** `<prefix>: <status>` plus ` (<code>)` when the body has a safe code. Never the body. */
+export function httpFailureMessage(prefix: string, status: number, body: string): string {
+  const code = postgrestCode(body);
+  return `${prefix}: ${status}${code ? ` (${code})` : ''}`;
+}
+
 export class SupabaseRestError extends Error {
   readonly kind: SupabaseRestErrorKind;
+  /** PostgREST/Postgres error code from the body, when safe (see postgrestCode). */
+  readonly pgCode?: string;
+  /** Raw response body, for code that parses it. Non-enumerable so it is not logged. */
+  declare readonly body?: string;
 
   constructor(
     message: string,
     readonly status?: number,
-    options: { kind?: SupabaseRestErrorKind; cause?: unknown } = {}
+    options: { kind?: SupabaseRestErrorKind; cause?: unknown; body?: string } = {}
   ) {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'SupabaseRestError';
     this.kind = options.kind ?? (status === undefined ? 'invalid_response' : 'http');
+    if (options.body !== undefined) {
+      Object.defineProperty(this, 'body', { value: options.body, enumerable: false });
+      const code = postgrestCode(options.body);
+      if (code) this.pgCode = code;
+    }
+  }
+
+  /** Error for a non-2xx response: message has status and safe code, body kept aside. */
+  static fromResponse(prefix: string, status: number, body: string): SupabaseRestError {
+    return new SupabaseRestError(httpFailureMessage(prefix, status, body), status, { body });
   }
 }
 
@@ -96,7 +132,7 @@ export class SupabaseRest {
       });
       if (!response.ok) {
         const text = await response.text();
-        throw new SupabaseRestError(`Supabase ${label} failed: ${response.status} ${text}`, response.status);
+        throw SupabaseRestError.fromResponse(`Supabase ${label} failed`, response.status, text);
       }
       const text = await response.text();
       return (text ? JSON.parse(text) : null) as T;

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { SupabaseRest, SupabaseRestError } from './supabase-rest.js';
+import { inspect } from 'node:util';
+import { SupabaseRest, SupabaseRestError, httpFailureMessage, postgrestCode } from './supabase-rest.js';
 
 const config = { url: 'https://db.simmer.invalid', serviceRoleKey: 'test-service-role', timeoutMs: 100 };
 
@@ -59,5 +60,35 @@ describe('SupabaseRestError kind', () => {
     );
     const error = await failure(new SupabaseRest(config).rpc('fn', {}));
     expect(error.kind).toBe('invalid_response');
+  });
+});
+
+describe('SupabaseRestError body handling', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const body = '{"code":"23505","message":"duplicate key","details":"Key (email)=(cook@simmer.invalid) already exists"}';
+
+  it('keeps the status and Postgres code in the message but never the body', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 409, text: () => Promise.resolve(body) }));
+    const error = await failure(new SupabaseRest(config).rpc('fn', {}));
+    expect(error.message).toBe('Supabase rpc fn failed: 409 (23505)');
+    expect(error.pgCode).toBe('23505');
+    expect(error.body).toBe(body);
+  });
+
+  it('does not print the body when the error object itself is logged', () => {
+    const error = SupabaseRestError.fromResponse('Supabase rpc fn failed', 409, body);
+    expect(Object.keys(error)).not.toContain('body');
+    expect(JSON.stringify(error)).not.toContain('cook@simmer.invalid');
+    expect(inspect(error)).not.toContain('cook@simmer.invalid');
+  });
+
+  it('ignores a body code that is not a plain PostgREST/Postgres code', () => {
+    expect(postgrestCode('{"code":"see cook@simmer.invalid"}')).toBeUndefined();
+    expect(postgrestCode('not json')).toBeUndefined();
+    expect(postgrestCode('{"code":"PGRST202"}')).toBe('PGRST202');
+    expect(httpFailureMessage('x failed', 500, 'oops')).toBe('x failed: 500');
   });
 });

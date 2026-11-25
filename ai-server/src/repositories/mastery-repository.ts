@@ -66,7 +66,7 @@ const RevealRowSchema = z.object({
 /** Map a PostgREST error whose message is one of our RAISE codes. */
 function toMasteryError(error: unknown): unknown {
   if (!(error instanceof SupabaseRestError) || error.status === undefined || error.status >= 500) return error;
-  const code = MASTERY_ERROR_CODES.find((c) => error.message.includes(`"message":"${c}"`));
+  const code = MASTERY_ERROR_CODES.find((c) => (error.body ?? '').includes(`"message":"${c}"`));
   return code ? new MasteryError(code) : error;
 }
 

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SupabaseReconcileSource } from './supabase-reconcile-source.js';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 
 const mockFetch = vi.fn();
 const KEY = 'test-service-role-key';
@@ -98,7 +99,11 @@ describe('SupabaseReconcileSource', () => {
   it('throws on a non-OK response without leaking the key', async () => {
     mockFetch.mockResolvedValue({ ok: false, status: 500, text: () => Promise.resolve('oops') });
     const err = await source.findCheckInsMissingXp(WINDOW).catch((e: Error) => e);
-    expect((err as Error).message).toBe('Database error listing check-ins missing XP: 500 oops');
+    // The body can echo row values, so it stays out of the message but is kept on .body.
+    expect((err as Error).message).toBe('Database error listing check-ins missing XP: 500');
+    expect((err as Error).message).not.toContain('oops');
+    expect((err as SupabaseRestError).body).toBe('oops');
+    expect((err as SupabaseRestError).status).toBe(500);
     expect((err as Error).message).not.toContain(KEY);
   });
 

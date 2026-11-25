@@ -10,6 +10,7 @@ import {
   type XpAwardResult,
   type SupabaseXpAwarderConfig,
 } from './xp-awarder.js';
+import { httpFailureMessage } from './supabase-rest.js';
 
 interface AwardRow {
   out_xp_awarded: number;
@@ -82,13 +83,13 @@ export class SupabaseGeneratedXpAwarder implements XpAwarder {
         if (existing) return existing;
         throw new XpAwardError(
           'already_awarded',
-          `award_generated_recipe_xp failed: ${response.status} ${errorText}`,
+          httpFailureMessage('award_generated_recipe_xp failed', response.status, errorText),
           response.status
         );
       }
       throw new XpAwardError(
         'http',
-        `award_generated_recipe_xp failed: ${response.status} ${errorText}`,
+        httpFailureMessage('award_generated_recipe_xp failed', response.status, errorText),
         response.status
       );
     }

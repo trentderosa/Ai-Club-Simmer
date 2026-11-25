@@ -4,6 +4,7 @@ import type { UserRecipeRepository, SavedRecipe } from './user-recipe-repository
 import { z } from 'zod';
 import type { RecipeVideos } from '../services/video-finder.js';
 import { DEFAULT_SUPABASE_REST_TIMEOUT_MS } from '../services/supabase-rest.js';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 
 const RecipeVideosSchema = z.record(
   z.string(),
@@ -98,7 +99,7 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Supabase query failed: ${response.status} ${error}`);
+      throw SupabaseRestError.fromResponse('Supabase query failed', response.status, error);
     }
 
     const rows = (await response.json()) as SupabaseUserRecipeRow[];
@@ -126,7 +127,7 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
 
       if (!response.ok) {
         const error = await response.text();
-        throw new Error(`Supabase video update failed: ${response.status} ${error}`);
+        throw SupabaseRestError.fromResponse('Supabase video update failed', response.status, error);
       }
     } catch (error) {
       if (controller.signal.aborted) {
@@ -187,7 +188,7 @@ export class SupabaseUserRecipeRepository implements UserRecipeRepository {
 
     if (!response.ok) {
       const error = await response.text();
-      throw new Error(`Supabase insert failed: ${response.status} ${error}`);
+      throw SupabaseRestError.fromResponse('Supabase insert failed', response.status, error);
     }
 
     const rows = (await response.json()) as SupabaseUserRecipeRow[];

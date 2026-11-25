@@ -4,6 +4,7 @@ import {
   type ReconcileCandidateSource,
   type ReconcileWindow,
 } from './reconcile-xp-core.js';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 
 export interface SupabaseReconcileSourceConfig {
   url: string;
@@ -122,7 +123,7 @@ export class SupabaseReconcileSource implements ReconcileCandidateSource {
         if (response.status === 404 || errorText.includes('PGRST202')) {
           throw new Error('xp_award_attempts migration not applied (20261118120000)');
         }
-        throw new Error(`Database error ${what}: ${response.status} ${errorText}`);
+        throw SupabaseRestError.fromResponse(`Database error ${what}`, response.status, errorText);
       }
       // Void functions answer with an empty body (204).
       const text = await response.text();

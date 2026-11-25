@@ -47,7 +47,7 @@ export class SupabaseGeneratedCheckInRepository implements GeneratedCheckInRepos
       });
       const text = await response.text();
       if (!response.ok) {
-        throw new SupabaseRestError(`${label} failed: ${response.status} ${text}`, response.status);
+        throw SupabaseRestError.fromResponse(`${label} failed`, response.status, text);
       }
       return (text ? JSON.parse(text) : null) as T;
     } finally {
