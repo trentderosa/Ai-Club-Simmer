@@ -53,27 +53,30 @@ function setup(client: OllamaClient): {
 describe('path recipe service logging', () => {
   it('sends video warnings through the injected logger, not the console', async () => {
     const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    const logger = { warn: vi.fn() };
-    const supabase = { saveVideos: vi.fn() } as unknown as SupabaseService;
-    const videoFinder = {
-      findForRecipe: vi.fn().mockRejectedValue(new Error('quota exceeded')),
-    } as unknown as VideoFinder;
-    const service = createPathRecipeService({
-      ollamaClient: pendingClient().client,
-      supabase,
-      videoFinder,
-      logger,
-    });
+    try {
+      const logger = { warn: vi.fn() };
+      const supabase = { saveVideos: vi.fn() } as unknown as SupabaseService;
+      const videoFinder = {
+        findForRecipe: vi.fn().mockRejectedValue(new Error('quota exceeded')),
+      } as unknown as VideoFinder;
+      const service = createPathRecipeService({
+        ollamaClient: pendingClient().client,
+        supabase,
+        videoFinder,
+        logger,
+      });
 
-    const videos = await service.attachVideos(USER, 22, {} as Recipe);
+      const videos = await service.attachVideos(USER, 22, {} as Recipe);
 
-    expect(videos).toEqual({});
-    expect(logger.warn).toHaveBeenCalledWith('recipe_videos_failed', {
-      slot_id: 22,
-      error: 'quota exceeded',
-    });
-    expect(consoleWarn).not.toHaveBeenCalled();
-    consoleWarn.mockRestore();
+      expect(videos).toEqual({});
+      expect(logger.warn).toHaveBeenCalledWith('recipe_videos_failed', {
+        slot_id: 22,
+        error: 'quota exceeded',
+      });
+      expect(consoleWarn).not.toHaveBeenCalled();
+    } finally {
+      consoleWarn.mockRestore();
+    }
   });
 });
 
