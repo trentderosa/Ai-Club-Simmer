@@ -50,6 +50,7 @@ import {
   SupabaseYouTubeQuotaGate,
   type YouTubeQuotaGate,
 } from './services/youtube-quota.js';
+import { OutboundLimiter } from './services/outbound-limiter.js';
 import { createDishPhotoRouter } from './routes/dish-photos.js';
 import { SupabaseKnownDishNames } from './services/known-dish-names.js';
 import { InMemoryGeneratedRecipeRepository } from './repositories/in-memory-generated-recipe-repository.js';
@@ -193,7 +194,10 @@ function createPhotoFinder(): DishPhotoFinder {
       : new InMemoryDishPhotoCache();
   return new DishPhotoFinder(
     cache,
-    new WikimediaCommonsClient({ timeoutMs: config.dishPhoto.timeoutMs }),
+    new WikimediaCommonsClient({
+      timeoutMs: config.dishPhoto.timeoutMs,
+      limiter: new OutboundLimiter(config.dishPhoto.commonsMaxPerMinute),
+    }),
     console
   );
 }

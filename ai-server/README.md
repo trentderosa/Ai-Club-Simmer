@@ -117,6 +117,7 @@ Set these in the server's environment (never in the repo, chat, or logs):
 | `YOUTUBE_API_KEY` | Optional. Enables technique videos (F4). Server-side only |
 | `YOUTUBE_TIMEOUT_MS` | Optional. Timeout for each YouTube search (default `5000` ms, range `100`–`60000`) |
 | `DISH_PHOTO_LOOKUP_TIMEOUT_MS` | Optional. Timeout for one Wikimedia Commons dish-photo lookup (default `2500` ms, range `500`–`10000`). A timeout or failure returns `photo: null`. No API key. |
+| `DISH_PHOTO_COMMONS_MAX_PER_MINUTE` | Optional. Server-wide cap on outbound Wikimedia Commons requests across all users (default `60`, range `1`–`10000`; there is no off value). Each Commons API call counts, so one dish lookup can use several. At the cap a lookup returns `photo: null`, is not cached (it retries after the short cooldown), and logs `dish_photo_commons_rate_limited`. |
 | `VIDEO_LOOKUP_BUDGET_MS` | Optional. Time budget for all of one recipe's searches together (default `8000` ms, range `100`–`60000`). An invalid value stops startup |
 
 With `NODE_ENV=production`, the server exits at startup and names any missing variable. `TRUST_PROXY=true` trusts `X-Forwarded-For` only from a loopback peer, for both the tunnel (`HOST=127.0.0.1`) and same-Wi-Fi (`HOST=0.0.0.0`). See [Phone-reachable demo](#phone-reachable-demo).

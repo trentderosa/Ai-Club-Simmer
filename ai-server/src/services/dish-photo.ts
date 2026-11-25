@@ -14,11 +14,15 @@
  *   3. Cache a found photo, and cache a genuine "no photo" miss with a TTL so
  *      repeated misses don't hammer Commons. Timeouts and other transient
  *      errors are not cached (an in-memory cooldown avoids a burst).
+ *      Every outbound Commons request also counts against a process-wide cap
+ *      (DISH_PHOTO_COMMONS_MAX_PER_MINUTE). At the cap the lookup behaves like
+ *      a failure: no request, photo: null, not cached, short cooldown.
  *   4. A failure, timeout, or miss returns photo: null. Recipe generation
  *      always succeeds.
  */
 import { z } from 'zod';
 import { rememberUntil } from './cooldown-map.js';
+import type { OutboundLimiter } from './outbound-limiter.js';
 import { SupabaseRest, type SupabaseRestConfig } from './supabase-rest.js';
 
 export const WIKIMEDIA_USER_AGENT =
@@ -84,6 +88,14 @@ export interface DishPhotoFinderLogger {
 
 export interface DishPhotoFinderOptions {
   timeoutMs?: number;
+}
+
+/** Thrown by the Commons client when the process-wide outbound cap is hit. */
+export class CommonsRateLimitedError extends Error {
+  constructor() {
+    super('Wikimedia Commons outbound rate limit reached');
+    this.name = 'CommonsRateLimitedError';
+  }
 }
 
 function errorMessage(error: unknown): string {
@@ -360,7 +372,11 @@ export class DishPhotoFinder {
     try {
       photo = await this.search.search(key);
     } catch (error) {
-      this.logger.warn('dish_photo_search_failed', { dish: key, error: errorMessage(error) });
+      if (error instanceof CommonsRateLimitedError) {
+        this.logger.warn('dish_photo_commons_rate_limited', { dish: key });
+      } else {
+        this.logger.warn('dish_photo_search_failed', { dish: key, error: errorMessage(error) });
+      }
       rememberUntil(this.retryAfter, key, nowMs + DISH_PHOTO_ERROR_COOLDOWN_MS, nowMs);
       return { photo: null, complete: false };
     }
@@ -384,6 +400,8 @@ export interface WikimediaCommonsClientConfig {
   baseUrl?: string;
   userAgent?: string;
   fetchFn?: typeof fetch;
+  /** Process-wide cap on outbound requests; each fetch counts once. */
+  limiter?: OutboundLimiter;
 }
 
 const ExtValueSchema = z.looseObject({ value: z.union([z.string(), z.number()]).optional() });
@@ -490,8 +508,10 @@ export class WikimediaCommonsClient implements DishPhotoSearchClient {
   private readonly baseUrl: string;
   private readonly userAgent: string;
   private readonly fetchFn: typeof fetch;
+  private readonly limiter: OutboundLimiter | undefined;
 
   constructor(config: WikimediaCommonsClientConfig = {}) {
+    this.limiter = config.limiter;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_DISH_PHOTO_TIMEOUT_MS;
     this.baseUrl = config.baseUrl ?? 'https://commons.wikimedia.org/w/api.php';
     this.userAgent = config.userAgent ?? WIKIMEDIA_USER_AGENT;
@@ -548,6 +568,7 @@ export class WikimediaCommonsClient implements DishPhotoSearchClient {
   }
 
   private async fetchPages(query: string, signal: AbortSignal): Promise<CommonsPage[]> {
+    if (this.limiter && !this.limiter.tryAcquire()) throw new CommonsRateLimitedError();
     const response = await this.fetchFn(this.buildUrl(query), {
       method: 'GET',
       headers: {
