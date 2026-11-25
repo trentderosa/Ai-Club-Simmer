@@ -4,6 +4,7 @@ import request from 'supertest';
 import { createDishPhotoRouter } from './dish-photos.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
 import type { SupabaseService } from '../services/supabase.js';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 
 const PHOTO: DishPhoto = {
   url: 'https://upload.wikimedia.org/wikipedia/commons/a/a8/Example.jpg',
@@ -135,6 +136,29 @@ describe('POST /api/dish-photos unexpected error logging', () => {
       expect(JSON.stringify(errorSpy.mock.calls)).not.toContain('allowed.has');
     } finally {
       errorSpy.mockRestore();
+    }
+  });
+});
+
+describe('POST /api/dish-photos allowlist failure logging', () => {
+  it('logs the Supabase status but not the response body', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const { app } = setup({
+        allowed: new SupabaseRestError('Supabase read failed: 500 {"hint":"cook@simmer.invalid"}', 500),
+      });
+
+      const res = await request(app).post('/api/dish-photos').set(auth).send({ dishes: ['pho'] });
+
+      expect(res.status).toBe(200);
+      expect(warnSpy).toHaveBeenCalledWith('dish_photo_allowlist_failed', {
+        error: 'SupabaseRestError',
+        status: 500,
+        kind: 'http',
+      });
+      expect(JSON.stringify(warnSpy.mock.calls)).not.toContain('cook@simmer.invalid');
+    } finally {
+      warnSpy.mockRestore();
     }
   });
 });

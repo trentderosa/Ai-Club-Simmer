@@ -5,6 +5,7 @@ import { createAuthMiddleware } from '../middleware/authenticate.js';
 import { createPreAuthIpLimiter } from '../middleware/pre-auth-ip-limiter.js';
 import type { JwtVerifier } from '../services/jwt-verifier.js';
 import { MasteryError, type MasteryErrorCode, type MasteryRepository } from '../repositories/mastery-repository.js';
+import { safeErrorFields } from '../services/safe-error.js';
 
 export interface MasteryRouterDeps {
   jwtVerifier: JwtVerifier;
@@ -84,7 +85,7 @@ export function createMasteryRouter(deps: MasteryRouterDeps, options: MasteryRou
       res.status(status).json({ error: message, code: error.code });
       return;
     }
-    console.error(label, { error: error instanceof Error ? error.message : String(error) });
+    console.error(label, safeErrorFields(error));
     res.status(500).json({ error: 'Internal server error' });
   }
 

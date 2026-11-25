@@ -6,6 +6,7 @@ import type { CheckInService } from '../services/check-in-service.js';
 import type { JwtVerifier } from '../services/jwt-verifier.js';
 import { createAuthMiddleware } from '../middleware/authenticate.js';
 import { createPreAuthIpLimiter } from '../middleware/pre-auth-ip-limiter.js';
+import { safeErrorFields } from '../services/safe-error.js';
 
 export interface CheckInRouterDeps {
   checkInService: CheckInService;
@@ -160,7 +161,7 @@ export function createCheckInRouter(
       }
 
       console.error('check_in_error', {
-        error: error instanceof Error ? error.name : 'unknown',
+        ...safeErrorFields(error),
       });
       res.status(500).json({ error: 'Internal server error' });
     }

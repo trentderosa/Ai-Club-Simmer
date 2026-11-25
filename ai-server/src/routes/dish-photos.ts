@@ -5,6 +5,7 @@ import { normalizeDishName } from '../cook-anything/dish-name.js';
 import { createAuthMiddleware } from '../middleware/authenticate.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
 import type { SupabaseService } from '../services/supabase.js';
+import { safeErrorFields } from '../services/safe-error.js';
 
 const BodySchema = z.object({
   dishes: z.array(z.string().max(200)).max(12),
@@ -93,7 +94,7 @@ export function createDishPhotoRouter(
           allowed = await deps.listKnownDishNames(req.userId);
         } catch (error) {
           console.warn('dish_photo_allowlist_failed', {
-            error: error instanceof Error ? error.message : String(error),
+            ...safeErrorFields(error),
           });
           const photos: Record<string, DishPhoto | null> = {};
           for (const key of requested) photos[key] = null;
@@ -114,7 +115,7 @@ export function createDishPhotoRouter(
             photos[key] = lookup.photo;
           } catch (error) {
             console.warn('dish_photo_batch_failed', {
-              error: error instanceof Error ? error.message : String(error),
+              ...safeErrorFields(error),
             });
             photos[key] = null;
           }
@@ -123,7 +124,7 @@ export function createDishPhotoRouter(
       res.json({ photos });
     } catch (error) {
       console.error('dish_photo_lookup_error', {
-        error: error instanceof Error ? error.name : 'unknown',
+        ...safeErrorFields(error),
       });
       res.status(500).json({ error: 'Internal server error' });
     }
