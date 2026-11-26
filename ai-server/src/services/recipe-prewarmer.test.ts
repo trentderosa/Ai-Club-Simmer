@@ -116,6 +116,8 @@ describe('RecipePrewarmer', () => {
     };
     const supabase = {
       saveRecipe: vi.fn().mockImplementation((_u: string, _s: number, r: Recipe) => Promise.resolve(r)),
+      getPathSlot: vi.fn().mockResolvedValue(next),
+      getUserProfile: vi.fn().mockResolvedValue(profile),
     } as unknown as SupabaseService;
     const pathRecipes = createPathRecipeService({ ollamaClient, supabase });
     const { deps } = makeDeps();

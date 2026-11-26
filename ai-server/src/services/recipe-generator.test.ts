@@ -350,6 +350,20 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('RESPECT dietary needs');
   });
 
+  it('puts free-text dietary needs inside a user_data block, not the instructions', () => {
+    const prompt = buildPrompt(mockSlot, {
+      ...mockUserProfile,
+      dietaryNeeds: ['peanut allergy'],
+    });
+    const start = prompt.indexOf('<user_data>');
+    const end = prompt.indexOf('</user_data>');
+    expect(start).toBeGreaterThan(-1);
+    const inside = prompt.slice(start, end);
+    expect(inside).toContain('peanut allergy');
+    expect(prompt.slice(0, start)).not.toContain('peanut allergy');
+    expect(prompt.slice(end)).not.toContain('peanut allergy');
+  });
+
   it('does not include dietary section when not provided', () => {
     const prompt = buildPrompt(mockSlot, mockUserProfile);
 

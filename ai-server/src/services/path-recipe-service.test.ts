@@ -212,3 +212,101 @@ describe('personalized dishes and in-flight generation', () => {
     expect(prompts.some((p) => p.includes('Tamago Kake Gohan'))).toBe(true);
   });
 });
+
+describe('stale generation after the inputs change', () => {
+  const recipeJson = JSON.stringify({
+    title: 'Eggs',
+    ingredients: [{ name: 'eggs', amount: '2' }],
+    timeEstimateMinutes: 10,
+    steps: [{ instruction: 'Whisk the eggs well', isSafetyStep: false }],
+  });
+
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  function build(freshSlot: () => PathSlot | null, freshProfile: () => UserProfile | null) {
+    const prompts: string[] = [];
+    const client: OllamaClient = {
+      generate: (prompt) => {
+        prompts.push(prompt);
+        return Promise.resolve(recipeJson);
+      },
+    };
+    const saveRecipe = vi.fn().mockImplementation((_u: string, _s: number, r: Recipe) => Promise.resolve(r));
+    const supabase = {
+      saveRecipe,
+      getPathSlot: vi.fn().mockImplementation(() => Promise.resolve(freshSlot())),
+      getUserProfile: vi.fn().mockImplementation(() => Promise.resolve(freshProfile())),
+    } as unknown as SupabaseService;
+    const logger = { warn: vi.fn() };
+    const service = createPathRecipeService({ ollamaClient: client, supabase, logger });
+    return { service, prompts, saveRecipe };
+  }
+
+  it('does not save a recipe made before a new dietary need; regenerates with it', async () => {
+    let stored: string[] = [];
+    const t = build(
+      () => next,
+      () => ({ ...profile, dietaryNeeds: stored })
+    );
+    // The need arrives while the first generation is running.
+    const first = t.service.generate(USER, next, profile);
+    stored = ['nut_free'];
+    const result = await first;
+    expect(result.success).toBe(true);
+    expect(t.prompts).toHaveLength(2);
+    expect(t.prompts[0]).not.toContain('nut_free');
+    expect(t.prompts[1]).toContain('nut_free');
+    expect(t.saveRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not save a recipe for a swapped dish; regenerates for the new dish', async () => {
+    let dish = 'Scrambled Eggs';
+    const t = build(
+      () => ({ ...next, dishName: dish }),
+      () => profile
+    );
+    const first = t.service.generate(USER, next, profile);
+    dish = 'Shakshuka';
+    const result = await first;
+    expect(result.success).toBe(true);
+    expect(t.prompts).toHaveLength(2);
+    expect(t.prompts[1]).toContain('Shakshuka');
+    expect(t.saveRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a retryable stale error when the inputs change again, saving nothing', async () => {
+    let n = 0;
+    const t = build(
+      () => ({ ...next, dishName: `Dish ${++n}` }),
+      () => profile
+    );
+    const result = await t.service.generate(USER, next, profile);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.type).toBe('stale');
+    expect(t.saveRecipe).not.toHaveBeenCalled();
+  });
+
+  it('a joiner gets the fresh recipe, never the stale one', async () => {
+    let stored: string[] = [];
+    const t = build(
+      () => next,
+      () => ({ ...profile, dietaryNeeds: stored })
+    );
+    const first = t.service.generate(USER, next, profile);
+    const joiner = t.service.generate(USER, next, profile);
+    stored = ['nut_free'];
+    await Promise.all([first, joiner]);
+    expect(t.prompts).toHaveLength(2);
+    expect(t.saveRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('saves nothing when the re-read fails', async () => {
+    const t = build(
+      () => next,
+      () => {
+        throw new Error('db down');
+      }
+    );
+    await expect(t.service.generate(USER, next, profile)).rejects.toThrow('db down');
+    expect(t.saveRecipe).not.toHaveBeenCalled();
+  });
+});

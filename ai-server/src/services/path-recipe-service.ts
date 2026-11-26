@@ -91,6 +91,8 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
     return null;
   }
 
+  const normalizeNeed = (need: string): string => need.trim().toLowerCase();
+
   async function generateAndSave(
     userId: string,
     slot: PathSlot,
@@ -98,13 +100,50 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
     generationOptions: PathGenerationOptions,
     budget: OllamaBudget | undefined = deps.generationBudget
   ): Promise<PathGenerationResult | PathGenerationError> {
-    const result = await generateRecipe(deps.ollamaClient, slot, userProfile, {
-      budget,
-      ...generationOptions,
-    });
+    // The LLM call takes tens of seconds. Right before saving, re-read the dish
+    // and the stored dietary needs; if either changed (a new allergy, or the
+    // dish was swapped), the recipe is stale and is NOT saved. Regenerate once
+    // with the fresh inputs; if they change again, return a retryable error.
+    // Joiners share this whole promise, so none of them gets a stale recipe.
+    let currentSlot = slot;
+    let currentProfile = userProfile;
+    let result: Awaited<ReturnType<typeof generateRecipe>> | null = null;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      result = await generateRecipe(deps.ollamaClient, currentSlot, currentProfile, {
+        budget,
+        ...generationOptions,
+      });
+      if (!result.success) return result;
 
-    if (!result.success) {
-      return result;
+      // A failed re-read throws, like a failed save: nothing is stored.
+      const freshSlot = await deps.supabase.getPathSlot(slot.id, userId);
+      const freshProfile = await deps.supabase.getUserProfile(userId);
+      const used = new Set((currentProfile.dietaryNeeds ?? []).map(normalizeNeed));
+      const addedNeeds = (freshProfile?.dietaryNeeds ?? []).filter((n) => !used.has(normalizeNeed(n)));
+      const stale = !freshSlot || !freshProfile || freshSlot.dishName !== currentSlot.dishName || addedNeeds.length > 0;
+      if (!stale) break;
+
+      logger.warn('recipe_generation_stale', { slot_id: slot.id });
+      result = null;
+      if (attempt === 1 || !freshSlot || !freshProfile) {
+        return {
+          success: false,
+          error: {
+            type: 'stale',
+            message: 'Your dish or dietary needs changed while the recipe was generating. Please try again.',
+            attempts: 1,
+          },
+        };
+      }
+      currentSlot = freshSlot;
+      // Keep the used needs (body extras too) and add the fresh stored ones.
+      currentProfile = {
+        ...freshProfile,
+        dietaryNeeds: [...(currentProfile.dietaryNeeds ?? []), ...addedNeeds],
+      };
+    }
+    if (!result || !result.success) {
+      return { success: false, error: { type: 'stale', message: 'Please try again.', attempts: 1 } };
     }
 
     const savedRecipe = await deps.supabase.saveRecipe(userId, slot.id, result.recipe);
