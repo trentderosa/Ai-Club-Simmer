@@ -352,6 +352,20 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('RESPECT dietary needs');
   });
 
+  it('puts free-text dietary needs inside a user_data block, not the instructions', () => {
+    const prompt = buildPrompt(mockSlot, {
+      ...mockUserProfile,
+      dietaryNeeds: ['peanut allergy'],
+    });
+    const start = prompt.indexOf('<user_data>');
+    const end = prompt.indexOf('</user_data>');
+    expect(start).toBeGreaterThan(-1);
+    const inside = prompt.slice(start, end);
+    expect(inside).toContain('peanut allergy');
+    expect(prompt.slice(0, start)).not.toContain('peanut allergy');
+    expect(prompt.slice(end)).not.toContain('peanut allergy');
+  });
+
   it('does not include dietary section when not provided', () => {
     const prompt = buildPrompt(mockSlot, mockUserProfile);
 
@@ -1417,6 +1431,49 @@ describe('generateRecipe - unsafe coachNote is dropped', () => {
     const client = createMockOllamaClient([withNote(note)]);
     const result = await generateRecipe(client, mockSlot, mockUserProfile);
     expect(result.success && result.recipe.coachNote).toBe(note);
+  });
+});
+
+describe('generateRecipe - empty coachNote is dropped', () => {
+  const withNote = (coachNote: string): string => JSON.stringify({ ...validRecipeResponse, coachNote });
+  const userWithCheckIns: UserProfile = {
+    ...mockUserProfile,
+    recentCheckIns: [{ recipeName: 'Toast', difficulty: 'hard' }],
+  };
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '   \n\t '],
+  ])('drops an %s coachNote and keeps the recipe without another attempt', async (_label, note) => {
+    const client = createMockOllamaClient([withNote(note)]);
+    const result = await generateRecipe(client, mockSlot, userWithCheckIns);
+    expect(client.generate).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect('coachNote' in result.recipe).toBe(false);
+      expect(result.recipe.title).toBe(validRecipeResponse.title);
+    }
+  });
+
+  it('trims a normal coachNote and keeps it', async () => {
+    const client = createMockOllamaClient([withNote('  Last time the heat ran high, so start on medium.\n')]);
+    const result = await generateRecipe(client, mockSlot, userWithCheckIns);
+    expect(result.success && result.recipe.coachNote).toBe('Last time the heat ran high, so start on medium.');
+  });
+
+  it('cleanRecipe drops an empty or whitespace coachNote and trims a real one', () => {
+    expect('coachNote' in cleanRecipe({ ...validRecipeResponse, coachNote: '' })).toBe(false);
+    expect('coachNote' in cleanRecipe({ ...validRecipeResponse, coachNote: '   ' })).toBe(false);
+    expect(cleanRecipe({ ...validRecipeResponse, coachNote: ' Nice. ' }).coachNote).toBe('Nice.');
+    expect('coachNote' in cleanRecipe(validRecipeResponse)).toBe(false);
+  });
+
+  it('cleanRecipe still drops an empty coachNote when it keeps the uncleaned recipe', () => {
+    const rejectAll = { safeParse: () => ({ success: false }) } as unknown as Parameters<typeof cleanRecipe>[1];
+    const kept = cleanRecipe({ ...validRecipeResponse, title: 'Simmer: Eggs', coachNote: '  ' }, rejectAll);
+    expect(kept.title).toBe('Simmer: Eggs');
+    expect('coachNote' in kept).toBe(false);
+    expect(cleanRecipe({ ...validRecipeResponse, coachNote: ' Hi. ' }, rejectAll).coachNote).toBe('Hi.');
   });
 });
 

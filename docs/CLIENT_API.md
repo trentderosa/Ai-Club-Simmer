@@ -13,7 +13,7 @@ The app never holds the service-role key or the YouTube key, and it never calls 
 | --- | --- |
 | Sign up / log in / log out (F1) | `supabase.auth.signUp / signInWithPassword / signOut` |
 | Password reset (F1) | `supabase.auth.resetPasswordForEmail` (`redirectTo`: current web origin + Pages base path + `/reset-password`), then `supabase.auth.updateUser({ password })` on the recovery session |
-| Onboarding, edit profile (F1) | `profiles` insert / update (own row) |
+| Onboarding, edit profile (F1) | `profiles` insert / update (own row), then `rpc('personalize_my_path')` (best effort) |
 | Plan (F2, F7) | `rpc('get_my_plan')` + `rpc('get_my_plan_summary')` |
 | Recipe + cook mode (F3, F4, F5) | AI server `POST /api/recipes/generate/:slotId` |
 | Cook anything (F11) | AI server `POST /api/recipes/cook-anything`, then `user_generated_recipes` select for a saved recipe |
@@ -39,9 +39,28 @@ await supabase.from('profiles').upsert({
   budget: 'low',                          // 'low' | 'medium' | 'high'
   days_per_week: 3,                       // 1-7
   minutes_per_session: 30,                // > 0
+  cuisines: ['mexican', 'thai'],          // optional, default []
+  meal_types: ['quick_weeknight'],        // optional, default []
+  dietary_needs: ['vegetarian'],          // optional, default []
   onboarding_completed: true,
 });
 ```
+
+The three taste columns are `text[]`, NOT NULL, default `'{}'`. Allowed values:
+
+- `cuisines`: `mexican`, `italian`, `chinese`, `japanese`, `korean`, `thai`, `indian`, `mediterranean`, `middle_eastern`, `american`
+- `meal_types`: `quick_weeknight`, `meal_prep`, `breakfast`, `date_night`, `comfort`
+- `dietary_needs`: `vegetarian`, `vegan`, `no_pork`, `no_beef`, `no_poultry`, `no_fish`, `no_shellfish`, `dairy_free`, `gluten_free`, `nut_free`, `egg_free`, `no_mushrooms`, `no_spicy`
+
+The app treats a missing column as `[]` when it reads a profile row. Because the migration is applied after the app ships, the app also tolerates a database without the columns: if the profile select fails with a missing-column error (`42703`, or `PGRST204` on the upsert) it retries once with the old columns, drops the taste fields from the upsert (the answers simply aren't saved), and remembers that for the session. Any other error still surfaces. Vegan implies vegetarian in the UI (selecting Vegan also selects Vegetarian).
+
+After the upsert, call `personalize_my_path` (authenticated, no arguments):
+
+```ts
+const { data } = await supabase.rpc('personalize_my_path'); // [{ slot_id, dish_name }, ...]
+```
+
+It (re)picks the dish for each slot the user hasn't started, from their taste answers, and returns all 10 slots as `{ slot_id: int, dish_name: text }` rows with the dish now in effect (started slots keep theirs). Changing `dietary_needs` also invalidates the cached recipes for unstarted slots on the server (a database trigger), so the next recipe request is generated for the current dish. `technique_focus`, order and XP never change. `get_my_plan`, `get_my_plan_summary` and the recipe book return the personalized `dish_name`, so re-read them after personalizing (Today re-reads on focus). The call is best effort: if it fails (an older database without the function returns PostgREST `PGRST202` / 404, or the network drops), the client carries on and the canonical dishes show.
 
 Routing rule: if `profiles.onboarding_completed` is not `true`, show onboarding. Otherwise go to the plan. The AI server refuses to generate recipes until onboarding is complete (404, "Please complete onboarding first").
 
@@ -175,6 +194,7 @@ const { data } = await supabase
   - `429` with no `code`: per-IP request limit on `/api/recipes/*` (default 10 per minute, set with `RATE_LIMIT_MAX_REQUESTS` and `RATE_LIMIT_WINDOW_MS`), checked before auth and before the generation limit. It is shared with the other recipe calls, so path recipe generate and preview requests from the same IP count toward it too. Treat it like any other rate limit and try again shortly.
   - `503 { code: "GENERATION_RATE_LIMIT_UNAVAILABLE" }`: the generation limit could not be checked, so a new recipe was not started. A saved dish still loads. This is not the auth-service 503.
   - `503 { code: "GENERATION_BUSY" }` with a `Retry-After` header (seconds): the model queue is full, the wait ran out, or the per-request time budget (`OLLAMA_REQUEST_BUDGET_MS`) ran out. Requests that are busy before any model output do not count toward the 5 per hour: a request that arrives when the queue is already full skips the per-user generation limit, and one that finds the queue full right after the limit check, or waited in the queue and timed out on the first try, is refunded (best effort, by migration `20261121200000_cook_anything_generation_refund.sql`, applied after merge; until it is applied those requests still count). Busy after a completed model call (a later try) and other failures still count. Show "The kitchen is busy right now. Try again in about N seconds." (minutes from 60 s up) with **Retry**. Only an integer `Retry-After` is used, clamped to 1-300; an HTTP-date or invalid value is ignored and the message says "in a minute". The app's error kind is `busy`.
+  - `503 { code: "DATABASE_UNAVAILABLE" }`: looking up or saving the recipe timed out in the database (5 seconds). Retry shortly. Distinct from the other 503 codes above.
   - `500`: generation failed after 3 tries. Show a **Retry** button.
 
 To check in, `POST /api/check-ins` with `generated_recipe_id` instead of `user_recipe_id` / `slot_id` (do not send both). The same idempotency rules apply. Repeats of that normalized dish earn 50% XP and share the 100 XP/week repeat cap with path-slot repeats. Free-form awards also apply a daily cap (default 200) that counts today's slot XP and free-form XP together.
@@ -259,7 +279,7 @@ Response `201`:
 }
 ```
 
-The server keeps one open session per user until a check-in uses it. Calling this again (after an app restart, say) returns the same session with its reveals, so the count can't be reset. Errors: `400 SLOT_NOT_FINAL`, `404 RECIPE_NOT_FOUND` (open the recipe first), `403 SLOT_LOCKED`, `401`, `429`.
+The server keeps one open session per user until a check-in uses it. Calling this again (after an app restart, say) returns the same session with its reveals, so the count can't be reset. Errors: `400 SLOT_NOT_FINAL`, `404 RECIPE_NOT_FOUND` (open the recipe first), `403 SLOT_LOCKED`, `401`, `429`, `503 { code: "DATABASE_UNAVAILABLE" }` (a database request timed out after 5 seconds; retry shortly).
 
 To reveal a step:
 
@@ -269,7 +289,7 @@ Authorization: Bearer <access_token>
 { "step_index": 3 }
 ```
 
-Response `200`: `{ "step_index": 3, "step": { ...full step... }, "hidden_step_indices": [...], "revealed_step_indices": [...] }`. The server records the reveal before it sends the text, and repeating a reveal is safe. Errors: `400 STEP_NOT_HIDDEN` (a safety step or out-of-range index), `404 MASTERY_SESSION_NOT_FOUND`, `409 MASTERY_SESSION_USED` (already checked in).
+Response `200`: `{ "step_index": 3, "step": { ...full step... }, "hidden_step_indices": [...], "revealed_step_indices": [...] }`. The server records the reveal before it sends the text, and repeating a reveal is safe. Errors: `400 STEP_NOT_HIDDEN` (a safety step or out-of-range index), `404 MASTERY_SESSION_NOT_FOUND`, `409 MASTERY_SESSION_USED` (already checked in), `503 { code: "DATABASE_UNAVAILABLE" }` (a database request timed out after 5 seconds; retry shortly, repeating a reveal is safe).
 
 Show "Revealed X of Y hidden steps", where Y is `hidden_step_indices.length` and X is the number of steps revealed. Send `mastery_session_id` with the check-in. The server copies the counts from the session; the app never sends them. Finishing and checking in completes the slot (XP and the book entry labeled Mastered are unchanged). The `mastery` badge is awarded only when the session has zero reveals. A check-in without a session earns no badge. Finishing slot 10 last also earns `path_weeknight_basics`.
 

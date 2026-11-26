@@ -1,4 +1,9 @@
 import {
+  CUISINE_OPTIONS,
+  DIETARY_OPTIONS,
+  MEAL_TYPE_OPTIONS,
+  formatChoiceList,
+  toggleDietary,
   experienceCaption,
   formatCookingSince,
   formatEquipmentList,
@@ -38,5 +43,28 @@ describe('profile copy', () => {
     expect(formatSchedule(1, 15)).toBe('1 day a week · 15 min');
     expect(initialFromName('Jordan')).toBe('J');
     expect(initialFromName('  ')).toBe('?');
+  });
+});
+
+describe('taste answers', () => {
+  it('stores the fixed lowercase values', () => {
+    expect(CUISINE_OPTIONS.map((o) => o.value)).toEqual(['mexican', 'italian', 'chinese', 'japanese', 'korean', 'thai', 'indian', 'mediterranean', 'middle_eastern', 'american']);
+    expect(MEAL_TYPE_OPTIONS.map((o) => o.value)).toEqual(['quick_weeknight', 'meal_prep', 'breakfast', 'date_night', 'comfort']);
+    expect(DIETARY_OPTIONS).toHaveLength(13);
+    expect(DIETARY_OPTIONS.find((o) => o.value === 'nut_free')?.label).toBe('Nut allergy');
+  });
+
+  it('makes vegan imply vegetarian, and dropping vegetarian drops vegan', () => {
+    expect(toggleDietary([], 'vegan')).toEqual(['vegan', 'vegetarian']);
+    expect(toggleDietary(['vegetarian'], 'vegan')).toEqual(['vegetarian', 'vegan']);
+    expect(toggleDietary(['vegan', 'vegetarian', 'no_pork'], 'vegetarian')).toEqual(['no_pork']);
+    expect(toggleDietary(['vegan', 'vegetarian'], 'vegan')).toEqual(['vegetarian']);
+  });
+
+  it('formats answers for the profile and skips empty or unknown values', () => {
+    expect(formatChoiceList(['middle_eastern', 'thai'], CUISINE_OPTIONS)).toBe('Thai, Middle Eastern');
+    expect(formatChoiceList([], CUISINE_OPTIONS)).toBeNull();
+    expect(formatChoiceList(undefined, CUISINE_OPTIONS)).toBeNull();
+    expect(formatChoiceList(['klingon'], CUISINE_OPTIONS)).toBeNull();
   });
 });

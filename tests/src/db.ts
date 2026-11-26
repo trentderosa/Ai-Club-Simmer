@@ -276,6 +276,16 @@ export class TestDatabase {
       END
       $youtube_quota_seq$;
 
+      -- 20261126120000_personalized_path_dishes.sql: re-assert after broad GRANTs
+      REVOKE ALL ON dish_catalog FROM PUBLIC, anon, authenticated;
+      GRANT SELECT ON dish_catalog TO authenticated;
+      GRANT SELECT ON dish_catalog TO service_role;
+      REVOKE ALL ON personalize_path_hits FROM PUBLIC, anon, authenticated;
+      GRANT ALL ON personalize_path_hits TO service_role;
+      REVOKE ALL ON user_path_dishes FROM PUBLIC, anon, authenticated;
+      GRANT SELECT ON user_path_dishes TO authenticated;
+      GRANT SELECT ON user_path_dishes TO service_role;
+
       -- 20261116000000_mastery_sessions.sql: re-assert after broad GRANTs
       REVOKE ALL ON mastery_sessions FROM PUBLIC, anon, authenticated;
       GRANT SELECT, INSERT, UPDATE ON mastery_sessions TO service_role;

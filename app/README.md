@@ -96,7 +96,7 @@ app/
 │   ├── sign-in.tsx          # F1 sign up / sign in
 │   ├── forgot-password.tsx  # F1 request a reset email
 │   ├── reset-password.tsx   # F1 set a new password from the recovery link
-│   ├── onboarding.tsx       # F1 steps 2-4 -> profiles
+│   ├── onboarding.tsx       # F1 steps 2-5 -> profiles, then personalize_my_path
 │   ├── cook-anything.tsx    # F11 type a dish (loading / empty / error)
 │   ├── edit-profile.tsx     # F1 edit onboarding answers (same form, same columns)
 │   ├── recipe/[slotId].tsx  # F3/F4/F6 recipe, coach's note, technique videos
@@ -132,7 +132,7 @@ Rules of thumb for the next person:
 | --- | --- |
 | Sign in / up / out | `supabase.auth.signInWithPassword / signUp / signOut`. The first name goes in auth `user_metadata.first_name` because `profiles` has no name column. |
 | Password reset | `supabase.auth.resetPasswordForEmail` with `redirectTo` set to the current web origin, the Expo base path, and `/reset-password`. The recovery session stays on the set-password screen until `supabase.auth.updateUser({ password })`. Full mock mode does not call Supabase. |
-| Onboarding | `profiles` upsert (own row): `goals`, `experience_level`, `equipment`, `budget`, `days_per_week`, `minutes_per_session`, `onboarding_completed: true`. The mockup's diet question is left out (no column yet). |
+| Onboarding | `profiles` upsert (own row): `goals`, `experience_level`, `equipment`, `budget`, `days_per_week`, `minutes_per_session`, `cuisines`, `meal_types`, `dietary_needs`, `onboarding_completed: true`. Then `rpc('personalize_my_path')` picks dishes for slots not started yet; a failure there is ignored (canonical dishes show). In mock mode `personalizeMyPath` uses a tiny fake catalog (`MOCK_DISH_CATALOG` in `api/mock/fixtures.ts`): for example Mexican gives "Pico de Gallo" for slot 1 and "Chicken Fajitas" for slot 4, and vegetarian swaps the chicken dishes. |
 | Routing | A recovery session goes to set-new-password first. Otherwise `profiles.onboarding_completed !== true` → onboarding, otherwise Today |
 | Today | `rpc('get_my_plan')` + `rpc('get_my_plan_summary')`, re-read on focus. "Cook anything" opens `/cook-anything`. The next dish’s photo is `POST /api/dish-photos`. If that call is unreachable, times out, or returns 429 or 503, the plan stays up with a short message and Try again. |
 | Recipe book | `rpc('get_my_recipe_book_v2')` (falls back to `get_my_recipe_book` if v2 isn't migrated yet) + `get_my_plan` (for technique names and "Still to come"). The book also lists Cook anything dishes that have a check-in, with a small "Cook anything" tag. Tapping an entry opens a read-only detail screen (`/book-entry/[kind]/[id]`) with the recipe, the user's own check-ins ("Your cooks", read from `check_ins` / `generated_recipe_check_ins`) and a Cook again button into the existing cook flow. Repeats earn 50% XP, which the book and a done recipe both say. |
