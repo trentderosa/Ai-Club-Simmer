@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { randomUUID } from 'crypto';
 import { CheckInIdempotencyConflict, CheckInMasterySessionError } from '../types/check-in.js';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 import { SupabaseCheckInRepository } from './supabase-check-in-repository.js';
 
 const mockFetch = vi.fn();
@@ -541,6 +542,77 @@ describe('SupabaseCheckInRepository', () => {
         expect(headers['apikey']).toBe('test-service-role-key');
         expect(headers['Authorization']).toBe('Bearer test-service-role-key');
       }
+    });
+  });
+
+  describe('request timeouts', () => {
+    const hangUntilAborted = (): void => {
+      mockFetch.mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          })
+      );
+    };
+
+    const createParams = {
+      user_id: 'user-1@simmer.invalid',
+      user_recipe_id: 'recipe-1',
+      slot_id: 1,
+      difficulty_rating: 'easy' as const,
+      went_well: null,
+      was_hard: null,
+    };
+
+    const methods: Array<[string, string, (r: SupabaseCheckInRepository) => Promise<unknown>]> = [
+      ['validateUserRecipe', 'check-in read', (r): Promise<unknown> => r.validateUserRecipe('u', 'r', 1)],
+      ['create', 'check-in create', (r): Promise<unknown> => r.create(createParams)],
+      ['getById', 'check-in read', (r): Promise<unknown> => r.getById('c', 'u')],
+      ['getRecentByUser', 'check-in read', (r): Promise<unknown> => r.getRecentByUser('u')],
+    ];
+
+    it.each(methods)('%s passes an AbortSignal to fetch', async (_name, _label, call) => {
+      mockFetch.mockResolvedValue({ ok: true, status: 200, json: () => [{ id: 'x' }] });
+      await call(repository);
+      const [, options] = mockFetch.mock.calls[0] as [string, RequestInit];
+      expect(options.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it.each(methods)('%s rejects with a timeout SupabaseRestError when fetch hangs', async (_name, label, call) => {
+      hangUntilAborted();
+      const slow = new SupabaseCheckInRepository({
+        url: 'https://test-project.supabase.co',
+        serviceRoleKey: 'test-service-role-key',
+        timeoutMs: 20,
+      });
+      const error = await call(slow).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(SupabaseRestError);
+      expect((error as SupabaseRestError).kind).toBe('timeout');
+      expect((error as SupabaseRestError).message).toBe(`Supabase ${label} timed out after 20ms`);
+    });
+
+    it('times out getByIdAny during an idempotent replay and when the body never arrives', async () => {
+      const slow = new SupabaseCheckInRepository({
+        url: 'https://test-project.supabase.co',
+        serviceRoleKey: 'test-service-role-key',
+        timeoutMs: 20,
+      });
+      mockFetch
+        .mockResolvedValueOnce({ ok: false, status: 409, text: () => Promise.resolve('{}') })
+        .mockImplementationOnce(
+          (_url: string, init: RequestInit) =>
+            Promise.resolve({
+              ok: true,
+              status: 200,
+              json: () =>
+                new Promise((_resolve, reject) => {
+                  init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+                }),
+            })
+        );
+      const error = await slow.create({ ...createParams, id: randomUUID() }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(SupabaseRestError);
+      expect((error as SupabaseRestError).kind).toBe('timeout');
     });
   });
 });
