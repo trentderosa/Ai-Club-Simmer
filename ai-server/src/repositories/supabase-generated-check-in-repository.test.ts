@@ -326,9 +326,57 @@ describe('SupabaseGeneratedCheckInRepository', () => {
 
       const error = await repo.validateRecipe(USER_ID, RECIPE_ID).catch((e: unknown) => e as Error);
 
-      expect(error).toBeInstanceOf(Error);
-      expect((error as Error).message).toBe('aborted');
+      expect(error).toBeInstanceOf(SupabaseRestError);
+      expect((error as SupabaseRestError).kind).toBe('timeout');
+      expect((error as Error).message).toBe('Supabase generated check-in validate generated recipe timed out after 20ms');
       expect((error as Error).message).not.toContain(TEST_CONFIG.serviceRoleKey);
+    });
+  });
+
+  describe('request timeouts', () => {
+    const hangUntilAborted = (): MockFetch =>
+      vi.fn().mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          })
+      ) as unknown as MockFetch;
+
+    const hangingBody = (): MockFetch =>
+      vi.fn().mockImplementation(
+        (_url: string, init: RequestInit) =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            text: () =>
+              new Promise((_resolve, reject) => {
+                init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+              }),
+          })
+      ) as unknown as MockFetch;
+
+    it('passes an AbortSignal to fetch', async () => {
+      const mockFetch = createMockFetch([{ status: 200, body: [] }]);
+      globalThis.fetch = mockFetch;
+      await new SupabaseGeneratedCheckInRepository(TEST_CONFIG).validateRecipe(USER_ID, RECIPE_ID);
+      expect(call(mockFetch, 0)[1].signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('rejects with a timeout SupabaseRestError when fetch hangs', async () => {
+      globalThis.fetch = hangUntilAborted();
+      const repo = new SupabaseGeneratedCheckInRepository({ ...TEST_CONFIG, timeoutMs: 20 });
+      const error = await repo.validateRecipe(USER_ID, RECIPE_ID).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(SupabaseRestError);
+      expect((error as SupabaseRestError).kind).toBe('timeout');
+      expect((error as SupabaseRestError).message).toBe('Supabase generated check-in validate generated recipe timed out after 20ms');
+    });
+
+    it('rejects with a timeout SupabaseRestError when the body never arrives', async () => {
+      globalThis.fetch = hangingBody();
+      const repo = new SupabaseGeneratedCheckInRepository({ ...TEST_CONFIG, timeoutMs: 20 });
+      const error = await repo.validateRecipe(USER_ID, RECIPE_ID).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(SupabaseRestError);
+      expect((error as SupabaseRestError).kind).toBe('timeout');
     });
   });
 });

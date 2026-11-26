@@ -190,3 +190,176 @@ describe('prewarm retries against a real gate', () => {
     expect(gate.isIdle()).toBe(true);
   });
 });
+
+describe('personalized dishes and in-flight generation', () => {
+  it('two users with different dishes for the same slot do not share a generation', async () => {
+    const prompts: string[] = [];
+    const client: OllamaClient = {
+      generate: (prompt) => {
+        prompts.push(prompt);
+        return new Promise<string>(() => undefined);
+      },
+    };
+    const supabase = { saveRecipe: vi.fn() } as unknown as SupabaseService;
+    const service = createPathRecipeService({ ollamaClient: client, supabase });
+    const slotA: PathSlot = { ...next, dishName: 'Shakshuka' };
+    const slotB: PathSlot = { ...next, dishName: 'Tamago Kake Gohan' };
+    void service.generate('user-a', slotA, { ...profile, id: 'user-a' });
+    void service.generate('user-b', slotB, { ...profile, id: 'user-b' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(prompts).toHaveLength(2);
+    expect(prompts.some((p) => p.includes('Shakshuka'))).toBe(true);
+    expect(prompts.some((p) => p.includes('Tamago Kake Gohan'))).toBe(true);
+  });
+});
+
+describe('stale generation after the inputs change', () => {
+  const recipeJson = JSON.stringify({
+    title: 'Eggs',
+    ingredients: [{ name: 'eggs', amount: '2' }],
+    timeEstimateMinutes: 10,
+    steps: [{ instruction: 'Whisk the eggs well', isSafetyStep: false }],
+  });
+
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  function build(freshSlot: () => PathSlot | null, freshProfile: () => UserProfile | null) {
+    const prompts: string[] = [];
+    const client: OllamaClient = {
+      generate: (prompt) => {
+        prompts.push(prompt);
+        return Promise.resolve(recipeJson);
+      },
+    };
+    const saveRecipe = vi.fn().mockImplementation((_u: string, _s: number, r: Recipe) => Promise.resolve(r));
+    const supabase = {
+      saveRecipe,
+      getPathSlot: vi.fn().mockImplementation(() => Promise.resolve(freshSlot())),
+      getUserProfile: vi.fn().mockImplementation(() => Promise.resolve(freshProfile())),
+    } as unknown as SupabaseService;
+    const logger = { warn: vi.fn() };
+    const service = createPathRecipeService({ ollamaClient: client, supabase, logger });
+    return { service, prompts, saveRecipe };
+  }
+
+  it('does not save a recipe made before a new dietary need; regenerates with it', async () => {
+    let stored: string[] = [];
+    const t = build(
+      () => next,
+      () => ({ ...profile, dietaryNeeds: stored })
+    );
+    // The need arrives while the first generation is running.
+    const first = t.service.generate(USER, next, profile);
+    stored = ['nut_free'];
+    const result = await first;
+    expect(result.success).toBe(true);
+    expect(t.prompts).toHaveLength(2);
+    expect(t.prompts[0]).not.toContain('nut_free');
+    expect(t.prompts[1]).toContain('nut_free');
+    expect(t.saveRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not save a recipe for a swapped dish; regenerates for the new dish', async () => {
+    let dish = 'Scrambled Eggs';
+    const t = build(
+      () => ({ ...next, dishName: dish }),
+      () => profile
+    );
+    const first = t.service.generate(USER, next, profile);
+    dish = 'Shakshuka';
+    const result = await first;
+    expect(result.success).toBe(true);
+    expect(t.prompts).toHaveLength(2);
+    expect(t.prompts[1]).toContain('Shakshuka');
+    expect(t.saveRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns a retryable stale error when the inputs change again, saving nothing', async () => {
+    let n = 0;
+    const t = build(
+      () => ({ ...next, dishName: `Dish ${++n}` }),
+      () => profile
+    );
+    const result = await t.service.generate(USER, next, profile);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.type).toBe('stale');
+    expect(t.saveRecipe).not.toHaveBeenCalled();
+  });
+
+  it('a joiner gets the fresh recipe, never the stale one', async () => {
+    let stored: string[] = [];
+    const t = build(
+      () => next,
+      () => ({ ...profile, dietaryNeeds: stored })
+    );
+    const first = t.service.generate(USER, next, profile);
+    const joiner = t.service.generate(USER, next, profile);
+    stored = ['nut_free'];
+    await Promise.all([first, joiner]);
+    expect(t.prompts).toHaveLength(2);
+    expect(t.saveRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('body extra needs with no change: one prompt, one save', async () => {
+    const t = build(
+      () => next,
+      () => ({ ...profile, dietaryNeeds: ['vegan'] })
+    );
+    const result = await t.service.generate(USER, next, { ...profile, dietaryNeeds: ['vegan', 'no cilantro'] });
+    expect(result.success).toBe(true);
+    expect(t.prompts).toHaveLength(1);
+    expect(t.saveRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the dish the recipe was generated for', async () => {
+    let dish = 'Scrambled Eggs';
+    const t = build(
+      () => ({ ...next, dishName: dish }),
+      () => profile
+    );
+    const first = t.service.generate(USER, next, profile);
+    dish = 'Shakshuka';
+    const result = await first;
+    expect(result.success && result.dishName).toBe('Shakshuka');
+  });
+
+  it('does not regenerate when too little budget is left', async () => {
+    let clock = 0;
+    const budget = { budgetMs: 1000, ollamaTimeoutMs: 500, queueTimeoutMs: 100, now: (): number => clock };
+    const prompts: string[] = [];
+    const client: OllamaClient = {
+      generate: (prompt) => {
+        prompts.push(prompt);
+        clock += 700; // the first generation used most of the budget
+        return Promise.resolve(recipeJson);
+      },
+    };
+    const saveRecipe = vi.fn();
+    const supabase = {
+      saveRecipe,
+      getPathSlot: vi.fn().mockResolvedValue({ ...next, dishName: 'Shakshuka' }),
+      getUserProfile: vi.fn().mockResolvedValue(profile),
+    } as unknown as SupabaseService;
+    const service = createPathRecipeService({
+      ollamaClient: client,
+      supabase,
+      generationBudget: budget,
+      logger: { warn: vi.fn() },
+    });
+    const result = await service.generate(USER, next, profile);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.type).toBe('stale');
+    expect(prompts).toHaveLength(1);
+    expect(saveRecipe).not.toHaveBeenCalled();
+  });
+
+  it('saves nothing when the re-read fails', async () => {
+    const t = build(
+      () => next,
+      () => {
+        throw new Error('db down');
+      }
+    );
+    await expect(t.service.generate(USER, next, profile)).rejects.toThrow('db down');
+    expect(t.saveRecipe).not.toHaveBeenCalled();
+  });
+});

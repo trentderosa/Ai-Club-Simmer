@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import { mergeDietaryNeeds } from '../services/dietary-needs.js';
 import { createPathRecipeService, type PathRecipeService } from '../services/path-recipe-service.js';
 import { generateRecipe, PathSlot } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
@@ -78,6 +79,8 @@ export interface RecipeRouterOptions {
   };
 }
 
+export { mergeDietaryNeeds };
+
 export function createRecipeRouter(
   deps: RecipeRouterDeps,
   options: RecipeRouterOptions = {}
@@ -149,9 +152,9 @@ export function createRecipeRouter(
    * Generates a recipe for the authenticated user and path slot.
    * Returns cached recipe if one exists, otherwise calls Ollama.
    *
-   * Optional body: { dietaryNeeds?: string[] }
-   * - Dietary needs are not yet in PRD onboarding (F1), so they can be
-   *   passed here for testing or future feature rollout.
+   * Optional body: { dietaryNeeds?: string[] } (adds to the stored dietary needs; never removes them)
+   * - The user's stored dietary needs (profiles.dietary_needs) always apply;
+   *   the body can only add more.
    */
   // eslint-disable-next-line @typescript-eslint/no-misused-promises
   router.post('/generate/:slotId', async (req: Request, res: Response) => {
@@ -219,7 +222,7 @@ export function createRecipeRouter(
       // One slot lookup for both the cached and generate paths. A missing
       // slot is 404 even if a saved recipe exists, so we never fail open and
       // leak hidden step text.
-      const slot = await deps.supabase.getPathSlot(slotId);
+      const slot = await deps.supabase.getPathSlot(slotId, userId);
       if (!slot) {
         res.status(404).json({
           error: `Path slot ${slotId} not found`,
@@ -271,9 +274,10 @@ export function createRecipeRouter(
         return;
       }
 
-      const profileForGeneration: UserProfile = dietaryNeedsOverride
-        ? { ...userProfile, dietaryNeeds: dietaryNeedsOverride }
-        : userProfile;
+      // The body adds to the stored dietary needs; it can never remove them.
+      const dietaryNeeds = mergeDietaryNeeds(userProfile.dietaryNeeds, dietaryNeedsOverride);
+      const profileForGeneration: UserProfile =
+        dietaryNeeds.length > 0 ? { ...userProfile, dietaryNeeds } : userProfile;
 
       // Photo and dish videos don't depend on the recipe, so look them up while
       // Ollama generates. dishMedia never rejects (it catches internally).
@@ -301,7 +305,8 @@ export function createRecipeRouter(
         return;
       }
 
-      const media = await mediaPromise;
+      // A stale-check regeneration may have used a swapped dish: fetch its media.
+      const media = await (result.dishName === slot.dishName ? mediaPromise : dishMedia(result.dishName));
       res.json({
         recipe: slot.isFinal ? maskRecipeForMastery(result.recipe) : result.recipe,
         cached: false,

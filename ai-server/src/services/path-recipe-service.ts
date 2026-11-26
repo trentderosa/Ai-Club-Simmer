@@ -1,3 +1,4 @@
+import { mergeDietaryNeeds } from './dietary-needs.js';
 import { generateRecipe, type PathSlot } from './recipe-generator.js';
 import type { OllamaClient } from './ollama-client.js';
 import type { OllamaBudget } from './ollama-budget.js';
@@ -10,6 +11,8 @@ export interface PathGenerationResult {
   success: true;
   recipe: Recipe;
   videos: RecipeVideos;
+  /** The dish the recipe was generated for (a stale-check regeneration may use a newer dish than the caller's slot). */
+  dishName: string;
 }
 
 export interface PathGenerationError {
@@ -91,6 +94,8 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
     return null;
   }
 
+  const normalizeNeed = (need: string): string => need.trim().toLowerCase();
+
   async function generateAndSave(
     userId: string,
     slot: PathSlot,
@@ -98,18 +103,65 @@ export function createPathRecipeService(deps: PathRecipeServiceDeps): PathRecipe
     generationOptions: PathGenerationOptions,
     budget: OllamaBudget | undefined = deps.generationBudget
   ): Promise<PathGenerationResult | PathGenerationError> {
-    const result = await generateRecipe(deps.ollamaClient, slot, userProfile, {
-      budget,
-      ...generationOptions,
+    // The LLM call takes tens of seconds. Right before saving, re-read the dish
+    // and the stored dietary needs; if either changed (a new allergy, or the
+    // dish was swapped), the recipe is stale and is NOT saved. Regenerate once
+    // with the fresh inputs; if they change again, return a retryable error.
+    // Joiners share this whole promise, so none of them gets a stale recipe.
+    // This narrows the window between the re-read and the save; it cannot close
+    // it (a change can still land in between). The DB trigger covers needs.
+    let currentSlot = slot;
+    let currentProfile = userProfile;
+    const startedAt = (budget?.now ?? Date.now)();
+    const stale = (): PathGenerationError => ({
+      success: false,
+      error: {
+        type: 'stale',
+        message: 'Your dish or dietary needs changed while the recipe was generating. Please try again.',
+        attempts: 1,
+      },
     });
+    let recipe: Recipe | null = null;
+    for (let attempt = 0; attempt < 2 && !recipe; attempt++) {
+      const result = await generateRecipe(deps.ollamaClient, currentSlot, currentProfile, {
+        budget,
+        ...generationOptions,
+      });
+      if (!result.success) return result;
 
-    if (!result.success) {
-      return result;
+      // A failed re-read throws, like a failed save: nothing is stored.
+      const freshSlot = await deps.supabase.getPathSlot(slot.id, userId);
+      const freshProfile = await deps.supabase.getUserProfile(userId);
+      const used = new Set((currentProfile.dietaryNeeds ?? []).map(normalizeNeed));
+      const addedNeeds = (freshProfile?.dietaryNeeds ?? []).filter((n) => !used.has(normalizeNeed(n)));
+      const isStale =
+        !freshSlot || !freshProfile || freshSlot.dishName !== currentSlot.dishName || addedNeeds.length > 0;
+      if (!isStale) {
+        recipe = result.recipe;
+        break;
+      }
+
+      logger.warn('recipe_generation_stale', { slot_id: slot.id });
+      if (attempt === 1 || !freshSlot || !freshProfile) return stale();
+      // The regeneration gets only what is left of the budget, not a fresh one.
+      if (budget) {
+        const remaining = budget.budgetMs - ((budget.now ?? Date.now)() - startedAt);
+        if (remaining - budget.ollamaTimeoutMs <= 0) return stale();
+        budget = { ...budget, budgetMs: remaining };
+      }
+      currentSlot = freshSlot;
+      // Keep the used needs (body extras too) and add the fresh stored ones.
+      currentProfile = {
+        ...freshProfile,
+        dietaryNeeds: mergeDietaryNeeds(currentProfile.dietaryNeeds, addedNeeds),
+      };
     }
+    // Both attempts either saved-ready (recipe set) or returned above.
+    if (!recipe) return stale();
 
-    const savedRecipe = await deps.supabase.saveRecipe(userId, slot.id, result.recipe);
+    const savedRecipe = await deps.supabase.saveRecipe(userId, slot.id, recipe);
     const videos = await attachVideos(userId, slot.id, savedRecipe);
-    return { success: true, recipe: savedRecipe, videos };
+    return { success: true, recipe: savedRecipe, videos, dishName: currentSlot.dishName };
   }
 
   /**
