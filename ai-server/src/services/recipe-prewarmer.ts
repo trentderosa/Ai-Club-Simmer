@@ -40,7 +40,7 @@ export function createRecipePrewarmer(deps: RecipePrewarmerDeps): RecipePrewarme
       });
     };
     try {
-      const slot = await deps.pathRepository.getNextPathSlot(checkedInSlotId);
+      const slot = await deps.pathRepository.getNextPathSlot(checkedInSlotId, userId);
       if (!slot) return skip('no_next_slot');
       if (!(await deps.supabase.isSlotUnlocked(userId, slot.id))) return skip('next_slot_locked', slot.id);
       if (await deps.supabase.getSavedRecipe(userId, slot.id)) return skip('already_saved', slot.id);

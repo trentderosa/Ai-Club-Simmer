@@ -48,6 +48,8 @@ The Pages site is public, and so is everything in the built app.
 
 Requires Node.js 18 or later (CI uses 20). For live recipe generation, a local [Ollama](https://ollama.com) instance should be running.
 
+The server reads each user's own dish for a path slot (`user_path_dishes`, falling back to the canonical `path_slots.dish_name`) and their `profiles.dietary_needs`, which reach the recipe prompt. Both are optional in the database: if the tables or column are missing the server uses the canonical dish and no dietary needs, and re-checks after 60 seconds.
+
 ```bash
 cd ai-server
 cp .env.example .env   # fill in placeholders; never commit real keys

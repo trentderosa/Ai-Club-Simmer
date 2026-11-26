@@ -262,6 +262,29 @@ describe('CheckInService coach note context', () => {
     });
   });
 
+  it('looks up the dish for this user, so the coach note names their personalized dish', async () => {
+    const pathRepository = {
+      getPathSlot: vi.fn().mockResolvedValue({ ...slot, dishName: 'Shakshuka' }),
+      badgesEarnedBy: vi.fn().mockResolvedValue([]),
+    };
+    const service = new CheckInService(repository, coach, null, logger, { pathRepository });
+    await service.processCheckIn(userId, input());
+    expect(pathRepository.getPathSlot).toHaveBeenCalledWith(1, userId);
+    expect(coach.generate).toHaveBeenCalledWith('ok', null, null, { dishName: 'Shakshuka' });
+  });
+
+  it('mastery validation uses the canonical slot lookup, not the per-user one', async () => {
+    const pathRepository = {
+      getPathSlot: vi.fn().mockRejectedValue(new Error('user_path_dishes down')),
+      getCanonicalPathSlot: vi.fn().mockResolvedValue({ ...slot, isFinal: true }),
+      badgesEarnedBy: vi.fn().mockResolvedValue([]),
+    };
+    const service = new CheckInService(repository, coach, null, logger, { pathRepository });
+    const allowed = await service.isMasteryInputAllowed({ ...input(), mastery: { hidden_steps_revealed: 0 } } as never, userId);
+    expect(allowed).toBe(true);
+    expect(pathRepository.getPathSlot).not.toHaveBeenCalled();
+  });
+
   it('still generates the note when the equipment lookup fails', async () => {
     const pathRepository = {
       getPathSlot: vi.fn().mockResolvedValue(slot),

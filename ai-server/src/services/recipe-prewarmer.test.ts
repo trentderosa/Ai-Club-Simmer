@@ -46,10 +46,18 @@ function makeDeps(overrides: DepsOverrides = {}): {
 }
 
 describe('RecipePrewarmer', () => {
+  it('generates the dish the repository returns for this user', async () => {
+    const mine = { ...next, dishName: 'Shakshuka' };
+    const { deps, generate } = makeDeps({ next: mine });
+    await createRecipePrewarmer(deps).prewarm(USER, 21);
+    expect(deps.pathRepository.getNextPathSlot).toHaveBeenCalledWith(21, USER);
+    expect(generate).toHaveBeenCalledWith(USER, mine, profile, expect.anything());
+  });
+
   it('generates the next slot and logs started and done', async () => {
     const { deps, generate, logger } = makeDeps();
     await createRecipePrewarmer(deps).prewarm(USER, 21);
-    expect(deps.pathRepository.getNextPathSlot).toHaveBeenCalledWith(21);
+    expect(deps.pathRepository.getNextPathSlot).toHaveBeenCalledWith(21, USER);
     expect(generate).toHaveBeenCalledWith(USER, next, profile, {
       shouldRetry: expect.any(Function) as () => boolean,
       immediateOnly: true,

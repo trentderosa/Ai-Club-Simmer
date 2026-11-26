@@ -21,7 +21,7 @@ export interface CheckInServiceOptions {
    * (dev in-memory mode) badges are reported as skipped.
    */
   pathRepository?: (Pick<PathRepository, 'getPathSlot' | 'badgesEarnedBy'> &
-    Partial<Pick<PathRepository, 'getEquipment'>>) | null;
+    Partial<Pick<PathRepository, 'getEquipment' | 'getCanonicalPathSlot'>>) | null;
   /** Cook-anything check-ins. Without it, generated_recipe_id check-ins fail validation. */
   generatedCheckInRepository?: GeneratedCheckInRepository | null;
   /** Awards XP for cook-anything check-ins via award_generated_recipe_xp. */
@@ -106,7 +106,7 @@ export class CheckInService {
           input.went_well ?? null,
           input.was_hard ?? null,
           await this.coachNoteContext(userId, () =>
-            this.pathRepository ? this.pathRepository.getPathSlot(checkIn.slot_id) : Promise.resolve(null)
+            this.pathRepository ? this.pathRepository.getPathSlot(checkIn.slot_id, userId) : Promise.resolve(null)
           )
         )
       : REPLAY_COACH_NOTE;
@@ -172,10 +172,13 @@ export class CheckInService {
    * on the final slot. Returns false when sent for any other slot. Without a
    * path repository (dev) the database trigger is the only check.
    */
-  async isMasteryInputAllowed(input: CheckInInput): Promise<boolean> {
+  async isMasteryInputAllowed(input: CheckInInput, userId: string): Promise<boolean> {
     if ((!input.mastery && !input.mastery_session_id) || !this.pathRepository) return true;
     if (input.slot_id === undefined) return false;
-    const slot = await this.pathRepository.getPathSlot(input.slot_id);
+    // Only isFinal matters, so skip the per-user dish read when the repository can.
+    const slot = this.pathRepository.getCanonicalPathSlot
+      ? await this.pathRepository.getCanonicalPathSlot(input.slot_id)
+      : await this.pathRepository.getPathSlot(input.slot_id, userId);
     return slot?.isFinal === true;
   }
 

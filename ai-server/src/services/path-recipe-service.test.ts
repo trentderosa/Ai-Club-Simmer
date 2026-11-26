@@ -190,3 +190,25 @@ describe('prewarm retries against a real gate', () => {
     expect(gate.isIdle()).toBe(true);
   });
 });
+
+describe('personalized dishes and in-flight generation', () => {
+  it('two users with different dishes for the same slot do not share a generation', async () => {
+    const prompts: string[] = [];
+    const client: OllamaClient = {
+      generate: (prompt) => {
+        prompts.push(prompt);
+        return new Promise<string>(() => undefined);
+      },
+    };
+    const supabase = { saveRecipe: vi.fn() } as unknown as SupabaseService;
+    const service = createPathRecipeService({ ollamaClient: client, supabase });
+    const slotA: PathSlot = { ...next, dishName: 'Shakshuka' };
+    const slotB: PathSlot = { ...next, dishName: 'Tamago Kake Gohan' };
+    void service.generate('user-a', slotA, { ...profile, id: 'user-a' });
+    void service.generate('user-b', slotB, { ...profile, id: 'user-b' });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(prompts).toHaveLength(2);
+    expect(prompts.some((p) => p.includes('Shakshuka'))).toBe(true);
+    expect(prompts.some((p) => p.includes('Tamago Kake Gohan'))).toBe(true);
+  });
+});
