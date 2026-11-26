@@ -12,6 +12,8 @@ import {
 import type { OllamaClient } from '../services/ollama-client.js';
 import { logGenerationFailure } from '../services/generation-failure.js';
 import { OllamaBusyError } from '../services/ollama-gate.js';
+import { parseDietRules, findDietViolations, dietCorrectiveHint } from '../services/diet-guard.js';
+import { ensureDonenessSteps } from '../services/doneness.js';
 import { startDeadline, type OllamaBudget } from '../services/ollama-budget.js';
 import { buildCookAnythingPrompt } from './prompt.js';
 import { FreeformRecipeSchema } from './recipe-schema.js';
@@ -37,6 +39,8 @@ export async function generateCookAnythingRecipe(
 ): Promise<RecipeGenerationResponse> {
   const prompt = buildCookAnythingPrompt(dishQuery, user);
   const jsonSchema = getRecipeJsonSchema();
+  const dietRules = parseDietRules(user.dietaryNeeds);
+  let retryHint = '';
   let lastError: Error | ZodError | null = null;
   let lastUnsafeRecipe: Recipe | null = null;
   // Caps queue time plus Ollama time for the whole request, retries included.
@@ -64,10 +68,12 @@ export async function generateCookAnythingRecipe(
       }
     }
     try {
+      const attemptPrompt = retryHint ? `${prompt}\n\n${retryHint}` : prompt;
+      retryHint = '';
       const responseText =
         queueTimeoutMs === undefined
-          ? await client.generate(prompt, jsonSchema)
-          : await client.generate(prompt, jsonSchema, { queueTimeoutMs });
+          ? await client.generate(attemptPrompt, jsonSchema)
+          : await client.generate(attemptPrompt, jsonSchema, { queueTimeoutMs });
       let parsed: unknown;
       try {
         parsed = JSON.parse(responseText);
@@ -80,8 +86,22 @@ export async function generateCookAnythingRecipe(
         lastError = validationResult.error;
         continue;
       }
+      const cleaned = dropUnsafeCoachNote(cleanRecipe(validationResult.data, FreeformRecipeSchema));
+      // Same dietary check as path recipes: a violation is a failed attempt and never a fallback.
+      const dietViolations = findDietViolations(cleaned, dietRules);
+      if (dietViolations.length > 0) {
+        console.warn('Recipe attempt rejected', {
+          reason: 'diet_violation',
+          attempt,
+          violations: dietViolations.map((v) => ({ rule: v.rule, term: v.term, where: v.where })),
+        });
+        retryHint = dietCorrectiveHint(dietViolations);
+        lastError = new Error('diet_violation');
+        continue;
+      }
+      const withDoneness = ensureDonenessSteps(cleaned);
       const recipe = ensureSafetyFlags(
-        dropUnsafeCoachNote(cleanRecipe(validationResult.data, FreeformRecipeSchema))
+        FreeformRecipeSchema.safeParse(withDoneness).success ? withDoneness : cleaned
       );
       if (recipeHasAffirmativeProteinRinse(recipe)) {
         console.warn('Recipe attempt rejected', { reason: 'unsafe_raw_protein_rinse', attempt });

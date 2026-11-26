@@ -91,8 +91,8 @@ describe('dietary needs reach the prompt', () => {
       ...(dietaryNeeds ? { dietaryNeeds } : {}),
     }),
   });
-  async function promptFor(stored: string[] | undefined, body?: unknown): Promise<string> {
-    const { app, ollama } = setup({ pathRepository: pathRepo(profileWith(stored)) });
+  async function promptFor(stored: string[] | undefined, body?: unknown, generated?: Recipe): Promise<string> {
+    const { app, ollama } = setup({ pathRepository: pathRepo(profileWith(stored)), ...(generated ? { generated } : {}) });
     const req = request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
     const res = body === undefined ? await req : await req.send(body as object);
     expect(res.status).toBe(200);
@@ -114,7 +114,18 @@ describe('dietary needs reach the prompt', () => {
   });
 
   it('a body need works when nothing is stored', async () => {
-    expect(await promptFor(undefined, { dietaryNeeds: ['vegan'] })).toContain('Dietary needs: vegan');
+    // The default fixture is scrambled eggs, which the diet guard rightly rejects for vegan.
+    const veganRecipe: Recipe = {
+      ...recipe,
+      title: 'Garlic Rice',
+      ingredients: [{ name: 'rice', amount: '1 cup' }, { name: 'garlic', amount: '1 clove' }],
+      steps: [
+        { instruction: 'Rinse the rice', isSafetyStep: false },
+        { instruction: 'Cook the rice and garlic on low heat', isSafetyStep: true, techniqueName: 'Low heat cooking' },
+        { instruction: 'Serve', isSafetyStep: false },
+      ],
+    };
+    expect(await promptFor(undefined, { dietaryNeeds: ['vegan'] }, veganRecipe)).toContain('Dietary needs: vegan');
   });
 });
 

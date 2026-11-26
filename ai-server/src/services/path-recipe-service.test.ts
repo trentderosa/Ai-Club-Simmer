@@ -214,11 +214,12 @@ describe('personalized dishes and in-flight generation', () => {
 });
 
 describe('stale generation after the inputs change', () => {
+  // Plain rice: compatible with every dietary need these tests use (e.g. vegan), so the diet guard never rejects it.
   const recipeJson = JSON.stringify({
-    title: 'Eggs',
-    ingredients: [{ name: 'eggs', amount: '2' }],
+    title: 'Rice',
+    ingredients: [{ name: 'rice', amount: '1 cup' }],
     timeEstimateMinutes: 10,
-    steps: [{ instruction: 'Whisk the eggs well', isSafetyStep: false }],
+    steps: [{ instruction: 'Measure the rice into a bowl', isSafetyStep: false }],
   });
 
   // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
