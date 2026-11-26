@@ -141,7 +141,9 @@ const qualifier = (prefixes: string, kinds: HintKind[]): Exception => ({
 });
 const MEAT_KINDS: HintKind[] = ['meat', 'fish', 'shellfish', 'sauce'];
 // "faux", "imitation" and "mock" are not on their own a plant claim: imitation crab
-// (surimi) is fish. They only exempt when the name says what plant it is made from.
+// (surimi) is fish. They only exempt when the name says what plant it is made from
+// ("made from", "made with", "made of", or "from"). A bare "with" is not enough:
+// "toss the imitation crab with vegetables" is still imitation crab.
 const Q_ANIMAL_FREE = qualifier('vegan|plant[- ]based', [
   ...MEAT_KINDS,
   'dairy',
@@ -152,7 +154,7 @@ const Q_MEATLESS = qualifier('vegetarian|meatless|meat[- ]free|veggie', MEAT_KIN
 const Q_DAIRY_FREE = qualifier('dairy[- ]free|non[- ]?dairy', ['dairy']);
 const Q_EGG_FREE = qualifier('egg[- ]free|eggless', ['egg']);
 const Q_FAUX_FROM_PLANT: Exception = {
-  re: /\b(?:faux|imitation|mock)(?:\s+[\w-]+){1,2}\s+(?:made\s+)?(?:from|with|of)\s+(?:tofu|tempeh|seitan|jackfruit|mushrooms?|soy|wheat gluten|beans?|lentils?|chickpeas?|eggplant|cauliflower|walnuts?|vegetables?)\b/g,
+  re: /\b(?:faux|imitation|mock)(?:\s+[\w-]+){1,2}\s+(?:made\s+(?:from|with|of)|from)\s+(?:tofu|tempeh|seitan|jackfruit|mushrooms?|soy|wheat gluten|beans?|lentils?|chickpeas?|eggplant|cauliflower|walnuts?|vegetables?)\b/g,
   kinds: [...MEAT_KINDS, 'dairy', 'egg', 'honey'],
 };
 const MEAT_QUALIFIERS: Exception[] = [Q_ANIMAL_FREE, Q_MEATLESS, Q_FAUX_FROM_PLANT];
@@ -411,10 +413,24 @@ export function findDietViolations(
   return violations;
 }
 
-/** An ingredient that is a burger, patty or meatball with no meat in it ("black bean burgers", "vegan meatballs"). Burger buns do not count. */
+/** A positive claim that a burger or meatball is plant food: a named plant base ("black bean burger"), a meat substitute ("tofu meatballs"), or a meatless qualifier. */
+const PLANT_BURGER_SIGNAL = new RegExp(
+  String.raw`${PLANT_BURGER.re.source}|${PLANT_MEAT.source}|\b(?:vegan|vegetarian|veggie|plant[- ]based|meatless|meat[- ]free)\b`
+);
+
+/**
+ * An ingredient that is a burger, patty or meatball with no meat in it and a
+ * positive plant signal ("black bean burgers", "vegan meatballs"). Burger buns
+ * do not count, and neither do bare "patties" or "frozen patties": with no plant
+ * named, the guard fails closed and step "burgers" stay meat.
+ */
 function isPlantBurgerOrMeatball(name: string): boolean {
   const t = normalizeText(name).replace(BURGER_BUN, ' ');
-  return /\b(?:(?:ham|cheese)?burgers?|meatballs?|patt(?:y|ies))\b/.test(t) && findForbiddenTerm(t, 'vegetarian') === null;
+  return (
+    /\b(?:(?:ham|cheese)?burgers?|meatballs?|patt(?:y|ies))\b/.test(t) &&
+    PLANT_BURGER_SIGNAL.test(t) &&
+    findForbiddenTerm(t, 'vegetarian') === null
+  );
 }
 
 const SUBSTITUTION_BY_KIND: Record<HintKind, string> = {

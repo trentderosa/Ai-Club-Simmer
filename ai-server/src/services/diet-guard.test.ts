@@ -386,6 +386,62 @@ describe('review fixes: plant burgers, meatballs and buns (S2)', () => {
   });
 });
 
+describe('approval nits: faux connector and bare patties (N1, N2)', () => {
+  it.each<[DietRule, string]>([
+    ['vegetarian', 'imitation crab with mushrooms'],
+    ['no_fish', 'imitation crab with mushrooms'],
+    ['no_shellfish', 'imitation crab with mushrooms'],
+    ['vegetarian', 'imitation crab of vegetables'],
+  ])('%s flags %s (a bare "with"/"of" is not a plant claim)', (rule, text) => {
+    expect(findForbiddenTerm(text, rule)).not.toBeNull();
+  });
+  it('flags imitation crab tossed "with vegetables" in a step', () => {
+    const v = findDietViolations(
+      { ingredients: ing('cucumber', 'rice'), steps: st('Toss the imitation crab with vegetables.') },
+      ['vegetarian', 'no_fish']
+    );
+    expect(v).toEqual([
+      { rule: 'vegetarian', term: 'imitation crab', where: 'step' },
+      { rule: 'no_fish', term: 'imitation crab', where: 'step' },
+    ]);
+  });
+  it.each<[DietRule, string]>([
+    ['vegetarian', 'faux chicken made with tofu'],
+    ['vegetarian', 'mock duck made from seitan'],
+    ['vegan', 'mock duck made of seitan'],
+    ['vegetarian', 'faux chicken from tofu'],
+  ])('%s still allows %s', (rule, text) => {
+    expect(findForbiddenTerm(text, rule)).toBeNull();
+  });
+  it('"burger patties" with no plant named is itself flagged as meat', () => {
+    const v = findDietViolations(
+      { ingredients: ing('burger patties'), steps: st('Grill the burgers for 4 minutes per side.') },
+      ['vegetarian']
+    );
+    expect(v).toEqual([{ rule: 'vegetarian', term: 'burger', where: 'ingredient' }]);
+  });
+  it.each(['frozen patties', 'patties'])(
+    'an ingredient of just "%s" does not excuse step "burgers"',
+    (name) => {
+      const v = findDietViolations(
+        { ingredients: ing(name, 'burger buns'), steps: st('Grill the burgers for 4 minutes per side.') },
+        ['vegetarian']
+      );
+      expect(v).toEqual([{ rule: 'vegetarian', term: 'burgers', where: 'step' }]);
+    }
+  );
+  it.each(['vegan patties', 'veggie patties', 'meatless meatballs', 'tofu patties'])(
+    'a plant-signalled "%s" ingredient still excuses step "burgers"/"meatballs"',
+    (name) => {
+      const v = findDietViolations(
+        { ingredients: ing(name), steps: st('Grill the burgers.', 'Roll the meatballs.') },
+        ['vegetarian']
+      );
+      expect(v).toEqual([]);
+    }
+  );
+});
+
 describe('review fixes: beer, hoisin, pesto, bone broth (S3)', () => {
   const flagged: Array<[DietRule, string, string]> = [
     ['gluten_free', 'beer', 'beer'],
