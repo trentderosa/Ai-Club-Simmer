@@ -93,7 +93,7 @@ REVOKE ALL ON dish_catalog FROM PUBLIC, anon, authenticated;
 GRANT SELECT ON dish_catalog TO authenticated;
 GRANT SELECT ON dish_catalog TO service_role;
 
--- Seed: 8 dishes per slot. A NULL name means "the slot's canonical dish"
+-- Seed: 81 dishes: 9 for slot 8, 8 for every other slot. A NULL name means "the slot's canonical dish"
 -- (taken from path_slots.dish_name so the two can never disagree).
 INSERT INTO dish_catalog (slot_id, dish_name, cuisines, meal_types, contains)
 SELECT s.id, COALESCE(v.dish_name, s.dish_name), v.cuisines::TEXT[], v.meal_types::TEXT[], v.contains::TEXT[]
@@ -256,8 +256,11 @@ GRANT SELECT ON user_path_dishes TO service_role;
 -- -----------------------------------------------------------------------------
 -- 4b. personalize_path_hits: per-user rate limit for personalize_my_path()
 -- Changing a dish deletes the cached recipe (a new model generation), so
--- toggling preferences is capped at 10 calls per rolling hour. Server-only:
--- RLS on, no client policies or grants.
+-- toggling preferences is capped at 10 calls per rolling hour. Dietary_needs
+-- changes (profiles trigger) also record a hit, so they count toward the same
+-- budget but are never blocked. A re-pick that fixes a diet conflict bypasses
+-- the limit (see personalize_my_path). Server-only: RLS on, no client
+-- policies or grants.
 -- -----------------------------------------------------------------------------
 CREATE TABLE personalize_path_hits (
     id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -379,8 +382,11 @@ CREATE TRIGGER profiles_dietary_needs_invalidate_recipes
 -- A changed dish deletes the user's cached user_recipes row for that slot
 -- (it was generated for the old dish).
 -- Returns all 10 slots with the dish now in effect.
--- Rate limit: at most 10 calls per user per rolling hour; over the limit it
--- raises 'PERSONALIZE_RATE_LIMITED' (SQLSTATE P0001) and changes nothing.
+-- Rate limit: at most 10 calls per user per rolling hour (diet changes count
+-- toward it); over the limit it raises 'PERSONALIZE_RATE_LIMITED' (SQLSTATE
+-- P0001) and changes nothing. EXCEPTION: if any unstarted slot's current pick
+-- conflicts with the user's current dietary needs, the call is always allowed
+-- (a safety re-pick), and still records a hit.
 -- Concurrency: before touching a slot the function locks that slot's
 -- user_recipes row (check-ins and mastery sessions take a KEY SHARE lock on it
 -- when inserted) and then re-checks "started" in a new statement, so a
@@ -404,6 +410,7 @@ DECLARE
     v_pick_id BIGINT;
     v_pick_name TEXT;
     v_hits INTEGER;
+    v_conflict BOOLEAN;
 BEGIN
     IF v_user IS NULL THEN
         RAISE EXCEPTION 'Authentication required';
@@ -416,7 +423,18 @@ BEGIN
     SELECT COUNT(*)::INTEGER INTO v_hits
     FROM public.personalize_path_hits h
     WHERE h.user_id = v_user;
-    IF v_hits >= 10 THEN
+    SELECT EXISTS (
+        SELECT 1
+        FROM public.user_path_dishes upd
+        JOIN public.dish_catalog d ON d.id = upd.catalog_dish_id
+        JOIN public.profiles pr ON pr.id = upd.user_id
+        WHERE upd.user_id = v_user
+          AND d.contains && public.excluded_contains(pr.dietary_needs)
+          AND NOT EXISTS (SELECT 1 FROM public.check_ins c WHERE c.user_id = v_user AND c.slot_id = upd.slot_id)
+          AND NOT EXISTS (SELECT 1 FROM public.user_slot_completions u WHERE u.user_id = v_user AND u.slot_id = upd.slot_id)
+          AND NOT EXISTS (SELECT 1 FROM public.mastery_sessions m WHERE m.user_id = v_user AND m.slot_id = upd.slot_id)
+    ) INTO v_conflict;
+    IF v_hits >= 10 AND NOT v_conflict THEN
         RAISE EXCEPTION 'PERSONALIZE_RATE_LIMITED'
             USING ERRCODE = 'P0001', HINT = 'At most 10 path updates per hour';
     END IF;

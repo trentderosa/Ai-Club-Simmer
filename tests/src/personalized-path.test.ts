@@ -490,12 +490,35 @@ describe('personalized path dishes', () => {
     it('counts dietary_needs changes toward the hourly budget without ever blocking the update', async () => {
       await q('DELETE FROM personalize_path_hits WHERE user_id = $1', [user.id]);
       for (let i = 0; i < 12; i++) {
-        await setPrefs(user.id, { dietary_needs: i % 2 === 0 ? ['no_pork'] : ['no_beef'] });
+        await asUser(user.id, `UPDATE profiles SET dietary_needs = $2 WHERE id = $1`, [user.id, i % 2 === 0 ? ['no_pork'] : ['no_beef']]);
       }
+      await asUser(user.id, `UPDATE profiles SET dietary_needs = '{no_beef,no_pork}' WHERE id = $1`, [user.id]);
+      // Reorder-only update (same set) adds no hit.
+      await asUser(user.id, `UPDATE profiles SET dietary_needs = '{no_pork,no_beef}' WHERE id = $1`, [user.id]);
       const rows = await q<{ dietary_needs: string[] }>('SELECT dietary_needs FROM profiles WHERE id = $1', [user.id]);
-      expect(rows[0].dietary_needs).toEqual(['no_beef']);
+      expect(rows[0].dietary_needs).toEqual(['no_pork', 'no_beef']);
       const hits = await q<{ n: string }>('SELECT count(*) AS n FROM personalize_path_hits WHERE user_id = $1', [user.id]);
-      expect(Number(hits[0].n)).toBe(12);
+      expect(Number(hits[0].n)).toBe(13);
+      await expect(asUser(user.id, 'SELECT * FROM personalize_my_path()')).rejects.toThrow(/PERSONALIZE_RATE_LIMITED/);
+    });
+
+    it('a diet-conflict re-pick bypasses the rate limit; without a conflict it is still limited', async () => {
+      await q(`INSERT INTO user_path_dishes (user_id, slot_id, catalog_dish_id, dish_name)
+               SELECT $1, 8, d.id, d.dish_name FROM dish_catalog d WHERE d.slot_id = 8 AND d.dish_name = 'Pan-Seared Pork Chops with Apples'
+               ON CONFLICT (user_id, slot_id) DO UPDATE SET catalog_dish_id = EXCLUDED.catalog_dish_id, dish_name = EXCLUDED.dish_name`, [user.id]);
+      // Exhaust the limit (pork pick is fine for now: no diet set).
+      await q('DELETE FROM personalize_path_hits WHERE user_id = $1', [user.id]);
+      await q('INSERT INTO personalize_path_hits (user_id) SELECT $1 FROM generate_series(1, 10)', [user.id]);
+      await expect(asUser(user.id, 'SELECT * FROM personalize_my_path()')).rejects.toThrow(/PERSONALIZE_RATE_LIMITED/);
+
+      await setPrefs(user.id, { dietary_needs: ['vegetarian'] });
+      const rows = await asUser<{ slot_id: number; dish_name: string }>(user.id, 'SELECT * FROM personalize_my_path()');
+      expect(rows.find((r) => r.slot_id === 8)!.dish_name).not.toBe('Pan-Seared Pork Chops with Apples');
+      const now = await q<{ dish_name: string }>('SELECT dish_name FROM user_path_dishes WHERE user_id = $1 AND slot_id = 8', [user.id]);
+      expect(now[0].dish_name).not.toBe('Pan-Seared Pork Chops with Apples');
+
+      // No conflict left: limited again.
+      await q('INSERT INTO personalize_path_hits (user_id) SELECT $1 FROM generate_series(1, 10)', [user.id]);
       await expect(asUser(user.id, 'SELECT * FROM personalize_my_path()')).rejects.toThrow(/PERSONALIZE_RATE_LIMITED/);
     });
 
@@ -505,7 +528,7 @@ describe('personalized path dishes', () => {
       for (let i = 0; i < 10; i++) await asUser(user.id, 'SELECT * FROM personalize_my_path()');
       const before = await q('SELECT slot_id, dish_name FROM user_path_dishes WHERE user_id = $1 ORDER BY slot_id', [user.id]);
 
-      await setPrefs(user.id, { cuisines: ['korean'], dietary_needs: ['vegan'] });
+      await setPrefs(user.id, { cuisines: ['korean'] });
       await expect(asUser(user.id, 'SELECT * FROM personalize_my_path()')).rejects.toThrow(/PERSONALIZE_RATE_LIMITED/);
       const after = await q('SELECT slot_id, dish_name FROM user_path_dishes WHERE user_id = $1 ORDER BY slot_id', [user.id]);
       expect(after).toEqual(before);
