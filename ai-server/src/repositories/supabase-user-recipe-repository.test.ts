@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { SupabaseUserRecipeRepository } from './supabase-user-recipe-repository.js';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 import type { Recipe } from '../schemas/recipe.js';
 
 const TEST_CONFIG = {
@@ -256,6 +257,70 @@ describe('SupabaseUserRecipeRepository', () => {
       expect(error).toBeInstanceOf(Error);
       expect((error as Error).message).toBe('Supabase video update timed out after 20ms');
       expect((error as Error).message).not.toContain(TEST_CONFIG.serviceRoleKey);
+    });
+  });
+
+  describe('request timeouts', () => {
+    const hangUntilAborted = (): typeof fetch =>
+      vi.fn().mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+          })
+      );
+
+    it('passes an AbortSignal on read and insert requests', async () => {
+      const fetchMock = createMockFetch([
+        { status: 200, body: [] },
+        { status: 201, body: [mockDbRow] },
+      ]);
+      globalThis.fetch = fetchMock;
+      const repo = new SupabaseUserRecipeRepository(TEST_CONFIG);
+
+      await repo.findByUserAndSlot('user-123', 1);
+      await repo.save('user-123', 1, testRecipe);
+
+      const calls = (fetchMock as unknown as ReturnType<typeof vi.fn>).mock.calls as Array<[string, RequestInit]>;
+      expect(calls).toHaveLength(2);
+      for (const [, init] of calls) {
+        expect(init.signal).toBeInstanceOf(AbortSignal);
+      }
+    });
+
+    it('times out a hung read with a SupabaseRestError', async () => {
+      globalThis.fetch = hangUntilAborted();
+      const repo = new SupabaseUserRecipeRepository({ ...TEST_CONFIG, timeoutMs: 20 });
+      const error = await repo.findByUserAndSlot('user-123', 1).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(SupabaseRestError);
+      expect((error as SupabaseRestError).kind).toBe('timeout');
+      expect((error as SupabaseRestError).message).toBe('Supabase recipe query timed out after 20ms');
+    });
+
+    it('times out a hung insert with a SupabaseRestError', async () => {
+      globalThis.fetch = hangUntilAborted();
+      const repo = new SupabaseUserRecipeRepository({ ...TEST_CONFIG, timeoutMs: 20 });
+      const error = await repo.save('user-123', 1, testRecipe).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(SupabaseRestError);
+      expect((error as SupabaseRestError).kind).toBe('timeout');
+      expect((error as SupabaseRestError).message).toBe('Supabase recipe insert timed out after 20ms');
+    });
+
+    it('times out when the response body never arrives', async () => {
+      globalThis.fetch = vi.fn().mockImplementation(
+        (_url: string, init: RequestInit) =>
+          Promise.resolve({
+            ok: true,
+            status: 200,
+            json: () =>
+              new Promise((_resolve, reject) => {
+                init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+              }),
+          })
+      );
+      const repo = new SupabaseUserRecipeRepository({ ...TEST_CONFIG, timeoutMs: 20 });
+      const error = await repo.findByUserAndSlot('user-123', 1).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(SupabaseRestError);
+      expect((error as SupabaseRestError).kind).toBe('timeout');
     });
   });
 });

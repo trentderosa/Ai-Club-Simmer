@@ -115,6 +115,7 @@ The first call generates the recipe with Ollama, which can take 10–60 s, so sh
   - `503 { error, code: "AUTH_UNAVAILABLE" }`: sign-in could not be checked (the auth service was unreachable, or verification hit an unexpected error), so the request was not processed. Retry shortly.
   - `503 { code: "GENERATION_BUSY" }` with a `Retry-After` header (seconds): the model queue is full, the wait ran out, or the per-request time budget (`OLLAMA_REQUEST_BUDGET_MS`) ran out. Nothing was generated and the call is not retried server side. Show a short message and a way to try again.
     `Retry-After` is exposed to browsers through CORS (`Access-Control-Expose-Headers: Retry-After`, sent only to allowed origins), so the web build can read it. The JSON `error` text says "The kitchen is busy right now. Try again in about 30 seconds."
+  - `503 { code: "DATABASE_UNAVAILABLE" }`: reading or saving the recipe timed out in the database (5 seconds). Retry shortly.
   - `429`: rate limited.
 
 
@@ -170,7 +171,8 @@ const { data } = await supabase
   - `401`: bad or expired token.
   - `400 { code: "INVALID_DISH" }`: empty, too long, junk, or rejected input.
   - `404`: onboarding isn't finished.
-  - `429`: per-user uncached generation rate limit (default 5 per hour). The count is stored in the database and survives an AI server restart. Cache hits are not limited.
+  - `429 { code: "GENERATION_RATE_LIMITED" }`: per-user uncached generation rate limit (default 5 per hour). The count is stored in the database and survives an AI server restart. Cache hits are not limited. Suggest a dish the user already saved, or trying again later.
+  - `429` with no `code`: per-IP request limit on `/api/recipes/*` (default 10 per minute, set with `RATE_LIMIT_MAX_REQUESTS` and `RATE_LIMIT_WINDOW_MS`), checked before auth and before the generation limit. It is shared with the other recipe calls, so path recipe generate and preview requests from the same IP count toward it too. Treat it like any other rate limit and try again shortly.
   - `503 { code: "GENERATION_RATE_LIMIT_UNAVAILABLE" }`: the generation limit could not be checked, so a new recipe was not started. A saved dish still loads. This is not the auth-service 503.
   - `503 { code: "GENERATION_BUSY" }` with a `Retry-After` header (seconds): the model queue is full, the wait ran out, or the per-request time budget (`OLLAMA_REQUEST_BUDGET_MS`) ran out. Requests that are busy before any model output do not count toward the 5 per hour: a request that arrives when the queue is already full skips the per-user generation limit, and one that finds the queue full right after the limit check, or waited in the queue and timed out on the first try, is refunded (best effort, by migration `20261121200000_cook_anything_generation_refund.sql`, applied after merge; until it is applied those requests still count). Busy after a completed model call (a later try) and other failures still count. Show "The kitchen is busy right now. Try again in about N seconds." (minutes from 60 s up) with **Retry**. Only an integer `Retry-After` is used, clamped to 1-300; an HTTP-date or invalid value is ignored and the message says "in a minute". The app's error kind is `busy`.
   - `500`: generation failed after 3 tries. Show a **Retry** button.
@@ -229,6 +231,7 @@ Response `201`:
   - `409 MASTERY_SESSION_USED`: that session already backs another check-in. Start a new one.
   - `400 VALIDATION_ERROR`
   - `409 IDEMPOTENCY_CONFLICT`: the key was already used for a different check-in
+  - `503 { code: "DATABASE_UNAVAILABLE" }`: a database request timed out (5 seconds). The check-in may or may not have been saved; retry with the same `idempotency_key`, which replays safely.
   - `401`
   - `429`
 

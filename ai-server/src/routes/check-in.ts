@@ -7,6 +7,8 @@ import type { JwtVerifier } from '../services/jwt-verifier.js';
 import { createAuthMiddleware } from '../middleware/authenticate.js';
 import { createPreAuthIpLimiter } from '../middleware/pre-auth-ip-limiter.js';
 import { safeErrorFields } from '../services/safe-error.js';
+import { isDatabaseTimeout } from '../services/supabase-rest.js';
+import { sendDatabaseUnavailable } from './database-unavailable.js';
 
 export interface CheckInRouterDeps {
   checkInService: CheckInService;
@@ -163,6 +165,10 @@ export function createCheckInRouter(
       console.error('check_in_error', {
         ...safeErrorFields(error),
       });
+      if (isDatabaseTimeout(error)) {
+        sendDatabaseUnavailable(res);
+        return;
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   });

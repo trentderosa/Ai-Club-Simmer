@@ -7,6 +7,8 @@ import { generateRecipe, PathSlot } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { OllamaBudget } from '../services/ollama-budget.js';
 import { sendGenerationBusy } from './generation-busy.js';
+import { sendDatabaseUnavailable } from './database-unavailable.js';
+import { isDatabaseTimeout } from '../services/supabase-rest.js';
 import type { SupabaseService } from '../services/supabase.js';
 import { storedTechniqueVideosMatch, type VideoFinder } from '../services/video-finder.js';
 import type { DishPhoto, DishPhotoFinder } from '../services/dish-photo.js';
@@ -315,6 +317,10 @@ export function createRecipeRouter(
       console.error('recipe_generation_route_error', {
         ...safeErrorFields(error),
       });
+      if (isDatabaseTimeout(error)) {
+        sendDatabaseUnavailable(res);
+        return;
+      }
       res.status(500).json({
         error: 'Internal server error',
       });
