@@ -2,10 +2,12 @@ import { z, ZodError } from 'zod';
 import { Recipe, RecipeSchema, MAX_TECHNIQUE_NAME_LENGTH, getRecipeJsonSchema } from '../schemas/recipe.js';
 import { UserProfile } from '../schemas/user.js';
 import type { OllamaClient } from './ollama-client.js';
-import { countedHiddenStepCount, MASTERY_MIN_HIDDEN_STEPS, MASTERY_MIN_STEPS } from '../mastery/mask.js';
+import { countedHiddenStepCount, isTrivialStep, MASTERY_MIN_HIDDEN_STEPS, MASTERY_MIN_STEPS } from '../mastery/mask.js';
 import { logGenerationFailure } from './generation-failure.js';
 import { OllamaBusyError, OllamaPreemptedError } from './ollama-gate.js';
 import { startDeadline, type OllamaBudget } from './ollama-budget.js';
+import { parseDietRules, findDietViolations, dietCorrectiveHint, dietPromptHint } from './diet-guard.js';
+import { ensureDonenessSteps } from './doneness.js';
 
 export interface RecipeGenerationResult {
   success: true;
@@ -167,6 +169,7 @@ export const FOOD_SAFETY_RULE =
 /** Shared by the path and Cook anything prompts. */
 export const RECIPE_CONSISTENCY_RULES = `INGREDIENTS AND STEPS MUST MATCH: Every food a step uses (including oil, butter, and seasonings) must be in the ingredients list, and every listed ingredient must be used in a step. Do not add foods the dish does not need.
 POULTRY DONENESS: If the recipe cooks chicken, turkey, or other poultry, the step that finishes cooking it must say to check that the thickest part reaches 165°F (74°C).
+MEAT AND SEAFOOD DONENESS: If the recipe cooks ground beef or ground pork, the step that finishes cooking it must say to check that it reaches 160°F (71°C). Whole cuts of pork, beef, or lamb must reach 145°F (63°C) and then rest 3 minutes. Fish must reach 145°F (63°C) or flake easily with a fork. Shrimp must turn pink and opaque.
 AMOUNTS: Write each amount in plain words and numbers, such as "2", "1 cup", "1/2 tsp", or "to taste".
 ORDER: Write the steps in the order the cook does them.`;
 
@@ -234,9 +237,10 @@ Based on this feedback, include a short "coachNote" at the top of the recipe tha
   }
 
   // Dietary constraint instructions only added when user has dietary needs
+  const dietHint = dietPromptHint(parseDietRules(user.dietaryNeeds));
   const dietaryConstraint =
     user.dietaryNeeds && user.dietaryNeeds.length > 0
-      ? `\n7. RESPECT dietary needs: Do NOT include any ingredients that violate the user's dietary restrictions.`
+      ? `\n7. RESPECT dietary needs: Do NOT include any ingredients that violate the user's dietary restrictions.${dietHint ? ` ${dietHint}` : ''}`
       : '';
 
   // Sanitize slot fields (from database, but could be user-influenced in future)
@@ -565,6 +569,72 @@ function ensureSafetyFlags(recipe: Recipe): Recipe {
   };
 }
 
+// Slot 10 repair: a step the model flagged as safety that is plainly prep.
+// It must start with a prep verb, and must not hold any heat, knife, raw
+// protein, or hot-liquid word. Conservative on purpose: a step that cannot be
+// shown to be prep stays a safety step.
+const PREP_START_RE =
+  /^\s*(?:gather|measure|combine|mix|whisk|toss|season|sprinkle|rest|let\b[^.]{0,40}\brest|arrange|set\s+aside|fold|assemble|stir\s+together)\b/i;
+const PREP_START_WITH_BOWL_RE = /^\s*(?:add|place|spoon|drizzle|spread|arrange)\b/i;
+const PREP_CONTAINER_RE = /\b(?:bowl|plate|platter|jar|container|dish)\b/i;
+const PREP_BLOCKER_RE =
+  /\b(?:warm|lid|sizzl\w*|bubbl\w*|golden|browned|crisp\w*|melt\w*|tender|soft(?:en\w*)?|cook\w*|water|oil|soup|broth|stock|liquid|sheet|rack|tray|egg|eggs|chicken|beef|pork|lamb|turkey|duck|fish|salmon|shrimp|meat|bacon|sausage|poultry)\b/i;
+
+function isPlainPrepStep(step: Recipe['steps'][number]): boolean {
+  const text = step.instruction;
+  if (SAFETY_KEYWORD_PATTERNS.some((pattern) => pattern.test(text))) return false;
+  if (
+    hasAffirmativeProteinRinse(text) ||
+    isPoultryDonenessWithoutTemperature(text) ||
+    isTemperatureCheckStep(text) ||
+    hasProtectiveProteinHandling(text)
+  ) {
+    return false;
+  }
+  if (PREP_BLOCKER_RE.test(text)) return false;
+  return PREP_START_RE.test(text) || (PREP_START_WITH_BOWL_RE.test(text) && PREP_CONTAINER_RE.test(text));
+}
+
+/**
+ * Slot 10 repair. Small models often flag every step as a safety step, which
+ * leaves too few hideable steps. When the recipe is short of
+ * MASTERY_MIN_HIDDEN_STEPS, clear the flag on steps that are plainly prep (see
+ * isPlainPrepStep) and are long enough to count, only as many as needed.
+ * Returns the repaired recipe and whether it now meets the minimum. Never
+ * lowers the minimum, never touches a step with a heat, knife, raw-protein, or
+ * rinse word, and never touches the step text.
+ */
+export function repairMasteryHideableSteps(recipe: Recipe): { recipe: Recipe; meetsMinimum: boolean } {
+  let counted = countedHiddenStepCount(recipe);
+  if (counted >= MASTERY_MIN_HIDDEN_STEPS) return { recipe, meetsMinimum: true };
+  const steps = recipe.steps.map((step) => {
+    if (counted >= MASTERY_MIN_HIDDEN_STEPS || !step.isSafetyStep) return step;
+    if (isTrivialStep(step) || !isPlainPrepStep(step)) return step;
+    counted += 1;
+    return { ...step, isSafetyStep: false };
+  });
+  return { recipe: { ...recipe, steps }, meetsMinimum: counted >= MASTERY_MIN_HIDDEN_STEPS };
+}
+
+/** Which steps (1-based) are flagged safety but are plain prep: the model should unflag these. */
+function prepStepsFlaggedSafety(recipe: Recipe): number[] {
+  return recipe.steps.flatMap((step, i) =>
+    step.isSafetyStep && !isTrivialStep(step) && isPlainPrepStep(step) ? [i + 1] : []
+  );
+}
+
+/** Corrective note for the next attempt when the final recipe has too few hideable steps. */
+function masteryRetryHint(recipe: Recipe, hideable: number): string {
+  const prep = prepStepsFlaggedSafety(recipe);
+  const named = prep.length > 0 ? ` Steps ${prep.join(', ')} of the last recipe are plain prep and must have isSafetyStep false.` : '';
+  return `CORRECTION: The last recipe had only ${hideable} steps with isSafetyStep false, but at least ${MASTERY_MIN_HIDDEN_STEPS} are required.${named} Include at least ${MASTERY_MIN_HIDDEN_STEPS} full-sentence prep steps (gather and measure ingredients, mix a seasoning or sauce in a bowl, let the dish rest) that involve no heat, knives, raw meat, or oil, and set isSafetyStep to false only for those. Keep every heat, knife, raw meat, and hot oil step flagged true.`;
+}
+
+/** Keeps an edited recipe only if it still passes the schema (e.g. the step limit). */
+function withinSchema<T extends Recipe>(edited: T, original: T): T {
+  return edited === original || RecipeSchema.safeParse(edited).success ? edited : original;
+}
+
 /** SyntaxError messages quote model text, so only this reason is logged for them. */
 export const INVALID_JSON_REASON = 'invalid_json';
 
@@ -657,6 +727,9 @@ export async function generateRecipe(
   } = {}
 ): Promise<RecipeGenerationResponse> {
   const prompt = buildPrompt(slot, user);
+  const dietRules = parseDietRules(user.dietaryNeeds);
+  // Short corrective note from the last failed attempt, added to the next prompt only.
+  let retryHint = '';
   const jsonSchema = getRecipeJsonSchema();
   // Caps queue time plus Ollama time for the whole request, retries included.
   const deadline = options.budget ? startDeadline(options.budget) : null;
@@ -710,9 +783,11 @@ export async function generateRecipe(
 
     try {
       // Call Ollama with structured JSON output format
+      const attemptPrompt = retryHint ? `${prompt}\n\n${retryHint}` : prompt;
+      retryHint = '';
       const responseText = callOptions
-        ? await client.generate(prompt, jsonSchema, callOptions)
-        : await client.generate(prompt, jsonSchema);
+        ? await client.generate(attemptPrompt, jsonSchema, callOptions)
+        : await client.generate(attemptPrompt, jsonSchema);
 
       // Step 1: Parse as JSON. LLMs sometimes output malformed JSON despite schema.
       let parsed: unknown;
@@ -744,7 +819,32 @@ export async function generateRecipe(
       // Step 3: Post-process to ensure safety flags are set.
       // Only reached if schema validation passed - never returns half-valid data.
       // Cleanup runs first so the hideable-step count sees the final recipe.
-      const recipeWithSafetyFlags = ensureSafetyFlags(cleanRecipe(validationResult.data));
+      const cleaned = cleanRecipe(validationResult.data);
+
+      // Dietary needs are enforced here, not only in the prompt. A violation is a
+      // failed attempt and is never kept as a fallback. Checked before the
+      // doneness step is added so only the model's own text is scanned.
+      const dietViolations = findDietViolations(cleaned, dietRules);
+      if (dietViolations.length > 0) {
+        console.warn('Recipe attempt rejected', {
+          reason: 'diet_violation',
+          attempt,
+          violations: dietViolations.map((v) => ({ rule: v.rule, term: v.term, where: v.where })),
+        });
+        retryHint = dietCorrectiveHint(dietViolations);
+        lastError = new Error('diet_violation');
+        continue;
+      }
+
+      // Insert a doneness check for ground meat, whole cuts, fish, or shrimp when
+      // the model gave none. Always a safety step, so slot 10 counts are unchanged.
+      const withDoneness = withinSchema(ensureDonenessSteps(cleaned), cleaned);
+      let recipeWithSafetyFlags = ensureSafetyFlags(withDoneness);
+
+      // Slot 10: when the model flagged plain prep steps as safety, clear those flags.
+      if (slot.isFinal) {
+        recipeWithSafetyFlags = repairMasteryHideableSteps(recipeWithSafetyFlags).recipe;
+      }
 
       // An affirmative rinse is a failed attempt. The flag stays on the recipe so
       // that, if every attempt still rinses, the saved fallback is marked and
@@ -773,6 +873,7 @@ export async function generateRecipe(
           lastError = new Error(
             `Mastery recipe had ${hideable} hideable steps, needs at least ${MASTERY_MIN_HIDDEN_STEPS}`
           );
+          retryHint = masteryRetryHint(recipeWithSafetyFlags, hideable);
           continue;
         }
       }
