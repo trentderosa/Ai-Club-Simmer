@@ -16,3 +16,12 @@ export async function rpcRecipeBook(rpc: Rpc): Promise<RpcResult> {
   if (v2.error && isMissingFunctionError(v2.error)) return rpc('get_my_recipe_book');
   return v2;
 }
+
+/**
+ * A PostgREST error caused by a column the database doesn't have yet:
+ * 42703 (undefined_column, on select), PGRST204 (column missing from the
+ * schema cache, on insert/upsert), or the matching message text.
+ */
+export function isMissingColumnError(e: { message?: string; code?: string }): boolean {
+  return e.code === '42703' || e.code === 'PGRST204' || /column .*does not exist|could not find the '.*' column/i.test(e.message ?? '');
+}

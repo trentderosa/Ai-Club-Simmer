@@ -2,6 +2,7 @@ import { ZodError } from 'zod';
 import { getRecipeJsonSchema, type Recipe } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 import {
+  dropUnsafeCoachNote,
   cleanRecipe,
   ensureSafetyFlags,
   INVALID_JSON_REASON,
@@ -85,7 +86,7 @@ export async function generateCookAnythingRecipe(
         lastError = validationResult.error;
         continue;
       }
-      const cleaned = cleanRecipe(validationResult.data, FreeformRecipeSchema);
+      const cleaned = dropUnsafeCoachNote(cleanRecipe(validationResult.data, FreeformRecipeSchema));
       // Same dietary check as path recipes: a violation is a failed attempt and never a fallback.
       const dietViolations = findDietViolations(cleaned, dietRules);
       if (dietViolations.length > 0) {

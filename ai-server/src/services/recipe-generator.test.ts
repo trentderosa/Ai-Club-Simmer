@@ -352,6 +352,20 @@ describe('buildPrompt', () => {
     expect(prompt).toContain('RESPECT dietary needs');
   });
 
+  it('puts free-text dietary needs inside a user_data block, not the instructions', () => {
+    const prompt = buildPrompt(mockSlot, {
+      ...mockUserProfile,
+      dietaryNeeds: ['peanut allergy'],
+    });
+    const start = prompt.indexOf('<user_data>');
+    const end = prompt.indexOf('</user_data>');
+    expect(start).toBeGreaterThan(-1);
+    const inside = prompt.slice(start, end);
+    expect(inside).toContain('peanut allergy');
+    expect(prompt.slice(0, start)).not.toContain('peanut allergy');
+    expect(prompt.slice(end)).not.toContain('peanut allergy');
+  });
+
   it('does not include dietary section when not provided', () => {
     const prompt = buildPrompt(mockSlot, mockUserProfile);
 
@@ -1352,5 +1366,127 @@ describe('generateRecipe - shouldRetry and immediateOnly', () => {
     expect(client.generate).toHaveBeenCalledTimes(1);
     expect(result.success).toBe(false);
     if (!result.success) expect(result.error.type).toBe('busy');
+  });
+});
+
+describe('generateRecipe - Coach note in the structured output (F6)', () => {
+  const requiredFor = async (user: UserProfile): Promise<string[]> => {
+    const client = createMockOllamaClient([JSON.stringify(validRecipeResponse)]);
+    await generateRecipe(client, mockSlot, user);
+    const schema = vi.mocked(client.generate).mock.calls[0][1] as { required: string[] };
+    return schema.required;
+  };
+
+  it('requires coachNote when the user has recent check-ins', async () => {
+    const required = await requiredFor({
+      ...mockUserProfile,
+      recentCheckIns: [{ recipeName: 'Toast', difficulty: 'hard' }],
+    });
+    expect(required).toContain('coachNote');
+  });
+
+  it('does not require coachNote with no or empty check-ins', async () => {
+    expect(await requiredFor(mockUserProfile)).not.toContain('coachNote');
+    expect(await requiredFor({ ...mockUserProfile, recentCheckIns: [] })).not.toContain('coachNote');
+  });
+});
+
+describe('buildPrompt - technique names and poultry closing line', () => {
+  it('uses grounded technique-name wording, not the "pan toast" example', () => {
+    const prompt = buildPrompt(mockSlot, mockUserProfile);
+    expect(prompt).not.toContain('pan toast');
+    expect(prompt).toContain('2 or 3 plain words taken from that step itself');
+    expect(prompt).toContain('"dice onion"');
+  });
+
+  it('ends the recipe list with the poultry thermometer line', () => {
+    const prompt = buildPrompt(mockSlot, mockUserProfile);
+    expect(prompt).toContain(
+      '- If it cooks chicken or other poultry, a step that checks the thickest part reaches 165°F (74°C)'
+    );
+  });
+});
+
+describe('generateRecipe - unsafe coachNote is dropped', () => {
+  const withNote = (coachNote: string): string => JSON.stringify({ ...validRecipeResponse, coachNote });
+
+  it('drops a coachNote that says to rinse raw chicken, keeps the recipe, and logs the reason only', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const client = createMockOllamaClient([withNote('Rinse the chicken before cooking.')]);
+    const result = await generateRecipe(client, mockSlot, mockUserProfile);
+    expect(client.generate).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.recipe.coachNote).toBeUndefined();
+      expect(result.recipe.steps.map((s) => s.instruction)).toEqual(
+        validRecipeResponse.steps.map((s) => s.instruction)
+      );
+    }
+    expect(warn).toHaveBeenCalledWith('recipe_coach_note_dropped', { reason: 'unsafe_raw_protein_rinse' });
+    warn.mockRestore();
+  });
+
+  it('keeps a safe coachNote', async () => {
+    const note = "Don't rinse the chicken; pat it dry.";
+    const client = createMockOllamaClient([withNote(note)]);
+    const result = await generateRecipe(client, mockSlot, mockUserProfile);
+    expect(result.success && result.recipe.coachNote).toBe(note);
+  });
+});
+
+describe('generateRecipe - empty coachNote is dropped', () => {
+  const withNote = (coachNote: string): string => JSON.stringify({ ...validRecipeResponse, coachNote });
+  const userWithCheckIns: UserProfile = {
+    ...mockUserProfile,
+    recentCheckIns: [{ recipeName: 'Toast', difficulty: 'hard' }],
+  };
+
+  it.each([
+    ['empty', ''],
+    ['whitespace-only', '   \n\t '],
+  ])('drops an %s coachNote and keeps the recipe without another attempt', async (_label, note) => {
+    const client = createMockOllamaClient([withNote(note)]);
+    const result = await generateRecipe(client, mockSlot, userWithCheckIns);
+    expect(client.generate).toHaveBeenCalledTimes(1);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect('coachNote' in result.recipe).toBe(false);
+      expect(result.recipe.title).toBe(validRecipeResponse.title);
+    }
+  });
+
+  it('trims a normal coachNote and keeps it', async () => {
+    const client = createMockOllamaClient([withNote('  Last time the heat ran high, so start on medium.\n')]);
+    const result = await generateRecipe(client, mockSlot, userWithCheckIns);
+    expect(result.success && result.recipe.coachNote).toBe('Last time the heat ran high, so start on medium.');
+  });
+
+  it('cleanRecipe drops an empty or whitespace coachNote and trims a real one', () => {
+    expect('coachNote' in cleanRecipe({ ...validRecipeResponse, coachNote: '' })).toBe(false);
+    expect('coachNote' in cleanRecipe({ ...validRecipeResponse, coachNote: '   ' })).toBe(false);
+    expect(cleanRecipe({ ...validRecipeResponse, coachNote: ' Nice. ' }).coachNote).toBe('Nice.');
+    expect('coachNote' in cleanRecipe(validRecipeResponse)).toBe(false);
+  });
+
+  it('cleanRecipe still drops an empty coachNote when it keeps the uncleaned recipe', () => {
+    const rejectAll = { safeParse: () => ({ success: false }) } as unknown as Parameters<typeof cleanRecipe>[1];
+    const kept = cleanRecipe({ ...validRecipeResponse, title: 'Simmer: Eggs', coachNote: '  ' }, rejectAll);
+    expect(kept.title).toBe('Simmer: Eggs');
+    expect('coachNote' in kept).toBe(false);
+    expect(cleanRecipe({ ...validRecipeResponse, coachNote: ' Hi. ' }, rejectAll).coachNote).toBe('Hi.');
+  });
+});
+
+describe('buildPrompt - raw poultry coachNote line', () => {
+  const line = 'cook it until the thickest part reaches 165°F (74°C), not to pat it dry';
+
+  it('is present with check-ins and absent without', () => {
+    const withCheckIn = buildPrompt(mockSlot, {
+      ...mockUserProfile,
+      recentCheckIns: [{ recipeName: 'Toast', difficulty: 'hard' }],
+    });
+    expect(withCheckIn).toContain(line);
+    expect(withCheckIn.indexOf(line)).toBeGreaterThan(withCheckIn.indexOf('</user_data>'));
+    expect(buildPrompt(mockSlot, mockUserProfile)).not.toContain(line);
   });
 });

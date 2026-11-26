@@ -19,6 +19,8 @@ import {
 import { generateCookAnythingRecipe } from '../cook-anything/generator.js';
 import { sanitizeRecipeVideos, youtubeWatchUrl } from '../cook-anything/youtube-url.js';
 import { safeErrorFields } from '../services/safe-error.js';
+import { isDatabaseTimeout } from '../services/supabase-rest.js';
+import { sendDatabaseUnavailable } from './database-unavailable.js';
 
 export interface CookAnythingRouterDeps {
   /** The shared gate in production. A plain client (tests) has no isSaturated. */
@@ -396,6 +398,10 @@ export function createCookAnythingRouter(
       console.error('cook_anything_error', {
         ...safeErrorFields(error),
       });
+      if (isDatabaseTimeout(error)) {
+        sendDatabaseUnavailable(res);
+        return;
+      }
       res.status(500).json({ error: 'Internal server error' });
     }
   });

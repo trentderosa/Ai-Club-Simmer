@@ -6,6 +6,8 @@ import { createPreAuthIpLimiter } from '../middleware/pre-auth-ip-limiter.js';
 import type { JwtVerifier } from '../services/jwt-verifier.js';
 import { MasteryError, type MasteryErrorCode, type MasteryRepository } from '../repositories/mastery-repository.js';
 import { safeErrorFields } from '../services/safe-error.js';
+import { isDatabaseTimeout } from '../services/supabase-rest.js';
+import { sendDatabaseUnavailable } from './database-unavailable.js';
 
 export interface MasteryRouterDeps {
   jwtVerifier: JwtVerifier;
@@ -86,6 +88,10 @@ export function createMasteryRouter(deps: MasteryRouterDeps, options: MasteryRou
       return;
     }
     console.error(label, safeErrorFields(error));
+    if (isDatabaseTimeout(error)) {
+      sendDatabaseUnavailable(res);
+      return;
+    }
     res.status(500).json({ error: 'Internal server error' });
   }
 

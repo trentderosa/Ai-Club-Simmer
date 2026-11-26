@@ -4,7 +4,7 @@
  * gains focus (so a check-in shows up when you come back).
  */
 import { useFocusEffect, useRouter } from 'expo-router';
-import { useCallback, useRef } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Pressable, RefreshControl, ScrollView, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
@@ -28,6 +28,7 @@ export default function Today() {
   const router = useRouter();
   const { backend, session } = useSession();
   const cache = useFlowCache();
+  const [notice, setNotice] = useState<string | null>(null);
 
   const data = useAsync(async () => {
     const [plan, summary] = await Promise.all([backend.getPlan(), backend.getPlanSummary()]);
@@ -41,12 +42,13 @@ export default function Today() {
   const firstFocus = useRef(true);
   useFocusEffect(
     useCallback(() => {
+      setNotice(cache.takeNotice());
       if (firstFocus.current) {
         firstFocus.current = false;
         return;
       }
       reload();
-    }, [reload]),
+    }, [reload, cache]),
   );
 
   const onError = useErrorAction(reload);
@@ -69,6 +71,12 @@ export default function Today() {
             {greetingFor(now, session?.firstName ?? null)}
           </T>
         </View>
+
+        {notice ? (
+          <T variant="small" style={[gutter, { marginTop: 12 }]} accessibilityLiveRegion="polite">
+            {notice}
+          </T>
+        ) : null}
 
         {data.data ? (
           <PlanBody plan={data.data.plan} summary={data.data.summary} onOpen={open} onCookAnything={() => router.push('/cook-anything')} />

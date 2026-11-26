@@ -48,4 +48,13 @@ describe('buildCookAnythingPrompt', () => {
     const prompt = buildCookAnythingPrompt('Roast Chicken', user);
     expect(prompt).toContain('NEVER tell the user to rinse or wash raw chicken, poultry, or meat');
   });
+
+  it('uses grounded technique-name wording and the poultry closing line, not "pan toast"', () => {
+    const prompt = buildCookAnythingPrompt('Pad Thai', user);
+    expect(prompt).not.toContain('pan toast');
+    expect(prompt).toContain('2 or 3 plain words taken from that step itself');
+    expect(prompt).toContain(
+      '- If it cooks chicken or other poultry, a step that checks the thickest part reaches 165°F (74°C)'
+    );
+  });
 });

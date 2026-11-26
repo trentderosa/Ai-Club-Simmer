@@ -24,6 +24,7 @@ import { ApiError } from './errors';
 import {
   BadgesSchema,
   CheckInHistorySchema,
+  PersonalizedPathSchema,
   PlanSchema,
   PlanSummaryRowsSchema,
   ProfileInputSchema,
@@ -34,8 +35,12 @@ import {
   RecipeSchema,
   VideosSchema,
 } from './schemas';
-import { rpcRecipeBook } from './recipe-book-rpc';
+import { isMissingColumnError, rpcRecipeBook } from './recipe-book-rpc';
 import { createSupabaseClient } from './supabase';
+
+const PROFILE_COLUMNS = 'id, goals, experience_level, equipment, budget, days_per_week, minutes_per_session, onboarding_completed, created_at';
+const TASTE_COLUMNS = 'cuisines, meal_types, dietary_needs';
+const TASTE_RECHECK_MS = 10 * 60 * 1000;
 
 export function toAppSession(session: Session | null): AppSession | null {
   if (!session) return null;
@@ -114,6 +119,13 @@ export function createLiveBackend(opts: {
   const initialLink: RecoveryLink = parseRecoveryLink(typeof window === 'undefined' ? null : window.location.href);
   let recoveryOwnerId: string | null = null;
   let recoveryFailed = false;
+  /**
+   * When the database last said the taste columns don't exist. While it's under
+   * TASTE_RECHECK_MS old we skip them; after that (or on any auth change) we try
+   * again, so an open tab recovers once the migration is applied.
+   */
+  let tasteMissingSince: number | null = null;
+  const tasteColumnsMissing = () => tasteMissingSince !== null && Date.now() - tasteMissingSince < TASTE_RECHECK_MS;
   let expectRecovery = false;
   // True until the launch restore has finished, including the queued SIGNED_IN from storage.
   let startup = true;
@@ -137,6 +149,7 @@ export function createLiveBackend(opts: {
   supabase.auth.onAuthStateChange((event, session) => {
     const appSession = toAppSession(session);
     const userId = session?.user?.id ?? null;
+    if (event === 'SIGNED_IN' || event === 'SIGNED_OUT') tasteMissingSince = null;
     if (userId && (event === 'PASSWORD_RECOVERY' || (expectRecovery && event === 'SIGNED_IN'))) {
       expectRecovery = false;
       acceptRecovery(userId);
@@ -329,21 +342,51 @@ export function createLiveBackend(opts: {
     },
 
     async getProfile(userId) {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, goals, experience_level, equipment, budget, days_per_week, minutes_per_session, onboarding_completed, created_at')
-        .eq('id', userId)
-        .maybeSingle();
-      if (error) throw fromSupabaseError(error);
-      return data ? parseOrThrow(ProfileSchema, data, 'profile') : null;
+      const read = (cols: string) => supabase.from('profiles').select(cols).eq('id', userId).maybeSingle();
+      const skipTaste = tasteColumnsMissing();
+      let withTaste = !skipTaste;
+      let res = await read(skipTaste ? PROFILE_COLUMNS : `${PROFILE_COLUMNS}, ${TASTE_COLUMNS}`);
+      // The migration is applied after merge: an older database lacks the taste columns.
+      if (res.error && !skipTaste && isMissingColumnError(res.error)) {
+        res = await read(PROFILE_COLUMNS);
+        withTaste = false;
+        if (!res.error) tasteMissingSince = Date.now(); // remember only once the retry worked
+      }
+      if (res.error) throw fromSupabaseError(res.error);
+      if (!res.data) return null;
+      const profile = parseOrThrow(ProfileSchema, res.data, 'profile');
+      // Read without the taste columns: the [] defaults are placeholders, not the user's answers.
+      return withTaste ? profile : { ...profile, tasteLoaded: false };
     },
 
     async saveOnboarding(userId, input) {
-      const row = ProfileInputSchema.parse(input);
-      const { error } = await supabase
-        .from('profiles')
-        .upsert({ id: userId, ...row, onboarding_completed: true });
+      const { includeTaste, ...row } = ProfileInputSchema.parse(input);
+      const write = (r: Record<string, unknown>) => supabase.from('profiles').upsert({ id: userId, ...r, onboarding_completed: true });
+      const { cuisines: _c, meal_types: _m, dietary_needs: _d, ...older } = row;
+      // The form didn't load or touch the taste answers: never overwrite what's stored.
+      if (!includeTaste) {
+        const { error } = await write(older);
+        if (error) throw fromSupabaseError(error);
+        return { tasteSaved: true };
+      }
+      const hadTaste = row.cuisines.length + row.meal_types.length + row.dietary_needs.length > 0;
+      const skipTaste = tasteColumnsMissing();
+      if (!skipTaste) {
+        const { error } = await write(row);
+        if (!error) return { tasteSaved: true };
+        if (!isMissingColumnError(error)) throw fromSupabaseError(error);
+      }
+      // Older database: save everything else; the taste answers can't be stored yet.
+      const { error } = await write(older);
       if (error) throw fromSupabaseError(error);
+      if (!skipTaste) tasteMissingSince = Date.now();
+      return { tasteSaved: !hadTaste };
+    },
+
+    async personalizeMyPath() {
+      const { data, error } = await supabase.rpc('personalize_my_path');
+      if (error) throw fromSupabaseError(error);
+      return parseOrThrow(PersonalizedPathSchema, data, 'personalized path');
     },
 
     async getPlan() {

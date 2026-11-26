@@ -1,17 +1,19 @@
 /**
- * Onboarding (F1), steps 2-4 of 4 (step 1 is the account). Saves to
- * `profiles` with the columns that exist today. The diet question from the
- * mockup is left out because there's no column for it yet.
+ * Onboarding (F1), steps 2-5 of 5 (step 1 is the account). Saves to
+ * `profiles`, then asks the database to pick dishes for the user's tastes.
  */
 import { useState } from 'react';
 
 import type { ProfileInput } from '../api';
+import { saveProfileAndPersonalize, TASTE_NOT_SAVED_NOTICE } from '../api/save-profile';
 import { OnboardingForm } from '../components/onboarding-form';
 import { errorCopy } from '../domain/error-messages';
+import { useFlowCache } from '../state/flow-cache';
 import { useSession } from '../state/session';
 
 export default function Onboarding() {
   const { backend, requireSession, refreshProfile, signOut } = useSession();
+  const cache = useFlowCache();
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,7 +22,9 @@ export default function Onboarding() {
     setError(null);
     try {
       const session = requireSession();
-      await backend.saveOnboarding(session.userId, input);
+      const result = await saveProfileAndPersonalize(backend, session.userId, input);
+      if (result.personalized) cache.invalidateUnstarted();
+      cache.setNotice(result.tasteSaved ? null : TASTE_NOT_SAVED_NOTICE); // shown on Today
       await refreshProfile(); // flips status to ready; the root guard moves on to Today
     } catch (e) {
       setError(errorCopy(e).body);

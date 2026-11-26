@@ -122,7 +122,7 @@ export function createCheckInRouter(
         return;
       }
 
-      if (!(await deps.checkInService.isMasteryInputAllowed(input))) {
+      if (!(await deps.checkInService.isMasteryInputAllowed(input, userId))) {
         res.status(400).json({
           error: 'mastery is only allowed for the final (mastery challenge) recipe',
           code: 'MASTERY_NOT_ALLOWED',

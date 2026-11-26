@@ -81,6 +81,54 @@ function setup(options: { pathRepository?: PathRepository; search?: VideoSearchC
   return { app, ollama, recipes, pathRepository, search };
 }
 
+describe('dietary needs reach the prompt', () => {
+  const profileWith = (dietaryNeeds?: string[]): Partial<PathRepository> => ({
+    getUserProfile: vi.fn().mockResolvedValue({
+      id: USER_ID,
+      experienceLevel: 'never_cooked',
+      budget: 'low',
+      equipment: ['stove', 'pan'],
+      ...(dietaryNeeds ? { dietaryNeeds } : {}),
+    }),
+  });
+  async function promptFor(stored: string[] | undefined, body?: unknown, generated?: Recipe): Promise<string> {
+    const { app, ollama } = setup({ pathRepository: pathRepo(profileWith(stored)), ...(generated ? { generated } : {}) });
+    const req = request(app).post('/api/recipes/generate/2').set('Authorization', `Bearer ${token()}`);
+    const res = body === undefined ? await req : await req.send(body as object);
+    expect(res.status).toBe(200);
+    return (ollama.generate as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
+  }
+
+  it('a stored dietary need is in the prompt sent to the model', async () => {
+    expect(await promptFor(['vegetarian', 'no nuts (allergy)'])).toContain('Dietary needs: vegetarian, no nuts (allergy)');
+  });
+
+  it('an empty body list cannot remove a stored need', async () => {
+    expect(await promptFor(['vegetarian'], { dietaryNeeds: [] })).toContain('Dietary needs: vegetarian');
+  });
+
+  it('a body need is added to the stored ones, without duplicates', async () => {
+    expect(await promptFor(['vegetarian'], { dietaryNeeds: ['no nuts', 'Vegetarian'] })).toContain(
+      'Dietary needs: vegetarian, no nuts'
+    );
+  });
+
+  it('a body need works when nothing is stored', async () => {
+    // The default fixture is scrambled eggs, which the diet guard rightly rejects for vegan.
+    const veganRecipe: Recipe = {
+      ...recipe,
+      title: 'Garlic Rice',
+      ingredients: [{ name: 'rice', amount: '1 cup' }, { name: 'garlic', amount: '1 clove' }],
+      steps: [
+        { instruction: 'Rinse the rice', isSafetyStep: false },
+        { instruction: 'Cook the rice and garlic on low heat', isSafetyStep: true, techniqueName: 'Low heat cooking' },
+        { instruction: 'Serve', isSafetyStep: false },
+      ],
+    };
+    expect(await promptFor(undefined, { dietaryNeeds: ['vegan'] }, veganRecipe)).toContain('Dietary needs: vegan');
+  });
+});
+
 describe('F2 path gating', () => {
   it('a locked slot returns 403 SLOT_LOCKED and never calls the model', async () => {
     const { app, ollama, pathRepository } = setup({
