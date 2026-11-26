@@ -72,12 +72,16 @@ const RULE_PHRASES: Array<[DietRule, RegExp]> = [
   ['no_mushrooms', /\b(?:no|without|avoid)\s+mushrooms?\b|\bmushroom[- ]free\b/],
 ];
 
+// "not vegetarian", "non-vegetarian", "non vegan", "isn't vegan" describe someone who eats meat.
+const NEGATED_DIET =
+  /\b(?:not|non|isnt|arent|no longer)(?:[- ]?|\s+an?\s+)(?:vegetarian|vegan|veggie|pescatarian|pescetarian|plant[- ]based)\b/g;
+
 /** Known dietary needs found in the free-text list. Order follows RULE_PHRASES; unknown text is ignored. */
 export function parseDietRules(needs: readonly string[] | undefined): DietRule[] {
   if (!needs) return [];
   const found = new Set<DietRule>();
   for (const raw of needs) {
-    const text = normalizeText(raw).replace(/[_]+/g, ' ');
+    const text = normalizeText(raw).replace(/[_]+/g, ' ').replace(NEGATED_DIET, ' ');
     for (const [rule, re] of RULE_PHRASES) {
       if (re.test(text)) found.add(rule);
     }
@@ -105,18 +109,19 @@ const words = (list: string): string => `\\b(?:${list})\\b`;
 // Broth and stock are not listed on their own: "vegetable broth" is fine. They
 // only count when qualified by an animal word, and every animal word below is
 // already forbidden, so "chicken broth" and "beef stock" match on chicken/beef.
+// "bone broth" with no animal word is meat broth, so it is listed under OTHER_MEAT.
 const POULTRY = 'chicken|turkey|duck|goose|poultry|quail|cornish hen|schmaltz';
 const PORK = 'pork|bacon|ham|prosciutto|pancetta|lard|chorizo|salami|pepperoni|hot ?dogs?|sausages?|guanciale|lardons?|kielbasa|andouille|bratwurst|mortadella|pastrami|spam';
 const BEEF =
-  'beef|veal|brisket|oxtail|meatballs?|burgers?|jerky|ribeyes?|rib[- ]eyes?|sirloin|chuck roast|chuck steak|ground chuck|flank|skirt steak|tri[- ]tip|filet mignon|t[- ]bone|porterhouse|strip steak|kofta|giblets';
-const OTHER_MEAT = 'lamb|mutton|goat|venison|bison|rabbit|steaks?|short ribs?|spare ribs?|meats?|liver|bone marrow|tallow|suet|gelatin|gelatine';
+  'beef|veal|brisket|oxtail|meatballs?|burgers?|hamburgers?|cheeseburgers?|jerky|ribeyes?|rib[- ]eyes?|sirloin|chuck roast|chuck steak|ground chuck|flank|skirt steak|tri[- ]tip|filet mignon|t[- ]bone|porterhouse|strip steak|kofta|giblets';
+const OTHER_MEAT = 'lamb|mutton|goat|venison|bison|rabbit|steaks?|short ribs?|spare ribs?|meats?|liver|bone marrow|bone broth|tallow|suet|gelatin|gelatine';
 const FISH =
-  'fish|salmon|tuna|cod|tilapia|trout|halibut|haddock|snapper|mackerel|sardines?|anchov(?:y|ies)|herring|swordfish|catfish|mahi|ahi|sea bass|bonito|katsuobushi|dashi|eel';
+  'fish|salmon|tuna|cod|tilapia|trout|halibut|haddock|snapper|mackerel|sardines?|anchov(?:y|ies)|herring|swordfish|catfish|mahi|ahi|sea bass|bonito|katsuobushi|dashi|eel|surimi|imitation crab(?:meat)?|crab sticks?|kamaboko|fishcakes?';
 const SHELLFISH =
   'shrimps?|prawns?|langoustines?|crabs?|crabmeat|lobster|clams?|mussels?|oysters?|scallops?|squid|calamari|octopus|crawfish|crayfish';
 const ANIMAL_SAUCES = 'fish sauce|oyster sauce|worcestershire|worcestershire sauce|shrimp paste|nuoc mam';
 const DAIRY =
-  'milk|buttermilk|butter|ghee|cheese|cream|half[- ]and[- ]half|yogh?urt|whey|casein|paneer|ricotta|mozzarella|parmesan|parmigiano|cheddar|feta|mascarpone|gouda|halloumi|brie|gruyere|creme fraiche|ice cream|custard|pecorino|cotija|queso|labneh|kefir';
+  'milk|buttermilk|butter|ghee|cheese|cream|half[- ]and[- ]half|yogh?urt|whey|casein|paneer|ricotta|mozzarella|parmesan|parmigiano|cheddar|feta|mascarpone|gouda|halloumi|brie|gruyere|creme fraiche|ice cream|custard|pecorino|cotija|queso|labneh|kefir|pesto';
 const EGG = 'eggs?|yolks?|aioli|brioche|mayonnaise|mayo|meringue';
 const HONEY = 'honey';
 
@@ -135,7 +140,9 @@ const qualifier = (prefixes: string, kinds: HintKind[]): Exception => ({
   kinds,
 });
 const MEAT_KINDS: HintKind[] = ['meat', 'fish', 'shellfish', 'sauce'];
-const Q_ANIMAL_FREE = qualifier('vegan|plant[- ]based|faux|imitation|mock', [
+// "faux", "imitation" and "mock" are not on their own a plant claim: imitation crab
+// (surimi) is fish. They only exempt when the name says what plant it is made from.
+const Q_ANIMAL_FREE = qualifier('vegan|plant[- ]based', [
   ...MEAT_KINDS,
   'dairy',
   'egg',
@@ -144,18 +151,40 @@ const Q_ANIMAL_FREE = qualifier('vegan|plant[- ]based|faux|imitation|mock', [
 const Q_MEATLESS = qualifier('vegetarian|meatless|meat[- ]free|veggie', MEAT_KINDS);
 const Q_DAIRY_FREE = qualifier('dairy[- ]free|non[- ]?dairy', ['dairy']);
 const Q_EGG_FREE = qualifier('egg[- ]free|eggless', ['egg']);
-const MEAT_QUALIFIERS: Exception[] = [Q_ANIMAL_FREE, Q_MEATLESS];
+const Q_FAUX_FROM_PLANT: Exception = {
+  re: /\b(?:faux|imitation|mock)(?:\s+[\w-]+){1,2}\s+(?:made\s+)?(?:from|with|of)\s+(?:tofu|tempeh|seitan|jackfruit|mushrooms?|soy|wheat gluten|beans?|lentils?|chickpeas?|eggplant|cauliflower|walnuts?|vegetables?)\b/g,
+  kinds: [...MEAT_KINDS, 'dairy', 'egg', 'honey'],
+};
+const MEAT_QUALIFIERS: Exception[] = [Q_ANIMAL_FREE, Q_MEATLESS, Q_FAUX_FROM_PLANT];
 
 /** Explicit meat substitutes: "tofu bacon", "jackfruit chicken", "seitan sausage", "beyond meat". "coconut chicken" and "vegetable beef soup" are real meat. */
 const PLANT_MEAT =
   /\b(?:tofu|tempeh|seitan|jackfruit|beyond|impossible)\s+(?:bacon|sausages?|jerky|steaks?|chicken|beef|crab|ham|meat|meatballs?|burgers?|patt(?:y|ies)|nuggets|ribs)\b|\b(?:coconut|eggplant|carrot)\s+bacon\b|\bmushroom\s+(?:bacon|jerky)\b/g;
+/**
+ * Plant burgers and meatballs ("black bean burger", "lentil meatballs", "veggie
+ * patties") and burger buns, which are bread. A bare "burger", "hamburger" or
+ * "meatballs" is still meat. Only meat words in the phrase are exempt, so
+ * "mushroom burger" still flags mushroom for no-mushroom diners.
+ */
+const BURGER_BUN = /\b(?:ham|cheese)?burgers?\s+(?:buns?|rolls?|bread)\b/g;
+const PLANT_BURGER: Exception = {
+  re: new RegExp(
+    String.raw`\b(?:beans?|lentils?|chickpeas?|falafel|quinoa|mushrooms?|portobellos?|tofu|tempeh|seitan|soy|veggie|vegetable|sweet potato|cauliflower|eggplant|beets?|walnuts?|rice|oat|black[- ]eyed pea)\s+(?:burgers?|meatballs?|patt(?:y|ies)|sliders?)\b|${BURGER_BUN.source}`,
+    'g'
+  ),
+  kinds: MEAT_KINDS,
+};
+/** In step text, a bare shape word ("form into burgers", "roll the meatballs") once the ingredients name a plant burger or meatball. */
+const BURGER_SHAPE: Exception = { re: /\b(?:(?:ham|cheese)?burgers?|meatballs?)\b/g, kinds: MEAT_KINDS };
 const MEAT_THERMOMETER = /\bmeat thermometers?\b/g;
+// Plants and tools named after an animal: beef tomato, chicken of the woods (a mushroom), crab apple.
+const PLANT_NAMED_MEAT = /\bbeef(?:steak)?\s+tomato(?:es)?\b|\bchicken of the woods\b|\bcrab\s*apples?\b/g;
 // "goat cheese" is dairy, not goat meat (vegan still flags the cheese). Lookahead keeps the cheese word.
 const GOAT_DAIRY = /\bgoat(?=\s+(?:cheese|milk|yogh?urt|butter))/g;
 
 /** Non-animal "milk", "butter" and friends, and non-dairy words that contain a dairy word. */
 const PLANT_DAIRY =
-  /\b(?:coconut|almond|oat|soy|soya|rice|cashew|hemp|pea|nut|peanut|sunflower|cocoa|cacao|apple|seed|shea|macadamia|hazelnut|pistachio|flax|chia|tahini|sesame)\s+(?:milk|butter|cream|yogh?urt|cheese)\b|\bbutter\s+(?:beans?|lettuce|squash|nuts?|leaf)\b|\bcream of (?:tartar|coconut)\b|\bcreamed coconut\b|\bcoconut\s+(?:custard)\b/g;
+  /\b(?:coconut|almond|oat|soy|soya|rice|cashew|hemp|pea|nut|peanut|sunflower|cocoa|cacao|apple|seed|shea|macadamia|hazelnut|pistachio|flax|chia|tahini|sesame)\s+(?:milk|butter|cream|yogh?urt|cheese)\b|\bbutter\s+(?:beans?|lettuce|squash|nuts?|leaf)\b|\bcream of (?:tartar|coconut)\b|\bcreamed coconut\b|\bcoconut\s+(?:custard)\b|\bbutter\s+kni(?:fe|ves)\b/g;
 
 const PLANT_EGG = /\b(?:flax|chia)\s+eggs?\b|\beggs?\s+(?:replacer|substitute|replacement|alternative)\b/g;
 
@@ -205,11 +234,13 @@ const DAIRY_FORBIDDEN = [f(DAIRY, 'dairy')];
 const MEAT_EXCEPTIONS: Exception[] = [
   ...MEAT_QUALIFIERS,
   PLANT_MEAT,
+  PLANT_BURGER,
   OYSTER_MUSHROOM,
   PLANT_DASHI,
   NON_MEAT_STEAK,
   MEAT_THERMOMETER,
   GOAT_DAIRY,
+  PLANT_NAMED_MEAT,
 ];
 const DAIRY_EXCEPTIONS: Exception[] = [Q_ANIMAL_FREE, Q_DAIRY_FREE, PLANT_DAIRY];
 
@@ -223,14 +254,17 @@ const GLUTEN_FREE_NOODLES =
   /\b(?:glass|cellophane|bean thread|shirataki|sweet potato|rice)\s+(?:vermicelli|noodles?)\b/g;
 const GLUTEN_FREE_SOY = /\b(?:tamari|gluten[- ]free soy sauce|coconut aminos)\b/g;
 const CORN_TORTILLA = /\b(?:corn|rice)\s+tortillas?\b/g;
+// Root beer and ginger beer are soft drinks, not grain beer.
+const SOFT_DRINK_BEER = /\b(?:root|ginger)\s+beers?\b/g;
 
 /**
- * Gluten words kept short on purpose: wheat flour and its common products.
+ * Gluten words kept short on purpose: wheat flour and its common products,
+ * plus beer and malt (barley) and hoisin (usually made with wheat).
  * Tortillas only count when the name says flour or wheat ("flour tortillas"),
  * and oats are left alone (usually fine; cross-contamination is not detectable here).
  */
 const GLUTEN_WORDS =
-  'flour|bread|breadcrumbs?|panko|croutons?|pasta|spaghetti|penne|macaroni|fettuccine|linguine|lasagna|lasagne|orzo|noodles?|ramen|udon|soy sauce|couscous|barley|bulgur|farro|semolina|seitan|rye|wheat|pita|naan|bagels?|flour tortillas?';
+  'flour|bread|breadcrumbs?|panko|croutons?|pasta|spaghetti|penne|macaroni|fettuccine|linguine|lasagna|lasagne|orzo|noodles?|ramen|udon|soy sauce|couscous|barley|bulgur|farro|semolina|seitan|rye|wheat|pita|naan|bagels?|flour tortillas?|beers?|lagers?|stouts?|malt|hoisin';
 
 const RULES: Record<DietRule, RuleDef> = {
   vegetarian: {
@@ -244,27 +278,28 @@ const RULES: Record<DietRule, RuleDef> = {
     label: 'vegan',
   },
   no_pork: {
-    forbidden: [f(PORK, 'meat')],
+    // Gelatin is usually made from pork unless the name says otherwise ("beef gelatin", "vegan gelatin").
+    forbidden: [f(`${PORK}|gelatin|gelatine`, 'meat')],
     exceptions: [
       ...MEAT_QUALIFIERS,
       PLANT_MEAT,
-      /\b(?:turkey|beef|chicken|lamb)\s+(?:bacon|sausages?|ham|hot ?dogs?|pepperoni|salami|chorizo)\b/g,
+      /\b(?:turkey|beef|chicken|lamb|fish)\s+(?:bacon|sausages?|ham|hot ?dogs?|pepperoni|salami|chorizo|gelatine?)\b/g,
     ],
     label: 'no pork',
   },
   no_beef: {
     forbidden: [f('beef|veal|brisket|oxtail|beef broth|beef stock', 'meat')],
-    exceptions: [...MEAT_QUALIFIERS, PLANT_MEAT, MEAT_THERMOMETER],
+    exceptions: [...MEAT_QUALIFIERS, PLANT_MEAT, MEAT_THERMOMETER, PLANT_NAMED_MEAT],
     label: 'no beef',
   },
   no_poultry: {
     forbidden: [f(POULTRY, 'meat')],
-    exceptions: [...MEAT_QUALIFIERS, PLANT_MEAT],
+    exceptions: [...MEAT_QUALIFIERS, PLANT_MEAT, PLANT_NAMED_MEAT],
     label: 'no poultry or chicken',
   },
   pescatarian: {
     forbidden: [f(POULTRY, 'meat'), f(PORK, 'meat'), f(BEEF, 'meat'), f(OTHER_MEAT, 'meat')],
-    exceptions: [...MEAT_QUALIFIERS, PLANT_MEAT, NON_MEAT_STEAK, MEAT_THERMOMETER, GOAT_DAIRY],
+    exceptions: [...MEAT_QUALIFIERS, PLANT_MEAT, PLANT_BURGER, NON_MEAT_STEAK, MEAT_THERMOMETER, GOAT_DAIRY, PLANT_NAMED_MEAT],
     label: 'pescatarian (no meat or poultry)',
   },
   no_fish: {
@@ -274,7 +309,7 @@ const RULES: Record<DietRule, RuleDef> = {
   },
   no_shellfish: {
     forbidden: [f('oyster sauce|shrimp paste', 'sauce'), f(SHELLFISH, 'shellfish')],
-    exceptions: [...MEAT_QUALIFIERS, OYSTER_MUSHROOM],
+    exceptions: [...MEAT_QUALIFIERS, OYSTER_MUSHROOM, PLANT_NAMED_MEAT],
     label: 'no shellfish',
   },
   dairy_free: {
@@ -291,14 +326,16 @@ const RULES: Record<DietRule, RuleDef> = {
       GLUTEN_FREE_NOODLES,
       GLUTEN_FREE_SOY,
       CORN_TORTILLA,
+      SOFT_DRINK_BEER,
     ],
     label: 'gluten-free',
   },
   nut_free: {
     forbidden: [
-      f('almonds?|walnuts?|pecans?|cashews?|pistachios?|hazelnuts?|peanuts?|macadamias?|pine nuts?|brazil nuts?|nuts?|nutella|marzipan', 'nut'),
+      f('almonds?|walnuts?|pecans?|cashews?|pistachios?|hazelnuts?|peanuts?|macadamias?|pine nuts?|brazil nuts?|nuts?|nutella|marzipan|pesto', 'nut'),
     ],
-    exceptions: [/\bnut[- ]free\b/g, /\b(?:nutmeg|nutritional)\b/g],
+    // Pesto is made with pine nuts unless the name says nut-free.
+    exceptions: [/\bnut[- ]free(?:\s+[\w-]+)?\s+pesto\b/g, /\bnut[- ]free\b/g, /\b(?:nutmeg|nutritional)\b/g],
     label: 'nut-free',
   },
   egg_free: {
@@ -317,9 +354,13 @@ const RULES: Record<DietRule, RuleDef> = {
 
 /** Word-boundary scan of one string for one rule. Returns the first forbidden term, or null. */
 export function findForbiddenTerm(text: string, rule: DietRule): string | null {
+  return scanForbidden(text, rule, []);
+}
+
+function scanForbidden(text: string, rule: DietRule, extra: readonly Exception[]): string | null {
   const def = RULES[rule];
   let t = normalizeText(text);
-  for (const exception of def.exceptions) {
+  for (const exception of [...def.exceptions, ...extra]) {
     if (exception instanceof RegExp) {
       t = t.replace(new RegExp(exception.source, 'g'), ' ');
     } else {
@@ -338,12 +379,15 @@ export function findForbiddenTerm(text: string, rule: DietRule): string | null {
  * Violations in a recipe for the given rules: one entry per rule, ingredient
  * names first, then step instructions. Titles are not scanned (a "Chicken-Free
  * Chili" title would be a false positive, and the ingredients are the truth).
+ * When an ingredient is a plant burger or meatball, a bare "burgers" or
+ * "meatballs" in step text is that food, not meat.
  */
 export function findDietViolations(
   recipe: Pick<Recipe, 'ingredients' | 'steps'>,
   rules: readonly DietRule[]
 ): DietViolation[] {
   const violations: DietViolation[] = [];
+  const stepExtra = recipe.ingredients.some((i) => isPlantBurgerOrMeatball(i.name)) ? [BURGER_SHAPE] : [];
   for (const rule of rules) {
     let found: DietViolation | null = null;
     for (const ingredient of recipe.ingredients) {
@@ -355,7 +399,7 @@ export function findDietViolations(
     }
     if (!found) {
       for (const step of recipe.steps) {
-        const term = findForbiddenTerm(step.instruction, rule);
+        const term = scanForbidden(step.instruction, rule, stepExtra);
         if (term) {
           found = { rule, term, where: 'step' };
           break;
@@ -365,6 +409,12 @@ export function findDietViolations(
     if (found) violations.push(found);
   }
   return violations;
+}
+
+/** An ingredient that is a burger, patty or meatball with no meat in it ("black bean burgers", "vegan meatballs"). Burger buns do not count. */
+function isPlantBurgerOrMeatball(name: string): boolean {
+  const t = normalizeText(name).replace(BURGER_BUN, ' ');
+  return /\b(?:(?:ham|cheese)?burgers?|meatballs?|patt(?:y|ies))\b/.test(t) && findForbiddenTerm(t, 'vegetarian') === null;
 }
 
 const SUBSTITUTION_BY_KIND: Record<HintKind, string> = {

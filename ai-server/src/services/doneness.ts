@@ -9,6 +9,11 @@ import type { Recipe } from '../schemas/recipe.js';
  * step is inserted after the last step that cooks it. This repairs the recipe
  * instead of rejecting it, so it does not raise the failure rate.
  *
+ * Plant-based meat ("vegan steak", "plant-based ground beef", "Beyond Beef")
+ * and plant steaks ("cauliflower steak") are skipped. The repair is
+ * idempotent: a step that already gives the cue, or the exact check it would
+ * insert, means nothing is added, so running it twice adds nothing.
+ *
  * Poultry (165°F) is not handled here: it stays prompt-driven plus the
  * existing poultry doneness flagging in recipe-generator.
  *
@@ -27,6 +32,8 @@ interface CategoryDef {
   stepWord: RegExp;
   /** Extra visual cues that count as a doneness cue for this protein (besides a thermometer or a stated temperature). */
   visualCue: RegExp | null;
+  /** This protein's own target temperature. A step that names the protein and states it is a cue, even without "reaches" or next to an oil or oven temperature. */
+  targetTemp: RegExp | null;
   instruction: (food: string) => string;
   whyItMatters: string;
 }
@@ -38,6 +45,12 @@ const RAW_DISH_RE = /\b(?:sushi|sashimi|tartare|crudo|ceviche|carpaccio|poke\s+b
 // "tartare sauce" and "sushi-grade" do not make a dish raw; "poke" alone is also a verb ("poke the chops") and a cake.
 const NOT_RAW_RE = /\btartar(?:e)?\s+sauce\b|\bsushi[- ]grade\b/gi;
 const POKE_TITLE_RE = /\bpoke\b/i;
+// Plant-based meat ("plant-based ground beef", "Beyond Beef", "Impossible burger", "vegan steak") needs no meat doneness check.
+const MEATLESS_NAME_RE = /\b(?:vegan|plant[- ]based|meatless|vegetarian|veggie|beyond|impossible)\b/i;
+// Plant steaks: "cauliflower steak", "portobello mushroom steaks", "cabbage steaks".
+const PLANT_STEAK_SOURCE =
+  '\\b(?:cauliflower|cabbage|celeriac|tofu|portobello|portabella|mushroom|eggplant|seitan|tempeh|jackfruit)(?:\\s+mushroom)?\\s+steaks?\\b';
+const DEG = '\\s*(?:[°˚º]\\s*)?';
 
 const CATEGORIES: Record<Category, CategoryDef> = {
   ground: {
@@ -45,6 +58,7 @@ const CATEGORIES: Record<Category, CategoryDef> = {
     skip: NO_COOK_NAME,
     stepWord: /\bground\s+(?:beef|pork|lamb|veal)\b|\b(?:beef|pork|lamb|veal|meat|burgers?|patt(?:y|ies)|mince)\b/i,
     visualCue: null,
+    targetTemp: new RegExp(`\\b(?:160${DEG}f|71${DEG}c)\\b`, 'i'),
     instruction: (food) =>
       `Check the ${food} for doneness: use a food thermometer and make sure it reaches 160°F (71°C) and no pink remains.`,
     whyItMatters: 'Ground meat can carry bacteria all the way through, so it must reach 160°F (71°C).',
@@ -52,9 +66,10 @@ const CATEGORIES: Record<Category, CategoryDef> = {
   whole: {
     ingredient:
       /\bpork\s+(?:chops?|loin|tenderloin|cutlets?)\b|\blamb\s+chops?\b|\b(?:steaks?|sirloin|ribeye|rib[- ]eye|filet mignon|beef tenderloin)\b/i,
-    skip: new RegExp(`${NO_COOK_NAME.source}|\\b(?:salmon|tuna|fish|swordfish|halibut|cauliflower|tofu|portobello|eggplant|seitan|tempeh)\\s+steaks?\\b`, 'i'),
+    skip: new RegExp(`${NO_COOK_NAME.source}|\\b(?:salmon|tuna|fish|swordfish|halibut)\\s+steaks?\\b|${PLANT_STEAK_SOURCE}`, 'i'),
     stepWord: /\b(?:pork|beef|lamb|steaks?|chops?|loin|tenderloin|sirloin|ribeye|rib[- ]eye|filet|meat)\b/i,
     visualCue: null,
+    targetTemp: new RegExp(`\\b(?:145${DEG}f|63${DEG}c)\\b`, 'i'),
     instruction: (food) =>
       `Check the ${food} for doneness: use a food thermometer and make sure the thickest part reaches 145°F (63°C), then let it rest for 3 minutes before serving.`,
     whyItMatters: 'Whole cuts are safe at 145°F (63°C), and resting keeps the juices in.',
@@ -65,6 +80,7 @@ const CATEGORIES: Record<Category, CategoryDef> = {
     skip: new RegExp(`${NO_COOK_NAME.source}|\\bfish\\s+(?:sauce|stock|broth)\\b|\\bsea\\s+salt\\b`, 'i'),
     stepWord: /\b(?:fish|salmon|tuna|ahi|cod|tilapia|halibut|trout|haddock|snapper|mahi|bass|swordfish|catfish|fillets?)\b/i,
     visualCue: /\bflak(?:e|es|ed|ing)\b/i,
+    targetTemp: new RegExp(`\\b(?:145${DEG}f|63${DEG}c)\\b`, 'i'),
     instruction: (food) =>
       `Check the ${food} for doneness: the thickest part should reach 145°F (63°C) on a food thermometer, or the flesh should turn opaque and flake easily with a fork.`,
     whyItMatters: 'Fish is done at 145°F (63°C), or when it turns opaque and flakes easily.',
@@ -74,6 +90,7 @@ const CATEGORIES: Record<Category, CategoryDef> = {
     skip: NO_COOK_NAME,
     stepWord: /\b(?:shrimps?|prawns?)\b/i,
     visualCue: /\bopaque\b/i,
+    targetTemp: null,
     instruction: (food) =>
       `Check the ${food} for doneness: they should be pink and opaque all the way through, with no gray or see-through flesh left.`,
     whyItMatters: 'Shrimp turn pink and opaque when cooked; undercooked shrimp can make you sick.',
@@ -98,7 +115,7 @@ const MAX_STEPS = 30;
 function ingredientMatch(recipe: Pick<Recipe, 'ingredients'>, def: CategoryDef): string | null {
   for (const ingredient of recipe.ingredients) {
     const name = ingredient.name;
-    if (def.skip.test(name)) continue;
+    if (def.skip.test(name) || MEATLESS_NAME_RE.test(name)) continue;
     const match = def.ingredient.exec(name);
     if (match) return match[0].toLowerCase();
   }
@@ -107,7 +124,10 @@ function ingredientMatch(recipe: Pick<Recipe, 'ingredients'>, def: CategoryDef):
 
 function stepHasCue(instruction: string, def: CategoryDef): boolean {
   // A cue must name its protein and be about the food, not the oil or the oven.
-  if (!def.stepWord.test(instruction) || NOT_A_CUE_RE.test(instruction)) return false;
+  if (!def.stepWord.test(instruction)) return false;
+  // The protein's own target ("cook the beef until 160°F") is a cue even next to an oil temperature.
+  if (def.targetTemp !== null && def.targetTemp.test(instruction)) return true;
+  if (NOT_A_CUE_RE.test(instruction)) return false;
   if (THERMOMETER_RE.test(instruction) || TARGET_TEMP_RE.test(instruction)) return true;
   return def.visualCue !== null && def.visualCue.test(instruction);
 }
@@ -133,7 +153,11 @@ export function ensureDonenessSteps<T extends Pick<Recipe, 'ingredients' | 'step
   for (const { category, food } of present) {
     const def = CATEGORIES[category];
     if (steps.length >= MAX_STEPS) break;
-    if (steps.some((step) => stepHasCue(step.instruction, def))) continue;
+    // Idempotent: a cue for this protein (including a check this function inserted earlier) means no new step.
+    const check = def.instruction(food).toLowerCase();
+    if (steps.some((step) => step.instruction.trim().toLowerCase() === check || stepHasCue(step.instruction, def))) {
+      continue;
+    }
 
     let at = -1;
     steps.forEach((step, i) => {

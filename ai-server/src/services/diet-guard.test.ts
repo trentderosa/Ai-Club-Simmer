@@ -284,3 +284,187 @@ describe('review fixes: parseDietRules', () => {
     expect(parseDietRules(['halal'])).toEqual([]);
   });
 });
+
+describe('review fixes: imitation crab and faux qualifiers (S1)', () => {
+  const flagged: Array<[DietRule, string]> = [
+    ['vegetarian', 'imitation crab'],
+    ['vegan', 'imitation crab'],
+    ['no_fish', 'imitation crab'],
+    ['no_fish', 'imitation crabmeat'],
+    ['no_fish', 'surimi'],
+    ['no_fish', 'crab sticks'],
+    ['no_fish', 'fish cakes'],
+    ['vegetarian', 'surimi'],
+    ['vegetarian', 'kamaboko'],
+    ['no_shellfish', 'imitation crab'],
+    ['vegetarian', 'mock turtle soup with veal'],
+    ['vegetarian', 'faux chicken nuggets'],
+  ];
+  it.each(flagged)('%s flags %s', (rule, text) => {
+    expect(findForbiddenTerm(text, rule)).not.toBeNull();
+  });
+  it('reports imitation crab as a fish term', () => {
+    expect(findForbiddenTerm('imitation crab', 'no_fish')).toBe('imitation crab');
+    expect(findForbiddenTerm('imitation crab', 'vegetarian')).toBe('imitation crab');
+  });
+  const allowed: Array<[DietRule, string]> = [
+    ['pescatarian', 'imitation crab'],
+    ['pescatarian', 'surimi'],
+    ['vegetarian', 'vegan imitation crab'],
+    ['no_fish', 'plant-based crab cakes'],
+    ['vegetarian', 'faux chicken made from tofu'],
+    ['vegan', 'mock duck made with seitan'],
+    ['vegetarian', 'imitation bacon bits made from soy'],
+  ];
+  it.each(allowed)('%s allows %s', (rule, text) => {
+    expect(findForbiddenTerm(text, rule)).toBeNull();
+  });
+});
+
+describe('review fixes: plant burgers, meatballs and buns (S2)', () => {
+  const allowed: Array<[DietRule, string]> = [
+    ['vegetarian', 'black bean burger'],
+    ['vegetarian', 'black bean burgers'],
+    ['vegetarian', 'burger buns'],
+    ['vegetarian', 'hamburger buns'],
+    ['vegan', 'burger buns'],
+    ['vegetarian', 'lentil meatballs'],
+    ['vegetarian', 'veggie burger'],
+    ['vegetarian', 'bean burger'],
+    ['vegetarian', 'chickpea burgers'],
+    ['vegetarian', 'mushroom burger'],
+    ['vegetarian', 'beyond burger'],
+    ['vegetarian', 'impossible burger'],
+    ['vegetarian', 'tofu meatballs'],
+    ['vegan', 'black bean burger patties'],
+    ['pescatarian', 'lentil meatballs'],
+  ];
+  it.each(allowed)('%s allows %s', (rule, text) => {
+    expect(findForbiddenTerm(text, rule)).toBeNull();
+  });
+  const flagged: Array<[DietRule, string, string]> = [
+    ['vegetarian', 'burger', 'burger'],
+    ['vegetarian', 'burgers', 'burgers'],
+    ['vegetarian', 'hamburger', 'hamburger'],
+    ['vegetarian', 'hamburgers', 'hamburgers'],
+    ['vegetarian', 'cheeseburger', 'cheeseburger'],
+    ['vegetarian', 'meatballs', 'meatballs'],
+    ['pescatarian', 'frozen meatballs', 'meatballs'],
+    ['vegetarian', 'black bean burger and bacon', 'bacon'],
+    ['no_mushrooms', 'mushroom burger', 'mushroom'],
+  ];
+  it.each(flagged)('%s flags %s', (rule, text, term) => {
+    expect(findForbiddenTerm(text, rule)).toBe(term);
+  });
+  it('a bare "burgers" step is fine once the ingredients name a plant burger', () => {
+    const plant = findDietViolations(
+      { ingredients: ing('black beans', 'black bean burger patties', 'burger buns'), steps: st('Grill the burgers for 4 minutes per side.', 'Roll the meatballs.') },
+      ['vegetarian']
+    );
+    expect(plant).toEqual([]);
+  });
+  it('a bare "burgers" step still flags when no ingredient is a plant burger', () => {
+    const v = findDietViolations(
+      { ingredients: ing('burger buns', 'lettuce'), steps: st('Grill the burgers for 4 minutes per side.') },
+      ['vegetarian']
+    );
+    expect(v).toEqual([{ rule: 'vegetarian', term: 'burgers', where: 'step' }]);
+  });
+  it('a plant burger ingredient does not hide real meat in steps', () => {
+    const v = findDietViolations(
+      { ingredients: ing('veggie burgers'), steps: st('Top the burgers with bacon.') },
+      ['vegetarian']
+    );
+    expect(v[0]).toMatchObject({ term: 'bacon', where: 'step' });
+  });
+  it('a plant burger ingredient does not excuse a meat burger ingredient', () => {
+    const v = findDietViolations(
+      { ingredients: ing('black bean burger', 'beef burger'), steps: st('Grill the burgers for 4 minutes per side.') },
+      ['vegetarian']
+    );
+    expect(v).toContainEqual({ rule: 'vegetarian', term: 'beef', where: 'ingredient' });
+  });
+});
+
+describe('review fixes: beer, hoisin, pesto, bone broth (S3)', () => {
+  const flagged: Array<[DietRule, string, string]> = [
+    ['gluten_free', 'beer', 'beer'],
+    ['gluten_free', '1 bottle lager', 'lager'],
+    ['gluten_free', 'stout', 'stout'],
+    ['gluten_free', 'malt vinegar', 'malt'],
+    ['gluten_free', 'hoisin sauce', 'hoisin'],
+    ['dairy_free', 'basil pesto', 'pesto'],
+    ['vegan', 'pesto', 'pesto'],
+    ['nut_free', 'basil pesto', 'pesto'],
+    ['nut_free', 'dairy-free pesto', 'pesto'],
+    ['vegetarian', 'bone broth', 'bone broth'],
+    ['vegan', 'bone broth', 'bone broth'],
+    ['pescatarian', 'bone broth', 'bone broth'],
+    ['no_beef', 'beef bone broth', 'beef'],
+    ['no_poultry', 'chicken bone broth', 'chicken'],
+    ['no_pork', 'pork bone broth', 'pork'],
+  ];
+  it.each(flagged)('%s flags %s', (rule, text, term) => {
+    expect(findForbiddenTerm(text, rule)).toBe(term);
+  });
+  const allowed: Array<[DietRule, string]> = [
+    ['gluten_free', 'gluten-free beer'],
+    ['gluten_free', 'gluten-free hoisin sauce'],
+    ['gluten_free', 'root beer'],
+    ['gluten_free', 'ginger beer'],
+    ['vegan', 'vegan pesto'],
+    ['dairy_free', 'dairy-free pesto'],
+    ['dairy_free', 'vegan pesto'],
+    ['nut_free', 'nut-free pesto'],
+    ['nut_free', 'nut-free basil pesto'],
+    ['vegetarian', 'pesto'],
+    ['vegetarian', 'vegetable broth'],
+    ['no_beef', 'bone broth'],
+  ];
+  it.each(allowed)('%s allows %s', (rule, text) => {
+    expect(findForbiddenTerm(text, rule)).toBeNull();
+  });
+});
+
+describe('review fixes: negated needs (N3)', () => {
+  it('does not read "not vegetarian" or "non-vegan" as the need', () => {
+    expect(parseDietRules(['not vegetarian'])).toEqual([]);
+    expect(parseDietRules(['non-vegetarian'])).toEqual([]);
+    expect(parseDietRules(['non vegan'])).toEqual([]);
+    expect(parseDietRules(['nonvegetarian'])).toEqual([]);
+    expect(parseDietRules(["I'm not a vegetarian"])).toEqual([]);
+    expect(parseDietRules(["isn't vegan"])).toEqual([]);
+  });
+  it('still reads the plain need and keeps other needs in the same entry', () => {
+    expect(parseDietRules(['vegetarian'])).toEqual(['vegetarian']);
+    expect(parseDietRules(['not vegan, but vegetarian'])).toEqual(['vegetarian']);
+    expect(parseDietRules(['non-vegetarian, gluten-free'])).toEqual(['gluten_free']);
+    expect(parseDietRules(['non-dairy'])).toEqual(['dairy_free']);
+  });
+});
+
+describe('review fixes: plant and tool names (N4)', () => {
+  const allowed: Array<[DietRule, string]> = [
+    ['vegan', 'Spread with a butter knife.'],
+    ['dairy_free', 'butter knife'],
+    ['vegetarian', 'beef tomato'],
+    ['no_beef', 'beefsteak tomatoes'],
+    ['vegetarian', 'chicken of the woods'],
+    ['no_poultry', 'chicken of the woods'],
+    ['no_shellfish', 'crab apples'],
+    ['no_pork', 'beef gelatin'],
+    ['no_pork', 'vegan gelatin'],
+  ];
+  it.each(allowed)('%s allows %s', (rule, text) => {
+    expect(findForbiddenTerm(text, rule)).toBeNull();
+  });
+  const flagged: Array<[DietRule, string, string]> = [
+    ['no_pork', 'gelatin', 'gelatin'],
+    ['no_pork', 'unflavored gelatine', 'gelatine'],
+    ['vegan', 'butter and a knife', 'butter'],
+    ['vegetarian', 'beef and tomato stew', 'beef'],
+  ];
+  it.each(flagged)('%s flags %s', (rule, text, term) => {
+    expect(findForbiddenTerm(text, rule)).toBe(term);
+  });
+});

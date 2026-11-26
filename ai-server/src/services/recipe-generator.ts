@@ -542,26 +542,14 @@ function isTemperatureCheckStep(instruction: string): boolean {
   return THERMOMETER_RE.test(instruction);
 }
 
-/**
- * Post-processes a validated recipe to ensure all safety steps are flagged.
- *
- * Even though we ask the LLM to flag safety steps, small models sometimes miss them.
- * This function scans each step's instruction and sets isSafetyStep=true when it
- * finds a safety keyword, a rinse or wash of raw chicken, poultry, meat, or bird,
- * a poultry doneness step with no temperature, or a thermometer check. Existing true flags are preserved.
- * Instruction text is not rewritten.
- *
- * A safe sentence ("pat dry", "do not rinse") is marked too, so slot 10 cannot
- * hide the only safe instruction. It is not a reason to leave a dangerous
- * instruction unmarked.
- *
- * Uses word-boundary matching to avoid false positives like "pan" in "Spanish".
- */
+// Cut words (and "raw"), shared with the slot 10 prep-step allowlist below so the two lists cannot drift.
+const PREP_CUT_WORDS =
+  'thighs?|breasts?|wings?|drumsticks?|fillets?|filets?|patty|patties|ribs?|tenderloins?|loins?|shanks?|cutlets?|hens?|roasts?|steaks?|chops?|raw';
 // Any step that names an animal protein or cut, says "raw", says pat dry, or
 // mentions rinsing or washing is a safety step, so slot 10 never hides it.
 // Errs toward flagging: "Serve the sliced pork" is flagged too.
 const PROTEIN_STEP_RE = new RegExp(
-  `\\b(?:${ANIMAL_FLESH_WORDS_SOURCE()}|birds?|kebabs?|thighs?|breasts?|wings?|drumsticks?|fillets?|filets?|patty|patties|ribs?|tenderloins?|loins?|shanks?|cutlets?|hens?|roasts?|chops?|raw|rins\\w*|wash\\w*)\\b`,
+  `\\b(?:${ANIMAL_FLESH_WORDS_SOURCE()}|birds?|kebabs?|${PREP_CUT_WORDS}|rins\\w*|wash\\w*)\\b`,
   'i'
 );
 function isProteinOrRawHandlingStep(instruction: string): boolean {
@@ -583,6 +571,21 @@ export function forceProteinSafetyFlags(recipe: Recipe): Recipe {
   };
 }
 
+/**
+ * Post-processes a validated recipe to ensure all safety steps are flagged.
+ *
+ * Even though we ask the LLM to flag safety steps, small models sometimes miss them.
+ * This function scans each step's instruction and sets isSafetyStep=true when it
+ * finds a safety keyword, a rinse or wash of raw chicken, poultry, meat, or bird,
+ * a poultry doneness step with no temperature, or a thermometer check. Existing true flags are preserved.
+ * Instruction text is not rewritten.
+ *
+ * A safe sentence ("pat dry", "do not rinse") is marked too, so slot 10 cannot
+ * hide the only safe instruction. It is not a reason to leave a dangerous
+ * instruction unmarked.
+ *
+ * Uses word-boundary matching to avoid false positives like "pan" in "Spanish".
+ */
 function ensureSafetyFlags(recipe: Recipe): Recipe {
   return {
     ...recipe,
@@ -614,8 +617,6 @@ function ensureSafetyFlags(recipe: Recipe): Recipe {
 const PREP_START_RE = /^\s*(?:gather|measure|combine|mix|whisk|stir\s+together|season|toss|set\s+out)\b/i;
 const PREP_NO_CONTAINER_OK_RE = /^\s*(?:gather|measure\s+out)\b/i;
 const PREP_CONTAINER_RE = /\b(?:bowl|jar|measuring\s+cup|plate)\b/i;
-const PREP_CUT_WORDS =
-  'thighs?|breasts?|wings?|drumsticks?|fillets?|filets?|patty|patties|ribs?|tenderloins?|loins?|shanks?|cutlets?|hens?|roasts?|steaks?|chops?|raw';
 const PREP_HEAT_WORDS =
   'saucepans?|pans?|pots?|skillets?|woks?|griddles?|ovens?|stoves?|stovetop|burners?|instant\\s+pot|pressure|boil\\w*|simmer\\w*|hot|warm\\w*|heat\\w*|scald\\w*|caramel\\w*|amber|thicken\\w*|melt\\w*|fr(?:y|ies|ied|ying)|blenders?|blend\\w*|food\\s+processors?|pulse|pulsing|knife|knives|cut\\w*|chop\\w*|slic\\w*|dic(?:e|es|ed|ing)|minc\\w*|grat(?:e|es|ed|ing)|peel\\w*|lye|microwav\\w*|bak(?:e|es|ed|ing)|grill\\w*|broil\\w*|sear\\w*|steam\\w*|toast\\w*|flame|lids?|until|over\\s+(?:low|medium|high)';
 const PREP_BLOCKER_RE = new RegExp(

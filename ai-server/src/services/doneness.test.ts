@@ -235,4 +235,56 @@ describe('ensureDonenessSteps: review fixes', () => {
     // The cumin step has a thermometer and a temperature but names no meat, so it is not a cue.
     expect(ensureDonenessSteps(r).steps).toHaveLength(4);
   });
+
+  it('does not insert a meat check for plant steaks or plant-based meat (N1)', () => {
+    for (const name of [
+      'portobello mushroom steaks',
+      'cabbage steaks',
+      'seitan steak',
+      'tempeh steaks',
+      'vegan steak',
+      'plant-based ground beef',
+      'vegan ground beef',
+      'Beyond Beef',
+      'Impossible ground beef',
+      'meatless beef mince',
+      'vegan shrimp',
+    ]) {
+      const r = recipe([name], [step(`Sear the ${name} in a hot pan.`, true), step('Serve.')]);
+      expect(ensureDonenessSteps(r)).toBe(r);
+    }
+  });
+
+  it('still inserts for real ground beef and steak next to a plant one (N1)', () => {
+    const r = recipe(['ground beef', 'cauliflower steak'], [step('Brown the ground beef.', true), step('Serve.')]);
+    expect(ensureDonenessSteps(r).steps).toHaveLength(3);
+  });
+
+  it('is idempotent: a second run adds nothing (N2)', () => {
+    for (const ings of [['ground beef'], ['pork chops'], ['salmon fillets'], ['shrimp'], ['filet mignon'], ['ground beef', 'shrimp']]) {
+      const r = recipe(ings, [step(`Cook the ${ings.join(' and ')} in a hot pan.`, true), step('Serve.')]);
+      const once = ensureDonenessSteps(r);
+      expect(once.steps.length).toBe(2 + ings.length);
+      expect(ensureDonenessSteps(once)).toBe(once);
+    }
+  });
+
+  it('does not add a duplicate when the cue states the target without a verb or beside an oil temperature (N2)', () => {
+    const ground = recipe(['ground beef'], [step('Cook the ground beef until 160°F.', true), step('Serve.')]);
+    expect(ensureDonenessSteps(ground)).toBe(ground);
+    const fried = recipe(['cod fillets', 'oil'], [
+      step('Heat the oil to 375°F, then fry the cod until it is 145°F inside.', true),
+      step('Serve.'),
+    ]);
+    expect(ensureDonenessSteps(fried)).toBe(fried);
+    const celsius = recipe(['pork chops'], [step('Grill the pork chops to 63 °C, then rest.', true)]);
+    expect(ensureDonenessSteps(celsius)).toBe(celsius);
+  });
+
+  it('a target for another protein, or with no protein named, is still not a cue (N2)', () => {
+    const wrong = recipe(['ground beef'], [step('Cook the ground beef until 145°F.', true), step('Serve.')]);
+    expect(ensureDonenessSteps(wrong).steps).toHaveLength(3);
+    const unnamed = recipe(['pork chops'], [step('Sear the pork chops.', true), step('Cook until 145°F.', true)]);
+    expect(ensureDonenessSteps(unnamed).steps).toHaveLength(3);
+  });
 });
