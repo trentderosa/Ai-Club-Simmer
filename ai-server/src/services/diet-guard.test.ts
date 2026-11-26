@@ -245,7 +245,7 @@ describe('review fixes: scoped qualifiers', () => {
     ['vegan', 'egg-free mayonnaise'],
     ['vegan', 'vegan egg wash'],
     ['vegetarian', 'Sear the portobello steaks until browned.'],
-    ['vegetarian', 'mushroom steaks'],
+    ['vegetarian', 'eggplant steak'],
     ['pescatarian', 'salmon steak'],
     ['pescatarian', 'shrimp and cod'],
   ];

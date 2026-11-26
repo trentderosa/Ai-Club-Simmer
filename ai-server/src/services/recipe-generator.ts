@@ -592,7 +592,7 @@ const PREP_CUT_WORDS =
 const PREP_HEAT_WORDS =
   'saucepans?|pans?|pots?|skillets?|woks?|griddles?|ovens?|stoves?|stovetop|burners?|instant\\s+pot|pressure|boil\\w*|simmer\\w*|hot|warm\\w*|heat\\w*|scald\\w*|caramel\\w*|amber|thicken\\w*|melt\\w*|fr(?:y|ies|ied|ying)|oil\\w*|blenders?|blend\\w*|food\\s+processors?|pulse|pulsing|knife|knives|cut\\w*|chop\\w*|slic\\w*|dic(?:e|es|ed|ing)|minc\\w*|grat(?:e|es|ed|ing)|peel\\w*|lye|microwav\\w*|bak(?:e|es|ed|ing)|grill\\w*|broil\\w*|sear\\w*|steam\\w*|toast\\w*|flame|lids?|until|over\\s+(?:low|medium|high)';
 const PREP_BLOCKER_RE = new RegExp(
-  `\\b(?:${ANIMAL_PROTEIN_WORDS_SOURCE()}|${PREP_CUT_WORDS}|${PREP_HEAT_WORDS})\\b`,
+  `\\b(?:${ANIMAL_PROTEIN_WORDS_SOURCE()}|ground|birds?|kebabs?|${PREP_CUT_WORDS}|${PREP_HEAT_WORDS})\\b`,
   'i'
 );
 

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { findForbiddenTerm } from './diet-guard.js';
 import { generateRecipe, buildPrompt, repairMasteryHideableSteps, type PathSlot } from './recipe-generator.js';
 import { generateCookAnythingRecipe } from '../cook-anything/generator.js';
 import type { OllamaClient } from './ollama-client.js';
@@ -373,5 +374,102 @@ describe('repairMasteryHideableSteps: strict allowlist', () => {
   it('a step without a container only qualifies when it starts with gather or measure out', () => {
     expect(repairMasteryHideableSteps(withFlagged('Measure the salt and pepper.')).recipe.steps[0].isSafetyStep).toBe(true);
     expect(repairMasteryHideableSteps(withFlagged('Season the greens with the herb mix.')).recipe.steps[0].isSafetyStep).toBe(true);
+  });
+});
+
+describe('repairMasteryHideableSteps: round 2 probes', () => {
+  const withFlagged = (text: string): Recipe =>
+    recipe(['x'], [step(text, true), ...Array.from({ length: 6 }, () => step('Heat the pan over medium heat for two minutes.', true))]);
+  const mustStayFlagged = [
+ 'Combine the raw chicken with the marinade in a bowl.',
+ 'Season the fish in a bowl.',
+ 'Mix the marinade in a bowl and add the lamb.',
+ 'Toss the hot pasta in a bowl.',
+ 'Whisk the eggs in a bowl.',
+ 'Whisk the egg whites in a bowl to soft peaks.',
+ 'Set out a plate for the cooked chicken.',
+ 'Set out a plate for the cooked thighs.',
+ 'Combine the marinade and the drumstick in a bowl.',
+ 'Combine the mince with herbs in a bowl.',
+ 'Combine the turkey mince in a bowl.',
+ 'Mix the pork mince and spices in a bowl.',
+ 'Combine the chicken mince and spices in a bowl.',
+ 'Combine the veal in a bowl.',
+ 'Mix the ground chuck with spices in a bowl.',
+ 'Mix the sirloin strips with marinade in a bowl.',
+ 'Toss the flank strips with cornstarch in a bowl.',
+ 'Toss the tilapia with spices in a bowl.',
+ 'Mix the cubed lamb with yogurt in a bowl.',
+ 'Combine the beaten egg and milk in a bowl.',
+ 'Whisk the yolk into the mayo in a bowl.',
+ 'Combine the ahi with soy sauce in a bowl.',
+ 'Toss the shrimps with garlic in a bowl.',
+ 'Toss the langoustines in a bowl.',
+ 'Combine the chorizo and beans in a bowl.',
+ 'Mix the bird with herbs in a bowl.',
+ 'Toss the giblets in a bowl.',
+ 'Combine the minced meat in a bowl.',
+ 'Combine the meatball mixture in a bowl.',
+ 'Mix the kofta mixture in a bowl.',
+ 'Mix it all in a bowl with the raw protein.',
+ 'Season the chicken thighs on a plate.',
+ 'Season the goat on a plate.',
+ 'Gather the chicken, salt, and pepper.',
+ 'Gather the ingredients.',
+ 'Measure out the spices.',
+ 'Gather a knife and board.',
+ 'Combine the cured salmon in a bowl.',
+ 'Toss the oysters in a bowl.',
+ 'Combine the boiling water and gelatin in a bowl.',
+ 'Combine the scalding milk in a bowl.',
+ 'Mix the steaming milk and cocoa in a bowl.',
+ 'Combine the just-boiled water in a jar.',
+ 'Toss the duck legs in a bowl.',
+ 'Combine the venison in a bowl.',
+ 'Mix the bison in a bowl.',
+ 'Season the quail on a plate.',
+ 'Combine the tuna and mayo in a bowl.',
+ 'Season the meat mixture in a bowl.',
+ 'Mix the sausage meat in a bowl.',
+ 'Combine the crab meat in a bowl.',
+ 'Combine the crabmeat in a bowl.',
+ 'Combine the beef-and-pork blend in a bowl.',
+ 'Combine the uncooked chicken in a bowl.',
+    'Mix the kebab meat in a bowl.',
+    'Combine the chuck roast in a bowl.',
+  ];
+  it.each(mustStayFlagged)('keeps this step flagged: %s', (text) => {
+    expect(repairMasteryHideableSteps(withFlagged(text)).recipe.steps[0].isSafetyStep).toBe(true);
+  });
+  it.each([
+    'Toss the tofu in a bowl with soy sauce.',
+    'Combine the salad greens in a bowl.',
+    'Whisk the vinaigrette in a jar.',
+  ])('may unflag: %s', (text) => {
+    expect(repairMasteryHideableSteps(withFlagged(text)).recipe.steps[0].isSafetyStep).toBe(false);
+  });
+  it('known gap: a vague step that never names the protein can be unflagged', () => {
+    expect(repairMasteryHideableSteps(withFlagged('Toss the pieces with salt in a bowl.')).recipe.steps[0].isSafetyStep).toBe(false);
+  });
+});
+
+describe('diet guard: beef cuts and steak substitutes', () => {
+  it.each(['ribeye', 'rib-eye steak', 'sirloin', 'chuck roast', 'ground chuck', 'flank steak', 'skirt steak', 'tri-tip', 'filet mignon', 'T-bone', 'porterhouse', 'strip steak', 'kofta', 'giblets'])(
+    'vegetarian and no beef flag %s',
+    (name) => {
+      expect(findForbiddenTerm(name, 'vegetarian')).not.toBeNull();
+    }
+  );
+  it.each(['ahi tuna', 'langoustines', 'crabmeat', 'crab cakes'])('vegetarian flags %s', (name) => {
+    expect(findForbiddenTerm(name, 'vegetarian')).not.toBeNull();
+  });
+  it.each(['skirt', 'chuck wagon seasoning blend', 'crabapple jelly'])('does not flag %s', (name) => {
+    expect(findForbiddenTerm(name, 'vegetarian')).toBeNull();
+  });
+  it.each(['mushroom steak', 'garlic mushroom steak', 'creamy mushroom steak', 'mushroom steak bites'])('flags %s', (name) => {
+    expect(findForbiddenTerm(name, 'vegetarian')).toBe('steak');
+  });
+  it.each(['portobello steak', 'cauliflower steak', 'tofu steak', 'eggplant steak', 'seitan steak', 'tempeh steak tips'])('allows %s', (name) => {
+    expect(findForbiddenTerm(name, 'vegetarian')).toBeNull();
   });
 });

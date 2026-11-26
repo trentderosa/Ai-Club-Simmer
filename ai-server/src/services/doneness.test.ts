@@ -183,16 +183,45 @@ describe('ensureDonenessSteps: review fixes', () => {
     }
   });
 
-  it('skips raw dishes', () => {
-    const cases: Array<[string[], string[]]> = [
-      [['beef tenderloin', 'capers'], ['Finely dice the beef tenderloin for the tartare.', 'Mix with capers and serve raw.']],
-      [['sushi-grade salmon', 'soy sauce'], ['Cube the salmon.', 'Toss with soy sauce.']],
-      [['tuna steak'], ['Slice the tuna for sashimi.']],
-      [['white fish', 'lime'], ['Marinate the white fish in lime for ceviche.']],
-      [['salmon'], ['Cube the salmon and toss it for the poke bowl.']],
+  it('skips raw dishes named by the title or an ingredient', () => {
+    const cases: Array<[string, string[], string[]]> = [
+      ['Beef Tartare', ['beef tenderloin', 'capers'], ['Finely dice the beef tenderloin.', 'Mix with capers.']],
+      ['Salmon Poke Bowl', ['salmon', 'soy sauce'], ['Cube the salmon.', 'Toss with soy sauce.']],
+      ['Tuna Sashimi', ['tuna steak'], ['Slice the tuna.']],
+      ['Ceviche', ['white fish', 'lime'], ['Marinate the white fish in lime.']],
+      ['Sushi Rolls', ['salmon', 'rice'], ['Roll the salmon in the rice.']],
+      ['Dinner', ['salmon', 'poke bowl sauce'], ['Cube the salmon.']],
     ];
-    for (const [ings, steps] of cases) {
-      const r = recipe(ings, steps.map((t) => step(t)));
+    for (const [title, ings, steps] of cases) {
+      const r = { ...recipe(ings, steps.map((t) => step(t))), title };
+      expect(ensureDonenessSteps(r)).toBe(r);
+    }
+  });
+
+  it('step text never disables the check ("poke", "tartare sauce", "sushi-grade", "poke cake")', () => {
+    const cases: Array<[string, string[], string[]]> = [
+      ['Pork chops', ['pork chops'], ['Poke the pork chops all over with a fork.', 'Grill the pork chops 6 minutes per side.', 'Serve.']],
+      ['Fish and chips with tartare sauce', ['cod fillets', 'tartare sauce'], ['Fry the cod 4 minutes.', 'Serve with tartare sauce.']],
+      ['Seared tuna', ['sushi-grade tuna steak'], ['Sear the tuna 1 minute per side.', 'Serve.']],
+      ['Salmon bake', ['salmon fillets'], ['Bake the salmon 12 minutes.', 'Serve with a poke cake for dessert.']],
+      ['Baked salmon', ['salmon fillets'], ['Bake the salmon 12 minutes.', 'Serve like sashimi.']],
+    ];
+    for (const [title, ings, steps] of cases) {
+      const r = { ...recipe(ings, steps.map((t) => step(t, true))), title };
+      expect(ensureDonenessSteps(r).steps).toHaveLength(steps.length + 1);
+    }
+  });
+
+  it('only cancels a cue when the temperature is about the oil or oven', () => {
+    const cue = recipe(['beef steak'], [step('Sear the steak in oil until a thermometer reads 145°F.', true), step('Serve.')]);
+    expect(ensureDonenessSteps(cue)).toBe(cue);
+    const oven = recipe(['beef steak'], [step('Preheat the oven to 400°F.', true), step('Sear the steak.', true), step('Serve.')]);
+    expect(ensureDonenessSteps(oven).steps).toHaveLength(4);
+  });
+
+  it('does not treat plant steaks as whole cuts', () => {
+    for (const name of ['portobello steaks', 'eggplant steak', 'cauliflower steaks', 'tofu steak']) {
+      const r = recipe([name], [step('Sear them.')]);
       expect(ensureDonenessSteps(r)).toBe(r);
     }
   });

@@ -34,7 +34,10 @@ interface CategoryDef {
 const NO_COOK_NAME =
   /\b(?:canned|tinned|smoked|cured|lox|jarred|dried|paste|pre-?cooked|cooked|sauce|seasoning|rub)\b/i;
 // Raw dishes are not cooked, so no doneness check is added.
-const RAW_DISH_RE = /\b(?:sushi|sashimi|tartare|crudo|ceviche|poke|carpaccio)\b/i;
+const RAW_DISH_RE = /\b(?:sushi|sashimi|tartare|crudo|ceviche|carpaccio|poke\s+bowls?)\b/i;
+// "tartare sauce" and "sushi-grade" do not make a dish raw; "poke" alone is also a verb ("poke the chops") and a cake.
+const NOT_RAW_RE = /\btartar(?:e)?\s+sauce\b|\bsushi[- ]grade\b/gi;
+const POKE_TITLE_RE = /\bpoke\b/i;
 
 const CATEGORIES: Record<Category, CategoryDef> = {
   ground: {
@@ -49,7 +52,7 @@ const CATEGORIES: Record<Category, CategoryDef> = {
   whole: {
     ingredient:
       /\bpork\s+(?:chops?|loin|tenderloin|cutlets?)\b|\blamb\s+chops?\b|\b(?:steaks?|sirloin|ribeye|rib[- ]eye|filet mignon|beef tenderloin)\b/i,
-    skip: new RegExp(`${NO_COOK_NAME.source}|\\b(?:salmon|tuna|fish|swordfish|halibut|cauliflower|tofu)\\s+steaks?\\b`, 'i'),
+    skip: new RegExp(`${NO_COOK_NAME.source}|\\b(?:salmon|tuna|fish|swordfish|halibut|cauliflower|tofu|portobello|eggplant|seitan|tempeh)\\s+steaks?\\b`, 'i'),
     stepWord: /\b(?:pork|beef|lamb|steaks?|chops?|loin|tenderloin|sirloin|ribeye|rib[- ]eye|filet|meat)\b/i,
     visualCue: null,
     instruction: (food) =>
@@ -58,9 +61,9 @@ const CATEGORIES: Record<Category, CategoryDef> = {
   },
   fish: {
     ingredient:
-      /\b(?:salmon|cod|tilapia|halibut|trout|haddock|snapper|mahi|sea bass|swordfish|catfish|white fish|fish fillets?|fish)\b/i,
+      /\b(?:salmon|cod|tilapia|halibut|trout|haddock|snapper|mahi|ahi|(?:ahi\s+)?tuna\s+(?:steaks?|fillets?)|sea bass|swordfish|catfish|white fish|fish fillets?|fish)\b/i,
     skip: new RegExp(`${NO_COOK_NAME.source}|\\bfish\\s+(?:sauce|stock|broth)\\b|\\bsea\\s+salt\\b`, 'i'),
-    stepWord: /\b(?:fish|salmon|cod|tilapia|halibut|trout|haddock|snapper|mahi|bass|swordfish|catfish|fillets?)\b/i,
+    stepWord: /\b(?:fish|salmon|tuna|ahi|cod|tilapia|halibut|trout|haddock|snapper|mahi|bass|swordfish|catfish|fillets?)\b/i,
     visualCue: /\bflak(?:e|es|ed|ing)\b/i,
     instruction: (food) =>
       `Check the ${food} for doneness: the thickest part should reach 145°F (63°C) on a food thermometer, or the flesh should turn opaque and flake easily with a fork.`,
@@ -80,7 +83,10 @@ const CATEGORIES: Record<Category, CategoryDef> = {
 const CATEGORY_ORDER: Category[] = ['ground', 'whole', 'fish', 'shrimp'];
 
 const THERMOMETER_RE = /\bthermometers?\b|\binternal temp(?:erature)?\b/i;
-const NOT_A_CUE_RE = /\b(?:oil|oven|preheat\w*|deep[- ]?fry\w*)\b/i;
+// A temperature that belongs to the oil or the oven is not a doneness cue. "Sear the steak in oil
+// until a thermometer reads 145°F" is a cue: the temperature is the food's.
+const NOT_A_CUE_RE =
+  /\b(?:heat|preheat|warm|bring)\w*\b[^.!?]{0,30}\b(?:oil|oven|fryer)\b[^.!?]{0,30}?\d{2,3}\s*[°˚º]?\s*[fc]\b|\b(?:oil|oven)\b[^.!?]{0,20}\b(?:reaches|at|to)\b[^.!?]{0,15}\d{2,3}\s*[°˚º]?\s*[fc]\b|\b(?:deep[- ]?fry|candy|oil)\s+thermometers?\b/i;
 // "reaches 145°F", "registers 160 F": a stated target. A bare oven temperature ("heat oven to 400°F") is not one.
 const TARGET_TEMP_RE =
   /\b(?:reach(?:es|ed)?|register(?:s|ed)?|hits?|hit|read(?:s|ing)?)\b[^.!?]{0,40}?\d{2,3}\s*(?:[°˚º]\s*)?[fc]\b/i;
@@ -114,8 +120,10 @@ function stepHasCue(instruction: string, def: CategoryDef): boolean {
 export function ensureDonenessSteps<T extends Pick<Recipe, 'ingredients' | 'steps'> & { title?: string }>(
   recipe: T
 ): T {
-  const rawText = [recipe.title ?? '', ...recipe.ingredients.map((i) => i.name), ...recipe.steps.map((st) => st.instruction)];
+  // Only the title and ingredient names decide: step text has verbs like "poke the chops".
+  const rawText = [recipe.title ?? '', ...recipe.ingredients.map((i) => i.name)].map((t) => t.replace(NOT_RAW_RE, ' '));
   if (rawText.some((text) => RAW_DISH_RE.test(text))) return recipe;
+  if (POKE_TITLE_RE.test(recipe.title ?? '')) return recipe;
   const present = CATEGORY_ORDER.flatMap((category) => {
     const food = ingredientMatch(recipe, CATEGORIES[category]);
     return food ? [{ category, food }] : [];

@@ -104,12 +104,13 @@ const words = (list: string): string => `\\b(?:${list})\\b`;
 // already forbidden, so "chicken broth" and "beef stock" match on chicken/beef.
 const POULTRY = 'chicken|turkey|duck|goose|poultry|quail|cornish hen|schmaltz';
 const PORK = 'pork|bacon|ham|prosciutto|pancetta|lard|chorizo|salami|pepperoni|hot ?dogs?|sausages?|guanciale|lardons?|kielbasa|andouille|bratwurst|mortadella|pastrami|spam';
-const BEEF = 'beef|veal|brisket|oxtail|meatballs?|burgers?|jerky';
+const BEEF =
+  'beef|veal|brisket|oxtail|meatballs?|burgers?|jerky|ribeyes?|rib[- ]eyes?|sirloin|chuck roast|chuck steak|ground chuck|flank|skirt steak|tri[- ]tip|filet mignon|t[- ]bone|porterhouse|strip steak|kofta|giblets';
 const OTHER_MEAT = 'lamb|mutton|goat|venison|bison|rabbit|steaks?|short ribs?|spare ribs?|meats?|liver|bone marrow|tallow|suet|gelatin|gelatine';
 const FISH =
-  'fish|salmon|tuna|cod|tilapia|trout|halibut|haddock|snapper|mackerel|sardines?|anchov(?:y|ies)|herring|swordfish|catfish|mahi|sea bass|bonito|katsuobushi|dashi|eel';
+  'fish|salmon|tuna|cod|tilapia|trout|halibut|haddock|snapper|mackerel|sardines?|anchov(?:y|ies)|herring|swordfish|catfish|mahi|ahi|sea bass|bonito|katsuobushi|dashi|eel';
 const SHELLFISH =
-  'shrimps?|prawns?|crab|crabs|lobster|clams?|mussels?|oysters?|scallops?|squid|calamari|octopus|crawfish|crayfish';
+  'shrimps?|prawns?|langoustines?|crabs?|crabmeat|lobster|clams?|mussels?|oysters?|scallops?|squid|calamari|octopus|crawfish|crayfish';
 const ANIMAL_SAUCES = 'fish sauce|oyster sauce|worcestershire|worcestershire sauce|shrimp paste|nuoc mam';
 const DAIRY =
   'milk|buttermilk|butter|ghee|cheese|cream|half[- ]and[- ]half|yogh?urt|whey|casein|paneer|ricotta|mozzarella|parmesan|parmigiano|cheddar|feta|mascarpone|gouda|halloumi|brie|gruyere|creme fraiche|ice cream|custard|pecorino|cotija|queso|labneh|kefir';
@@ -159,7 +160,7 @@ const OYSTER_MUSHROOM = /\boyster\s+mushrooms?\b/g;
 const PLANT_DASHI = /\b(?:kombu|shiitake|vegetable|vegan)\s+dashi\b/g;
 // Fish steak, cauliflower steak: not red meat. "steak" alone stays forbidden for vegetarians.
 const NON_MEAT_STEAK =
-  /(?<=\b(?:salmon|tuna|fish|swordfish|halibut)\s)steaks?\b|\b(?:cauliflower|tofu|portobello|mushroom|eggplant|seitan|tempeh)\s+steaks?\b/g;
+  /(?<=\b(?:salmon|tuna|fish|swordfish|halibut)\s)steaks?\b|\b(?:cauliflower|tofu|portobello|eggplant|seitan|tempeh)\s+steaks?\b/g;
 
 type Exception = RegExp | { re: RegExp; kinds: HintKind[] };
 
