@@ -3,6 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import { createRecipeRouter } from './recipe.js';
 import { isPreviewRouteEnabled } from '../config.js';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 import type { OllamaClient } from '../services/ollama-client.js';
 import type { SupabaseService } from '../services/supabase.js';
 import type { Recipe } from '../schemas/recipe.js';
@@ -282,6 +283,34 @@ describe('POST /api/recipes/generate/:slotId', () => {
     expect(response.body.dish_videos).toEqual([]);
     expect(response.body.recipe.title).toBe('Test Recipe');
     expect(photoSearch.search).toHaveBeenCalledWith('test dish');
+  });
+
+  it.each([
+    ['a timeout', new SupabaseRestError('Supabase recipe query timed out after 5000ms', undefined, { kind: 'timeout' }), 503],
+    ['a non-timeout error', new SupabaseRestError('Supabase recipe query failed: 500', 500), 500],
+  ])('maps a saved-recipe lookup failing with %s to %i', async (_name, error, status) => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const supabase = createMockSupabase({ tokenValid: true, pathSlot: mockSlot, userProfile: mockUserProfile });
+      (supabase.getSavedRecipe as ReturnType<typeof vi.fn>).mockRejectedValue(error);
+      const app = createApp({ ollamaClient: createMockOllamaClient(), supabase });
+
+      const response = await request(app)
+        .post('/api/recipes/generate/1')
+        .set('Authorization', 'Bearer valid-token');
+
+      expect(response.status).toBe(status);
+      expect(response.body).toEqual(
+        status === 503
+          ? {
+              error: 'The database is not responding right now. Try again in a moment.',
+              code: 'DATABASE_UNAVAILABLE',
+            }
+          : { error: 'Internal server error' }
+      );
+    } finally {
+      errorSpy.mockRestore();
+    }
   });
 
   it('hides internal error details from client', async () => {

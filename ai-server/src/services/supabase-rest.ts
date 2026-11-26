@@ -74,6 +74,38 @@ export class SupabaseRestError extends Error {
   }
 }
 
+/** True for a SupabaseRestError raised by an aborted (timed-out) request. */
+export function isDatabaseTimeout(error: unknown): error is SupabaseRestError {
+  return error instanceof SupabaseRestError && error.kind === 'timeout';
+}
+
+/**
+ * Runs a request under one timer that covers the fetch and reading the body.
+ * SupabaseRestError passes through; an abort becomes a 'timeout'
+ * SupabaseRestError; any other error propagates unchanged.
+ */
+export async function withSupabaseTimeout<T>(
+  label: string,
+  timeoutMs: number,
+  run: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await run(controller.signal);
+  } catch (error) {
+    if (error instanceof SupabaseRestError) throw error;
+    if (controller.signal.aborted) {
+      throw new SupabaseRestError(`Supabase ${label} timed out after ${timeoutMs}ms`, undefined, {
+        kind: 'timeout',
+      });
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class SupabaseRest {
   private readonly baseUrl: string;
   private readonly headers: Record<string, string>;
