@@ -205,3 +205,82 @@ describe('findDietViolations and hints', () => {
     expect(dietPromptHint(['gluten_free'])).toBe('');
   });
 });
+
+describe('review fixes: scoped qualifiers', () => {
+  const flagged: Array<[DietRule, string, string]> = [
+    ['vegetarian', 'dairy-free chicken alfredo', 'chicken'],
+    ['vegetarian', 'eggless chicken fried rice', 'chicken'],
+    ['vegetarian', 'Stir in the veggie and beef mixture', 'beef'],
+    ['vegetarian', 'vegetable beef soup', 'beef'],
+    ['vegetarian', 'coconut chicken', 'chicken'],
+    ['vegetarian', 'mushroom beef stir-fry', 'beef'],
+    ['vegetarian', 'soy chicken', 'chicken'],
+    ['no_pork', 'dairy-free pork sausage', 'pork'],
+    ['egg_free', 'dairy-free egg noodles', 'egg'],
+    ['egg_free', 'vegan egg wash with real egg', 'egg'],
+    ['vegan', 'plant-based milk and eggs', 'eggs'],
+    ['vegetarian', 'veggie bacon bits and ham', 'ham'],
+    ['vegetarian', 'beyond meat and bacon', 'bacon'],
+    ['dairy_free', 'nut butter and cream', 'cream'],
+    ['vegan', 'vegan sour cream and cheddar', 'cheddar'],
+    ['vegan', 'dairy-free chocolate chips and butter', 'butter'],
+    ['no_fish', 'salmon steak', 'salmon'],
+    ['no_fish', 'tuna steak', 'tuna'],
+    ['vegetarian', 'salmon steak', 'salmon'],
+  ];
+  it.each(flagged)('%s flags %s', (rule, text, term) => {
+    expect(findForbiddenTerm(text, rule)).toBe(term);
+  });
+
+  const allowed: Array<[DietRule, string]> = [
+    ['vegetarian', 'vegetarian fish sauce'],
+    ['vegetarian', 'vegetarian oyster sauce'],
+    ['vegetarian', 'vegan fish sauce'],
+    ['vegetarian', 'meat thermometer'],
+    ['vegetarian', 'tofu bacon'],
+    ['vegetarian', 'jackfruit chicken'],
+    ['vegetarian', 'beyond meat'],
+    ['vegetarian', 'goat cheese'],
+    ['vegan', 'dairy-free milk chocolate'],
+    ['vegan', 'egg-free mayonnaise'],
+    ['vegan', 'vegan egg wash'],
+    ['vegetarian', 'Sear the portobello steaks until browned.'],
+    ['vegetarian', 'mushroom steaks'],
+    ['pescatarian', 'salmon steak'],
+    ['pescatarian', 'shrimp and cod'],
+  ];
+  it.each(allowed)('%s allows %s', (rule, text) => {
+    expect(findForbiddenTerm(text, rule)).toBeNull();
+  });
+});
+
+describe('review fixes: more words and diacritics', () => {
+  const veg = ['guanciale', 'lardons', 'kielbasa', 'andouille', 'bratwurst', 'mortadella', 'pastrami', 'spam', 'goat', 'schmaltz', 'katsuobushi', 'nuoc mam', 'corned beef', 'pork rinds', 'dried shrimp', 'squid ink'];
+  it.each(veg)('vegetarian flags %s', (name) => {
+    expect(findForbiddenTerm(name, 'vegetarian')).not.toBeNull();
+  });
+  const vegan = ['pecorino', 'cotija', 'queso fresco', 'labneh', 'kefir', 'egg yolks', 'yolks', 'aioli', 'crème fraîche', 'Crème Fraîche'];
+  it.each(vegan)('vegan flags %s', (name) => {
+    expect(findForbiddenTerm(name, 'vegan')).not.toBeNull();
+  });
+  it('pescatarian allows fish but not meat', () => {
+    expect(findForbiddenTerm('chicken', 'pescatarian')).toBe('chicken');
+    expect(findForbiddenTerm('bacon', 'pescatarian')).toBe('bacon');
+    expect(findForbiddenTerm('salmon', 'pescatarian')).toBeNull();
+  });
+});
+
+describe('review fixes: parseDietRules', () => {
+  it('maps extra phrasings', () => {
+    expect(parseDietRules(['plant-based'])).toEqual(['vegan']);
+    expect(parseDietRules(['lactose intolerant'])).toEqual(['dairy_free']);
+    expect(parseDietRules(['nuts'])).toEqual(['nut_free']);
+    expect(parseDietRules(['Peanuts'])).toEqual(['nut_free']);
+    expect(parseDietRules(['shellfish'])).toEqual(['no_shellfish']);
+    expect(parseDietRules(['pescatarian'])).toEqual(['pescatarian']);
+  });
+  it('does not over-match', () => {
+    expect(parseDietRules(['loves nuts and berries'])).toEqual([]);
+    expect(parseDietRules(['halal'])).toEqual([]);
+  });
+});

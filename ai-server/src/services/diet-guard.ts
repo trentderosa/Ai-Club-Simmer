@@ -27,6 +27,7 @@ export type DietRule =
   | 'no_pork'
   | 'no_beef'
   | 'no_poultry'
+  | 'pescatarian'
   | 'no_fish'
   | 'no_shellfish'
   | 'dairy_free'
@@ -47,7 +48,8 @@ export interface DietViolation {
 // ---------------------------------------------------------------------------
 
 const RULE_PHRASES: Array<[DietRule, RegExp]> = [
-  ['vegan', /\bvegan\b/],
+  ['vegan', /\bvegan\b|\bplant[- ]based\b/],
+  ['pescatarian', /\bpescatarian\b|\bpescetarian\b/],
   ['vegetarian', /\bvegetarian\b|\bveggie\b|\blacto[- ]?ovo\b/],
   ['no_pork', /\b(?:no|without|avoid)\s+pork\b|\bpork[- ]free\b/],
   ['no_beef', /\b(?:no|without|avoid)\s+beef\b|\bbeef[- ]free\b/],
@@ -58,13 +60,13 @@ const RULE_PHRASES: Array<[DietRule, RegExp]> = [
   ['no_fish', /\b(?:no|without|avoid)\s+(?:fish|seafood)\b|\bfish[- ]free\b|\bseafood[- ]free\b|\bfish allergy\b/],
   [
     'no_shellfish',
-    /\b(?:no|without|avoid)\s+(?:shellfish|seafood)\b|\bshellfish[- ]free\b|\bseafood[- ]free\b|\bshellfish allergy\b/,
+    /\b(?:no|without|avoid)\s+(?:shellfish|seafood)\b|\bshellfish[- ]free\b|\bseafood[- ]free\b|\bshellfish allergy\b|^\s*shellfish\s*$/,
   ],
-  ['dairy_free', /\bdairy[- ]free\b|\bno dairy\b|\bnon[- ]dairy\b|\bwithout dairy\b|\bmilk allergy\b/],
+  ['dairy_free', /\bdairy[- ]free\b|\bno dairy\b|\bnon[- ]dairy\b|\bwithout dairy\b|\bmilk allergy\b|\blactose\b/],
   ['gluten_free', /\bgluten[- ]free\b|\bno gluten\b|\bceliac\b|\bcoeliac\b|\bwithout gluten\b/],
   [
     'nut_free',
-    /\bnut[- ]free\b|\bno nuts?\b|\bpeanut[- ]free\b|\btree nut\b|\bnut allerg\w*|\bpeanut allerg\w*/,
+    /\bnut[- ]free\b|\bno nuts?\b|\bpeanut[- ]free\b|\btree nut\b|\bnut allerg\w*|\bpeanut allerg\w*|^\s*(?:tree\s+)?(?:nuts?|peanuts?)\s*$/,
   ],
   ['egg_free', /\begg[- ]free\b|\bno eggs?\b|\begg allerg\w*|\bwithout eggs?\b/],
   ['no_mushrooms', /\b(?:no|without|avoid)\s+mushrooms?\b|\bmushroom[- ]free\b/],
@@ -75,7 +77,7 @@ export function parseDietRules(needs: readonly string[] | undefined): DietRule[]
   if (!needs) return [];
   const found = new Set<DietRule>();
   for (const raw of needs) {
-    const text = raw.toLowerCase().replace(/[_]+/g, ' ');
+    const text = normalizeText(raw).replace(/[_]+/g, ' ');
     for (const [rule, re] of RULE_PHRASES) {
       if (re.test(text)) found.add(rule);
     }
@@ -83,40 +85,69 @@ export function parseDietRules(needs: readonly string[] | undefined): DietRule[]
   return RULE_PHRASES.map(([rule]) => rule).filter((rule) => found.has(rule));
 }
 
+/** Lowercase, strip diacritics ("crème fraîche" -> "creme fraiche") and apostrophes. */
+function normalizeText(text: string): string {
+  return text.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/[’']/g, '');
+}
+
 // ---------------------------------------------------------------------------
 // Word lists
 // ---------------------------------------------------------------------------
+
+/** Every animal protein word we know (meat, poultry, fish, shellfish, egg). Used by the slot 10 prep-step allowlist. */
+export const ANIMAL_PROTEIN_WORDS_SOURCE = (): string => [POULTRY, PORK, BEEF, OTHER_MEAT, FISH, SHELLFISH, EGG].join('|');
 
 const words = (list: string): string => `\\b(?:${list})\\b`;
 
 // Broth and stock are not listed on their own: "vegetable broth" is fine. They
 // only count when qualified by an animal word, and every animal word below is
 // already forbidden, so "chicken broth" and "beef stock" match on chicken/beef.
-const POULTRY = 'chicken|turkey|duck|goose|poultry|quail|cornish hen';
-const PORK = 'pork|bacon|ham|prosciutto|pancetta|lard|chorizo|salami|pepperoni|hot ?dogs?|sausages?';
+const POULTRY = 'chicken|turkey|duck|goose|poultry|quail|cornish hen|schmaltz';
+const PORK = 'pork|bacon|ham|prosciutto|pancetta|lard|chorizo|salami|pepperoni|hot ?dogs?|sausages?|guanciale|lardons?|kielbasa|andouille|bratwurst|mortadella|pastrami|spam';
 const BEEF = 'beef|veal|brisket|oxtail|meatballs?|burgers?|jerky';
-const OTHER_MEAT = 'lamb|mutton|venison|bison|rabbit|steaks?|short ribs?|spare ribs?|meats?|liver|bone marrow|tallow|suet|gelatin|gelatine';
+const OTHER_MEAT = 'lamb|mutton|goat|venison|bison|rabbit|steaks?|short ribs?|spare ribs?|meats?|liver|bone marrow|tallow|suet|gelatin|gelatine';
 const FISH =
-  'fish|salmon|tuna|cod|tilapia|trout|halibut|haddock|snapper|mackerel|sardines?|anchov(?:y|ies)|herring|swordfish|catfish|mahi|sea bass|bonito|dashi|eel';
+  'fish|salmon|tuna|cod|tilapia|trout|halibut|haddock|snapper|mackerel|sardines?|anchov(?:y|ies)|herring|swordfish|catfish|mahi|sea bass|bonito|katsuobushi|dashi|eel';
 const SHELLFISH =
   'shrimps?|prawns?|crab|crabs|lobster|clams?|mussels?|oysters?|scallops?|squid|calamari|octopus|crawfish|crayfish';
-const ANIMAL_SAUCES = 'fish sauce|oyster sauce|worcestershire|worcestershire sauce|shrimp paste';
+const ANIMAL_SAUCES = 'fish sauce|oyster sauce|worcestershire|worcestershire sauce|shrimp paste|nuoc mam';
 const DAIRY =
-  'milk|buttermilk|butter|ghee|cheese|cream|half[- ]and[- ]half|yogh?urt|whey|casein|paneer|ricotta|mozzarella|parmesan|parmigiano|cheddar|feta|mascarpone|gouda|halloumi|brie|gruyere|creme fraiche|ice cream|custard';
-const EGG = 'eggs?|mayonnaise|mayo|meringue';
+  'milk|buttermilk|butter|ghee|cheese|cream|half[- ]and[- ]half|yogh?urt|whey|casein|paneer|ricotta|mozzarella|parmesan|parmigiano|cheddar|feta|mascarpone|gouda|halloumi|brie|gruyere|creme fraiche|ice cream|custard|pecorino|cotija|queso|labneh|kefir';
+const EGG = 'eggs?|yolks?|aioli|brioche|mayonnaise|mayo|meringue';
 const HONEY = 'honey';
 
 /**
- * Qualifiers that make an animal word safe: "vegan butter", "plant-based
- * chicken", "meatless sausage", "dairy-free cheese". Followed by one or two
- * words so "vegan sour cream" is covered; the next unrelated food after "or" or
- * "and" is still scanned ("vegan butter or chicken" still flags chicken).
+ * Qualifiers that make an animal word safe, each scoped to its own category:
+ * "vegan"/"plant-based" exempt anything animal, "vegetarian"/"meatless"/"veggie"
+ * exempt only meat, fish, and shellfish, "dairy-free" only dairy, "egg-free"
+ * only egg. The qualifier covers up to two following words, and never runs on
+ * past "and", "or", "with", "plus", so "vegan butter or chicken" still flags
+ * chicken and "veggie and beef" still flags beef. Only the category's own words
+ * inside that phrase are exempt: "dairy-free chicken alfredo" still flags chicken.
  */
-const GENERIC_QUALIFIER =
-  /\b(?:vegan|plant[- ]based|meatless|meat[- ]free|veggie|faux|imitation|mock|dairy[- ]free|non[- ]?dairy|egg[- ]free|eggless)(?:\s+[\w-]+){1,2}/g;
+const NEXT_WORDS = String.raw`(?:\s+(?!(?:and|or|with|plus|in|on|over|for)\b)[\w-]+){1,2}`;
+const qualifier = (prefixes: string, kinds: HintKind[]): Exception => ({
+  re: new RegExp(String.raw`\b(?:${prefixes})${NEXT_WORDS}`, 'g'),
+  kinds,
+});
+const MEAT_KINDS: HintKind[] = ['meat', 'fish', 'shellfish', 'sauce'];
+const Q_ANIMAL_FREE = qualifier('vegan|plant[- ]based|faux|imitation|mock', [
+  ...MEAT_KINDS,
+  'dairy',
+  'egg',
+  'honey',
+]);
+const Q_MEATLESS = qualifier('vegetarian|meatless|meat[- ]free|veggie', MEAT_KINDS);
+const Q_DAIRY_FREE = qualifier('dairy[- ]free|non[- ]?dairy', ['dairy']);
+const Q_EGG_FREE = qualifier('egg[- ]free|eggless', ['egg']);
+const MEAT_QUALIFIERS: Exception[] = [Q_ANIMAL_FREE, Q_MEATLESS];
 
-/** Plant foods that borrow an animal name: "tofu bacon", "mushroom jerky", "jackfruit chicken". */
-const PLANT_MEAT = /\b(?:coconut|tempeh|tofu|mushroom|eggplant|carrot|cauliflower|portobello|soy|jackfruit|seitan|vegetable|veggie|beyond|impossible)\s+(?:bacon|sausages?|jerky|steaks?|chicken|beef|crab|ham|meat|meatballs?|burgers?|patt(?:y|ies)|nuggets|ribs)\b/g;
+/** Explicit meat substitutes: "tofu bacon", "jackfruit chicken", "seitan sausage", "beyond meat". "coconut chicken" and "vegetable beef soup" are real meat. */
+const PLANT_MEAT =
+  /\b(?:tofu|tempeh|seitan|jackfruit|beyond|impossible)\s+(?:bacon|sausages?|jerky|steaks?|chicken|beef|crab|ham|meat|meatballs?|burgers?|patt(?:y|ies)|nuggets|ribs)\b|\b(?:coconut|eggplant|carrot)\s+bacon\b|\bmushroom\s+(?:bacon|jerky)\b/g;
+const MEAT_THERMOMETER = /\bmeat thermometers?\b/g;
+// "goat cheese" is dairy, not goat meat (vegan still flags the cheese). Lookahead keeps the cheese word.
+const GOAT_DAIRY = /\bgoat(?=\s+(?:cheese|milk|yogh?urt|butter))/g;
 
 /** Non-animal "milk", "butter" and friends, and non-dairy words that contain a dairy word. */
 const PLANT_DAIRY =
@@ -127,17 +158,33 @@ const PLANT_EGG = /\b(?:flax|chia)\s+eggs?\b|\beggs?\s+(?:replacer|substitute|re
 const OYSTER_MUSHROOM = /\boyster\s+mushrooms?\b/g;
 const PLANT_DASHI = /\b(?:kombu|shiitake|vegetable|vegan)\s+dashi\b/g;
 // Fish steak, cauliflower steak: not red meat. "steak" alone stays forbidden for vegetarians.
-const NON_MEAT_STEAK = /\b(?:salmon|tuna|fish|swordfish|halibut|cauliflower|tofu)\s+steaks?\b/g;
+const NON_MEAT_STEAK =
+  /(?<=\b(?:salmon|tuna|fish|swordfish|halibut)\s)steaks?\b|\b(?:cauliflower|tofu|portobello|mushroom|eggplant|seitan|tempeh)\s+steaks?\b/g;
+
+type Exception = RegExp | { re: RegExp; kinds: HintKind[] };
 
 interface RuleDef {
   /** Forbidden word patterns, each paired with the hint category it belongs to. */
   forbidden: Array<{ re: RegExp; kind: HintKind }>;
   /** Text matching these is blanked out before searching. */
-  exceptions: RegExp[];
+  exceptions: Exception[];
   label: string;
 }
 
 type HintKind = 'meat' | 'fish' | 'shellfish' | 'sauce' | 'dairy' | 'egg' | 'honey' | 'gluten' | 'nut' | 'mushroom';
+
+const KIND_WORDS: Record<HintKind, string> = {
+  meat: [POULTRY, PORK, BEEF, OTHER_MEAT].join('|'),
+  fish: FISH,
+  shellfish: SHELLFISH,
+  sauce: ANIMAL_SAUCES,
+  dairy: DAIRY,
+  egg: EGG,
+  honey: HONEY,
+  gluten: 'flour',
+  nut: 'nuts?',
+  mushroom: 'mushrooms?',
+};
 
 const f = (list: string, kind: HintKind): { re: RegExp; kind: HintKind } => ({ re: new RegExp(words(list), 'g'), kind });
 
@@ -151,11 +198,19 @@ const MEAT_FORBIDDEN = [
   f(SHELLFISH, 'shellfish'),
 ];
 const DAIRY_FORBIDDEN = [f(DAIRY, 'dairy')];
-const MEAT_EXCEPTIONS = [GENERIC_QUALIFIER, PLANT_MEAT, OYSTER_MUSHROOM, PLANT_DASHI, NON_MEAT_STEAK];
-const DAIRY_EXCEPTIONS = [GENERIC_QUALIFIER, PLANT_DAIRY];
+const MEAT_EXCEPTIONS: Exception[] = [
+  ...MEAT_QUALIFIERS,
+  PLANT_MEAT,
+  OYSTER_MUSHROOM,
+  PLANT_DASHI,
+  NON_MEAT_STEAK,
+  MEAT_THERMOMETER,
+  GOAT_DAIRY,
+];
+const DAIRY_EXCEPTIONS: Exception[] = [Q_ANIMAL_FREE, Q_DAIRY_FREE, PLANT_DAIRY];
 
 // "gluten-free", "rice noodles", and similar are blanked before the gluten words are searched.
-const GLUTEN_FREE_ANY = /\bgluten[- ]free(?:\s+[\w-]+){1,2}/g;
+const GLUTEN_FREE_ANY = new RegExp(String.raw`\bgluten[- ]free${NEXT_WORDS}`, 'g');
 const GLUTEN_FREE_FLOUR =
   /\b(?:rice|almond|coconut|corn|chickpea|gluten[- ]free|tapioca|potato|oat|buckwheat|cassava|sorghum|teff|besan|gram|arrowroot|quinoa|millet|banana|cashew|lentil|pea)\s+flour\b/g;
 const GLUTEN_FREE_PASTA =
@@ -181,13 +236,13 @@ const RULES: Record<DietRule, RuleDef> = {
   },
   vegan: {
     forbidden: [...MEAT_FORBIDDEN, ...DAIRY_FORBIDDEN, f(EGG, 'egg'), f(HONEY, 'honey')],
-    exceptions: [...MEAT_EXCEPTIONS, PLANT_DAIRY, PLANT_EGG],
+    exceptions: [...MEAT_EXCEPTIONS, Q_DAIRY_FREE, Q_EGG_FREE, PLANT_DAIRY, PLANT_EGG],
     label: 'vegan',
   },
   no_pork: {
     forbidden: [f(PORK, 'meat')],
     exceptions: [
-      GENERIC_QUALIFIER,
+      ...MEAT_QUALIFIERS,
       PLANT_MEAT,
       /\b(?:turkey|beef|chicken|lamb)\s+(?:bacon|sausages?|ham|hot ?dogs?|pepperoni|salami|chorizo)\b/g,
     ],
@@ -195,22 +250,27 @@ const RULES: Record<DietRule, RuleDef> = {
   },
   no_beef: {
     forbidden: [f('beef|veal|brisket|oxtail|beef broth|beef stock', 'meat')],
-    exceptions: [GENERIC_QUALIFIER, PLANT_MEAT],
+    exceptions: [...MEAT_QUALIFIERS, PLANT_MEAT, MEAT_THERMOMETER],
     label: 'no beef',
   },
   no_poultry: {
     forbidden: [f(POULTRY, 'meat')],
-    exceptions: [GENERIC_QUALIFIER, PLANT_MEAT],
+    exceptions: [...MEAT_QUALIFIERS, PLANT_MEAT],
     label: 'no poultry or chicken',
+  },
+  pescatarian: {
+    forbidden: [f(POULTRY, 'meat'), f(PORK, 'meat'), f(BEEF, 'meat'), f(OTHER_MEAT, 'meat')],
+    exceptions: [...MEAT_QUALIFIERS, PLANT_MEAT, NON_MEAT_STEAK, MEAT_THERMOMETER, GOAT_DAIRY],
+    label: 'pescatarian (no meat or poultry)',
   },
   no_fish: {
     forbidden: [f('fish sauce|worcestershire|worcestershire sauce', 'sauce'), f(FISH, 'fish')],
-    exceptions: [GENERIC_QUALIFIER, PLANT_DASHI, NON_MEAT_STEAK],
+    exceptions: [...MEAT_QUALIFIERS, PLANT_DASHI],
     label: 'no fish',
   },
   no_shellfish: {
     forbidden: [f('oyster sauce|shrimp paste', 'sauce'), f(SHELLFISH, 'shellfish')],
-    exceptions: [GENERIC_QUALIFIER, OYSTER_MUSHROOM],
+    exceptions: [...MEAT_QUALIFIERS, OYSTER_MUSHROOM],
     label: 'no shellfish',
   },
   dairy_free: {
@@ -239,7 +299,7 @@ const RULES: Record<DietRule, RuleDef> = {
   },
   egg_free: {
     forbidden: [f(EGG, 'egg')],
-    exceptions: [GENERIC_QUALIFIER, PLANT_EGG],
+    exceptions: [Q_ANIMAL_FREE, Q_EGG_FREE, PLANT_EGG],
     label: 'egg-free',
   },
   no_mushrooms: {
@@ -254,9 +314,14 @@ const RULES: Record<DietRule, RuleDef> = {
 /** Word-boundary scan of one string for one rule. Returns the first forbidden term, or null. */
 export function findForbiddenTerm(text: string, rule: DietRule): string | null {
   const def = RULES[rule];
-  let t = text.toLowerCase().replace(/[’']/g, '');
+  let t = normalizeText(text);
   for (const exception of def.exceptions) {
-    t = t.replace(new RegExp(exception.source, 'g'), ' ');
+    if (exception instanceof RegExp) {
+      t = t.replace(new RegExp(exception.source, 'g'), ' ');
+    } else {
+      const own = new RegExp(words(exception.kinds.map((k) => KIND_WORDS[k]).join('|')), 'g');
+      t = t.replace(new RegExp(exception.re.source, 'g'), (m) => m.replace(own, ' '));
+    }
   }
   for (const { re } of def.forbidden) {
     const match = new RegExp(re.source, 'g').exec(t);

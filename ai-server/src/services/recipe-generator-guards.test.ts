@@ -193,7 +193,7 @@ describe('slot 10 reliability', () => {
     step('Gather and measure the salt, herbs, and chicken on the counter.', true),
     step('Mix the salt and herbs together in a small bowl.', true),
     step('Stir together the lemon juice and honey in a bowl.', true),
-    step('Toss the salad greens with the herb mix.', true),
+    step('Toss the salad greens with the herb mix in a large bowl.', true),
     step('Roast the chicken in the oven until a thermometer reads 165°F.', true),
     step('Serve.', true),
   ]);
@@ -272,5 +272,106 @@ describe('slot 10 reliability', () => {
     const result = await run(client, finalSlot, plain);
     expect(result.success).toBe(false);
     expect(client.generate).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('repairMasteryHideableSteps: strict allowlist', () => {
+  const hotStep = 'Heat the pan over medium heat for two minutes.';
+  const withFlagged = (text: string): Recipe =>
+    recipe(['x'], [step(text, true), ...Array.from({ length: 6 }, () => step(hotStep, true))]);
+
+  const mustStayFlagged = [
+ 'Season the chicken thighs with salt and pepper on both sides.',
+ 'Season the thighs with salt, pepper, and paprika on both sides.',
+ 'Season the steaks generously with salt and pepper on both sides.',
+ 'Season the pork chops with salt and pepper on both sides.',
+ 'Season the chops with salt and pepper on both sides well.',
+ 'Toss the prawns with garlic and lime juice in a bowl.',
+ 'Toss the scallops with salt and lemon zest in a bowl.',
+ 'Combine the marinade with the drumsticks in a zip-top bag.',
+ 'Toss the wings with the spice rub in a large bowl.',
+ 'Mix the raw ground beef with the breadcrumbs and spices.',
+ 'Mix the ground veal with breadcrumbs and spices in a bowl.',
+ 'Mix the ground turkey with breadcrumbs and spices in a bowl.',
+ 'Season the tuna fillets with salt and pepper on both sides.',
+ 'Season the cod fillets with salt and pepper on both sides.',
+ 'Season the patties with salt and pepper on both sides.',
+ 'Mix the raw patties ingredients together with your hands.',
+ 'Rest the roast for ten minutes before slicing.',
+ 'Let the brisket rest for ten minutes on the board.',
+ 'Rest the steak for five minutes on a cutting board.',
+ 'Toss the potatoes with oil, salt, and pepper.',
+ 'Combine the hot rice with vinegar and sugar.',
+ 'Whisk the gravy in the saucepan over medium until it thickens, about 5 minutes.',
+ 'Stir together the sauce in the pot over medium-high until thick.',
+ 'Toss the noodles in the wok over high for two minutes until coated.',
+ 'Combine everything in the Instant Pot and seal the lid.',
+ 'Combine everything in the Instant Pot and pressure on high for 8 minutes.',
+ 'Mix the batter on the griddle until bubbles form.',
+ 'Combine the soup ingredients in a blender and blend until smooth.',
+ 'Whisk the yolks and sugar together in a bowl until pale.',
+ 'Combine the sugar and water in a saucepan.',
+ 'Mix the lye solution carefully with gloves on.',
+ 'Combine the caramel ingredients in a saucepan and stir until amber.',
+ 'Season the lamb shoulder with salt and rosemary.',
+ 'Season the ribs with the dry rub on all sides.',
+ 'Toss the shrimp with chili flakes in a bowl.',
+ 'Arrange the crab legs on a platter with lemon wedges.',
+ 'Mix the venison with the seasoning in a bowl.',
+ 'Measure the flour, sugar, and baking soda into a bowl.',
+ 'Fold the warm custard into the whipped mixture.',
+ 'Spread the mixture into the hot dish and smooth the top.',
+ 'Season the hen with salt and herbs all over.',
+ 'Rub the spice mix all over the pork shoulder.',
+ 'Season the tenderloin with salt and pepper all over.',
+ 'Season the roast with salt and pepper all over.',
+ 'Place the turkey breast in a dish and season well.',
+ 'Toss the calamari rings with flour and salt in a bowl.',
+ 'Mix the sauce in the microwave-safe bowl and heat.',
+ 'Stir together the glaze and brush it over the ham.',
+ 'Stir together the glaze on medium-low for 3 minutes.',
+ 'Whisk the dressing and pour over the scalding noodles.',
+ 'Season the fillets with salt and pepper on both sides.',
+ 'Mix the marinade and pour it over the steak in a dish.',
+ 'Combine the ingredients in the food processor and pulse.',
+ 'Let the oysters rest on ice in a dish for serving.',
+  'Combine the marinade with the drumsticks in a bowl.',
+  'Season the thighs in a bowl.',
+  'Toss the prawns in a bowl.',
+  'Whisk the yolks and sugar in a bowl.',
+  'Combine the caramel ingredients in a bowl and heat.',
+  'Mix the lye solution in a jar.',
+  'Whisk the sauce in a bowl until it thickens.',
+  'Toss the noodles in a bowl over high heat.',
+  ];
+  it.each(mustStayFlagged)('keeps this step flagged: %s', (text) => {
+    const { recipe: out } = repairMasteryHideableSteps(withFlagged(text));
+    expect(out.steps[0].isSafetyStep).toBe(true);
+  });
+
+  const mayUnflag = [
+    'Measure the spices into a small bowl.',
+    'Whisk the lemon juice and herbs in a bowl.',
+    'Combine the tofu with soy sauce and ginger in a bowl.',
+    'Mix the salt, pepper, and paprika together in a small jar.',
+    'Gather the spices on the counter.',
+    'Measure out the salt and pepper.',
+    'Toss the salad greens with the herb mix on a plate.',
+    'Set out the plates and bowls for serving on a plate.',
+    'Stir together the vinegar and sugar in a bowl.',
+  ];
+  it.each(mayUnflag)('may unflag this step: %s', (text) => {
+    const { recipe: out } = repairMasteryHideableSteps(withFlagged(text));
+    expect(out.steps[0].isSafetyStep).toBe(false);
+  });
+
+  it('a rest step does not qualify', () => {
+    const { recipe: out } = repairMasteryHideableSteps(withFlagged('Let the dough rest in a bowl for ten minutes.'));
+    expect(out.steps[0].isSafetyStep).toBe(true);
+  });
+
+  it('a step without a container only qualifies when it starts with gather or measure out', () => {
+    expect(repairMasteryHideableSteps(withFlagged('Measure the salt and pepper.')).recipe.steps[0].isSafetyStep).toBe(true);
+    expect(repairMasteryHideableSteps(withFlagged('Season the greens with the herb mix.')).recipe.steps[0].isSafetyStep).toBe(true);
   });
 });

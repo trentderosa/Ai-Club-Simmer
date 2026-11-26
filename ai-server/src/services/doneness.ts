@@ -31,14 +31,17 @@ interface CategoryDef {
   whyItMatters: string;
 }
 
-const NO_COOK_NAME = /\b(?:canned|tinned|smoked|cured|lox|jarred|dried|paste|pre-?cooked|cooked|sauce)\b/i;
+const NO_COOK_NAME =
+  /\b(?:canned|tinned|smoked|cured|lox|jarred|dried|paste|pre-?cooked|cooked|sauce|seasoning|rub)\b/i;
+// Raw dishes are not cooked, so no doneness check is added.
+const RAW_DISH_RE = /\b(?:sushi|sashimi|tartare|crudo|ceviche|poke|carpaccio)\b/i;
 
 const CATEGORIES: Record<Category, CategoryDef> = {
   ground: {
-    ingredient: /\bground\s+(?:beef|pork)\b|\b(?:beef|pork)\s+mince\b|\bhamburger meat\b/i,
+    ingredient: /\bground\s+(?:beef|pork|lamb|veal)\b|\b(?:beef|pork|lamb|veal)\s+mince\b|\bhamburger meat\b/i,
     skip: NO_COOK_NAME,
-    stepWord: /\b(?:ground|beef|pork|meat|burgers?|patt(?:y|ies)|mince)\b/i,
-    visualCue: /\b(?:no longer|not)\s+pink\b/i,
+    stepWord: /\bground\s+(?:beef|pork|lamb|veal)\b|\b(?:beef|pork|lamb|veal|meat|burgers?|patt(?:y|ies)|mince)\b/i,
+    visualCue: null,
     instruction: (food) =>
       `Check the ${food} for doneness: use a food thermometer and make sure it reaches 160°F (71°C) and no pink remains.`,
     whyItMatters: 'Ground meat can carry bacteria all the way through, so it must reach 160°F (71°C).',
@@ -77,6 +80,7 @@ const CATEGORIES: Record<Category, CategoryDef> = {
 const CATEGORY_ORDER: Category[] = ['ground', 'whole', 'fish', 'shrimp'];
 
 const THERMOMETER_RE = /\bthermometers?\b|\binternal temp(?:erature)?\b/i;
+const NOT_A_CUE_RE = /\b(?:oil|oven|preheat\w*|deep[- ]?fry\w*)\b/i;
 // "reaches 145°F", "registers 160 F": a stated target. A bare oven temperature ("heat oven to 400°F") is not one.
 const TARGET_TEMP_RE =
   /\b(?:reach(?:es|ed)?|register(?:s|ed)?|hits?|hit|read(?:s|ing)?)\b[^.!?]{0,40}?\d{2,3}\s*(?:[°˚º]\s*)?[fc]\b/i;
@@ -96,6 +100,8 @@ function ingredientMatch(recipe: Pick<Recipe, 'ingredients'>, def: CategoryDef):
 }
 
 function stepHasCue(instruction: string, def: CategoryDef): boolean {
+  // A cue must name its protein and be about the food, not the oil or the oven.
+  if (!def.stepWord.test(instruction) || NOT_A_CUE_RE.test(instruction)) return false;
   if (THERMOMETER_RE.test(instruction) || TARGET_TEMP_RE.test(instruction)) return true;
   return def.visualCue !== null && def.visualCue.test(instruction);
 }
@@ -105,7 +111,11 @@ function stepHasCue(instruction: string, def: CategoryDef): boolean {
  * Returns the same recipe object when nothing needs inserting. If the result
  * would not fit the step limit, that insertion is skipped.
  */
-export function ensureDonenessSteps<T extends Pick<Recipe, 'ingredients' | 'steps'>>(recipe: T): T {
+export function ensureDonenessSteps<T extends Pick<Recipe, 'ingredients' | 'steps'> & { title?: string }>(
+  recipe: T
+): T {
+  const rawText = [recipe.title ?? '', ...recipe.ingredients.map((i) => i.name), ...recipe.steps.map((st) => st.instruction)];
+  if (rawText.some((text) => RAW_DISH_RE.test(text))) return recipe;
   const present = CATEGORY_ORDER.flatMap((category) => {
     const food = ingredientMatch(recipe, CATEGORIES[category]);
     return food ? [{ category, food }] : [];
@@ -115,9 +125,7 @@ export function ensureDonenessSteps<T extends Pick<Recipe, 'ingredients' | 'step
   for (const { category, food } of present) {
     const def = CATEGORIES[category];
     if (steps.length >= MAX_STEPS) break;
-    // With several proteins in one recipe, a cue must name its protein.
-    const cueApplies = (instruction: string): boolean => present.length === 1 || def.stepWord.test(instruction);
-    if (steps.some((step) => cueApplies(step.instruction) && stepHasCue(step.instruction, def))) continue;
+    if (steps.some((step) => stepHasCue(step.instruction, def))) continue;
 
     let at = -1;
     steps.forEach((step, i) => {

@@ -6,7 +6,13 @@ import { countedHiddenStepCount, isTrivialStep, MASTERY_MIN_HIDDEN_STEPS, MASTER
 import { logGenerationFailure } from './generation-failure.js';
 import { OllamaBusyError, OllamaPreemptedError } from './ollama-gate.js';
 import { startDeadline, type OllamaBudget } from './ollama-budget.js';
-import { parseDietRules, findDietViolations, dietCorrectiveHint, dietPromptHint } from './diet-guard.js';
+import {
+  ANIMAL_PROTEIN_WORDS_SOURCE,
+  parseDietRules,
+  findDietViolations,
+  dietCorrectiveHint,
+  dietPromptHint,
+} from './diet-guard.js';
 import { ensureDonenessSteps } from './doneness.js';
 
 export interface RecipeGenerationResult {
@@ -569,30 +575,40 @@ function ensureSafetyFlags(recipe: Recipe): Recipe {
   };
 }
 
-// Slot 10 repair: a step the model flagged as safety that is plainly prep.
-// It must start with a prep verb, and must not hold any heat, knife, raw
-// protein, or hot-liquid word. Conservative on purpose: a step that cannot be
-// shown to be prep stays a safety step.
-const PREP_START_RE =
-  /^\s*(?:gather|measure|combine|mix|whisk|toss|season|sprinkle|rest|let\b[^.]{0,40}\brest|arrange|set\s+aside|fold|assemble|stir\s+together)\b/i;
-const PREP_START_WITH_BOWL_RE = /^\s*(?:add|place|spoon|drizzle|spread|arrange)\b/i;
-const PREP_CONTAINER_RE = /\b(?:bowl|plate|platter|jar|container|dish)\b/i;
-const PREP_BLOCKER_RE =
-  /\b(?:warm|lid|sizzl\w*|bubbl\w*|golden|browned|crisp\w*|melt\w*|tender|soft(?:en\w*)?|cook\w*|water|oil|soup|broth|stock|liquid|sheet|rack|tray|egg|eggs|chicken|beef|pork|lamb|turkey|duck|fish|salmon|shrimp|meat|bacon|sausage|poultry)\b/i;
+// Slot 10 repair: a strict allowlist. A step the model flagged as safety may be
+// un-flagged only if ALL of these hold:
+//  (a) it starts with gather, measure, combine, mix, whisk, stir together, season,
+//      toss, or set out;
+//  (b) it names a cold container (bowl, jar, measuring cup, plate), except a step
+//      that starts "Gather" or "Measure out", which must still pass (c);
+//  (c) it contains no protein word (every list in diet-guard, plus egg and yolk),
+//      no cut word, no heat or equipment word, no "until", and no "over low/medium/high".
+// Anything else stays a safety step. Rest steps do not qualify.
+const PREP_START_RE = /^\s*(?:gather|measure|combine|mix|whisk|stir\s+together|season|toss|set\s+out)\b/i;
+const PREP_NO_CONTAINER_OK_RE = /^\s*(?:gather|measure\s+out)\b/i;
+const PREP_CONTAINER_RE = /\b(?:bowl|jar|measuring\s+cup|plate)\b/i;
+const PREP_CUT_WORDS =
+  'thighs?|breasts?|wings?|drumsticks?|fillets?|filets?|patty|patties|ribs?|tenderloins?|loins?|shanks?|cutlets?|hens?|roasts?|steaks?|chops?|raw';
+const PREP_HEAT_WORDS =
+  'saucepans?|pans?|pots?|skillets?|woks?|griddles?|ovens?|stoves?|stovetop|burners?|instant\\s+pot|pressure|boil\\w*|simmer\\w*|hot|warm\\w*|heat\\w*|scald\\w*|caramel\\w*|amber|thicken\\w*|melt\\w*|fr(?:y|ies|ied|ying)|oil\\w*|blenders?|blend\\w*|food\\s+processors?|pulse|pulsing|knife|knives|cut\\w*|chop\\w*|slic\\w*|dic(?:e|es|ed|ing)|minc\\w*|grat(?:e|es|ed|ing)|peel\\w*|lye|microwav\\w*|bak(?:e|es|ed|ing)|grill\\w*|broil\\w*|sear\\w*|steam\\w*|toast\\w*|flame|lids?|until|over\\s+(?:low|medium|high)';
+const PREP_BLOCKER_RE = new RegExp(
+  `\\b(?:${ANIMAL_PROTEIN_WORDS_SOURCE()}|${PREP_CUT_WORDS}|${PREP_HEAT_WORDS})\\b`,
+  'i'
+);
 
 function isPlainPrepStep(step: Recipe['steps'][number]): boolean {
   const text = step.instruction;
+  if (!PREP_START_RE.test(text)) return false;
+  if (!PREP_NO_CONTAINER_OK_RE.test(text) && !PREP_CONTAINER_RE.test(text)) return false;
+  if (PREP_BLOCKER_RE.test(text)) return false;
+  // Belt and braces: the existing safety classifiers must agree it is not a safety step.
   if (SAFETY_KEYWORD_PATTERNS.some((pattern) => pattern.test(text))) return false;
-  if (
+  return !(
     hasAffirmativeProteinRinse(text) ||
     isPoultryDonenessWithoutTemperature(text) ||
     isTemperatureCheckStep(text) ||
     hasProtectiveProteinHandling(text)
-  ) {
-    return false;
-  }
-  if (PREP_BLOCKER_RE.test(text)) return false;
-  return PREP_START_RE.test(text) || (PREP_START_WITH_BOWL_RE.test(text) && PREP_CONTAINER_RE.test(text));
+  );
 }
 
 /**

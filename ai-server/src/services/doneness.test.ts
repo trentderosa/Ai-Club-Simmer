@@ -63,7 +63,7 @@ describe('ensureDonenessSteps', () => {
   it('does not insert when a step already has a thermometer or target temperature cue', () => {
     const withThermo = recipe(['ground pork'], [
       step('Cook the ground pork until browned.', true),
-      step('Check with a thermometer that it is done.', true),
+      step('Check the ground pork with a thermometer.', true),
     ]);
     expect(ensureDonenessSteps(withThermo)).toBe(withThermo);
     const withTarget = recipe(['pork loin'], [
@@ -77,13 +77,13 @@ describe('ensureDonenessSteps', () => {
     expect(ensureDonenessSteps(r).steps).toHaveLength(2);
   });
 
-  it('accepts visual cues for fish and shrimp and "no longer pink" for ground meat', () => {
+  it('accepts visual cues for fish and shrimp, but ground meat needs 160°F, not "no longer pink"', () => {
     const fish = recipe(['cod'], [step('Pan fry the cod until it flakes easily.', true)]);
     expect(ensureDonenessSteps(fish)).toBe(fish);
     const shrimp = recipe(['shrimp'], [step('Cook the shrimp until opaque.', true)]);
     expect(ensureDonenessSteps(shrimp)).toBe(shrimp);
     const ground = recipe(['ground beef'], [step('Cook the ground beef until no longer pink.', true)]);
-    expect(ensureDonenessSteps(ground)).toBe(ground);
+    expect(ensureDonenessSteps(ground).steps).toHaveLength(2);
   });
 
   it('ignores ingredients that need no cooking or are not these proteins', () => {
@@ -131,5 +131,79 @@ describe('ensureDonenessSteps', () => {
     const steps = Array.from({ length: 30 }, (_, i) => step(`Cook the shrimp batch number ${i}.`, true));
     const r = recipe(['shrimp'], steps);
     expect(ensureDonenessSteps(r).steps).toHaveLength(30);
+  });
+});
+
+describe('ensureDonenessSteps: review fixes', () => {
+  const texts = (r: Recipe): string[] => r.steps.map((s) => s.instruction);
+
+  it('a cue must name the protein even when it is the only one', () => {
+    const r = recipe(['pork chops'], [
+      step('Sear the pork chops.', true),
+      step('Use a thermometer to check it reaches 145°F.', true),
+    ]);
+    expect(ensureDonenessSteps(r).steps).toHaveLength(3);
+  });
+
+  it('oil, oven, preheat, and deep-fry temperatures are not doneness cues', () => {
+    const shrimp = recipe(['shrimp', 'flour', 'vegetable oil'], [
+      step('Heat the oil until it reaches 350°F for the shrimp.', true),
+      step('Dredge the shrimp in flour.'),
+      step('Fry the shrimp for 2 minutes.', true),
+      step('Serve hot.'),
+    ]);
+    const out = ensureDonenessSteps(shrimp);
+    expect(out.steps).toHaveLength(5);
+    expect(texts(out)[3]).toContain('pink and opaque');
+    const fish = recipe(['cod fillets', 'oil'], [
+      step('Heat the oil to 375°F, checking with a deep-fry thermometer.', true),
+      step('Fry the cod for 4 minutes.', true),
+      step('Serve.'),
+    ]);
+    expect(ensureDonenessSteps(fish).steps).toHaveLength(4);
+    const oven = recipe(['salmon fillets'], [
+      step('Preheat the oven until it reaches 400°F.', true),
+      step('Bake the salmon 12 minutes.', true),
+      step('Serve.'),
+    ]);
+    expect(ensureDonenessSteps(oven).steps).toHaveLength(4);
+  });
+
+  it('covers ground lamb and veal at 160°F', () => {
+    for (const name of ['ground lamb', 'ground veal']) {
+      const out = ensureDonenessSteps(recipe([name], [step(`Brown the ${name} in a skillet.`, true), step('Serve.')]));
+      expect(out.steps[1].instruction).toContain('160°F (71°C)');
+    }
+  });
+
+  it('skips seasoning and rub ingredients', () => {
+    for (const name of ['steak seasoning', 'pork rub', 'fish seasoning']) {
+      const r = recipe([name], [step('Sprinkle it on the tofu.')]);
+      expect(ensureDonenessSteps(r)).toBe(r);
+    }
+  });
+
+  it('skips raw dishes', () => {
+    const cases: Array<[string[], string[]]> = [
+      [['beef tenderloin', 'capers'], ['Finely dice the beef tenderloin for the tartare.', 'Mix with capers and serve raw.']],
+      [['sushi-grade salmon', 'soy sauce'], ['Cube the salmon.', 'Toss with soy sauce.']],
+      [['tuna steak'], ['Slice the tuna for sashimi.']],
+      [['white fish', 'lime'], ['Marinate the white fish in lime for ceviche.']],
+      [['salmon'], ['Cube the salmon and toss it for the poke bowl.']],
+    ];
+    for (const [ings, steps] of cases) {
+      const r = recipe(ings, steps.map((t) => step(t)));
+      expect(ensureDonenessSteps(r)).toBe(r);
+    }
+  });
+
+  it('ground cumin does not count as a ground meat cue word', () => {
+    const r = recipe(['ground beef', 'ground cumin', 'rice'], [
+      step('Brown the ground beef.', true),
+      step('Cook the rice.', true),
+      step('Add the ground cumin with a thermometer reading 160°F nearby and serve over rice.', true),
+    ]);
+    // The cumin step has a thermometer and a temperature but names no meat, so it is not a cue.
+    expect(ensureDonenessSteps(r).steps).toHaveLength(4);
   });
 });
