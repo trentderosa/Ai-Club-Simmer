@@ -117,7 +117,11 @@ describe('recipe route during a prewarm', () => {
       generate: vi.fn().mockImplementation(() => new Promise<string>((r) => { release = r; })),
     };
     const supabase = makeSupabase({
-      getUserProfile: vi.fn().mockImplementation(() => new Promise((r) => { releaseProfile = r as typeof releaseProfile; })),
+      // Only the route's first read waits; the stale-check re-read answers at once.
+      getUserProfile: vi
+        .fn()
+        .mockImplementationOnce(() => new Promise((r) => { releaseProfile = r as typeof releaseProfile; }))
+        .mockResolvedValue(profile),
     });
     const pathRecipes = createPathRecipeService({ ollamaClient, supabase });
     const app = express();

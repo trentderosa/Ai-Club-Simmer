@@ -9,7 +9,7 @@ import type { RecipeVideos } from './video-finder.js';
 export interface SupabaseService {
   verifyToken(token: string): Promise<JwtVerifyResult>;
   getUserProfile(userId: string): Promise<UserProfile | null>;
-  getPathSlot(slotId: number): Promise<PathSlot | null>;
+  getPathSlot(slotId: number, userId: string): Promise<PathSlot | null>;
   /** F2 path order: may this user start this slot (done or current)? */
   isSlotUnlocked(userId: string, slotId: number): Promise<boolean>;
   getSavedRecipe(userId: string, slotId: number): Promise<Recipe | null>;
@@ -41,8 +41,8 @@ export function createSupabaseService(deps: SupabaseServiceDeps): SupabaseServic
       return pathRepository ? pathRepository.getUserProfile(userId) : Promise.resolve(null);
     },
 
-    getPathSlot(slotId: number): Promise<PathSlot | null> {
-      return pathRepository ? pathRepository.getPathSlot(slotId) : Promise.resolve(null);
+    getPathSlot(slotId: number, userId: string): Promise<PathSlot | null> {
+      return pathRepository ? pathRepository.getPathSlot(slotId, userId) : Promise.resolve(null);
     },
 
     isSlotUnlocked(userId: string, slotId: number): Promise<boolean> {
@@ -104,7 +104,7 @@ export function createSupabaseStub(
       return Promise.resolve(null);
     },
 
-    getPathSlot(_slotId: number): Promise<PathSlot | null> {
+    getPathSlot(_slotId: number, _userId: string): Promise<PathSlot | null> {
       return Promise.resolve(null);
     },
 

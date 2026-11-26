@@ -19,6 +19,7 @@ const CLIENT_FACING_FUNCTIONS = [
   'get_my_badges()',
   'get_my_recipe_book()',
   'get_my_recipe_book_v2()',
+  'personalize_my_path()',
 ];
 
 interface SecDefFunction {

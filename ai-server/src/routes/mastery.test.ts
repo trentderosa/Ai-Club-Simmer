@@ -5,6 +5,7 @@ import { randomUUID } from 'crypto';
 import { createMasteryRouter } from './mastery.js';
 import { MasteryError, type MasteryRepository } from '../repositories/mastery-repository.js';
 import type { JwtVerifier } from '../services/jwt-verifier.js';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 
 const USER_ID = randomUUID();
 const SESSION_ID = randomUUID();
@@ -77,6 +78,39 @@ describe('POST /api/mastery/sessions', () => {
     const res = await request(app).post('/api/mastery/sessions').set(auth).send({ slot_id: 10 });
     expect(res.status).toBe(500);
     expect(res.body).toEqual({ error: 'Internal server error' });
+    spy.mockRestore();
+  });
+
+  it('a Supabase timeout is a 503 DATABASE_UNAVAILABLE', async () => {
+    const timeout = new SupabaseRestError('Supabase rpc start_mastery_session timed out after 5000ms', undefined, { kind: 'timeout' });
+    const { app } = setup({ start: vi.fn().mockRejectedValue(timeout) });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const res = await request(app).post('/api/mastery/sessions').set(auth).send({ slot_id: 10 });
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('DATABASE_UNAVAILABLE');
+    spy.mockRestore();
+  });
+
+  it('a non-timeout Supabase error is still a 500', async () => {
+    const failure = new SupabaseRestError('rpc start_mastery_session failed: 502', 502);
+    const { app } = setup({ start: vi.fn().mockRejectedValue(failure) });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const res = await request(app).post('/api/mastery/sessions').set(auth).send({ slot_id: 10 });
+    expect(res.status).toBe(500);
+    expect(res.body).toEqual({ error: 'Internal server error' });
+    spy.mockRestore();
+  });
+
+  it('a Supabase timeout on reveal is a 503 DATABASE_UNAVAILABLE', async () => {
+    const timeout = new SupabaseRestError('Supabase rpc reveal timed out after 5000ms', undefined, { kind: 'timeout' });
+    const { app } = setup({ reveal: vi.fn().mockRejectedValue(timeout) });
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const res = await request(app)
+      .post(`/api/mastery/sessions/${SESSION_ID}/reveal`)
+      .set(auth)
+      .send({ step_index: 0 });
+    expect(res.status).toBe(503);
+    expect(res.body.code).toBe('DATABASE_UNAVAILABLE');
     spy.mockRestore();
   });
 });

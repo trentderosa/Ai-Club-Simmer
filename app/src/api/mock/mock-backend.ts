@@ -31,6 +31,8 @@ import {
   BADGES,
   CANNED_COOK_ANYTHING_COUNTS,
   CANNED_DISH_VIDEOS,
+  MOCK_DISH_CATALOG,
+  MOCK_MEATLESS_SLOT_DISHES,
   CANNED_COOK_ANYTHING_VIDEOS,
   CANNED_COOK_ANYTHING_XP,
   cannedCookAnythingPhoto,
@@ -83,6 +85,8 @@ interface MockState {
   masteryEarnedAt: string | null;
   /** F8 server-side mastery sessions, like the mastery_sessions table. */
   masterySessions: Map<string, MockMasterySession>;
+  /** Dish names picked by personalizeMyPath, by slot. Empty = canonical dishes. */
+  dishBySlot: Record<number, string>;
 }
 
 interface MockMasterySession {
@@ -125,6 +129,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     checkInLog: [],
     masteryEarnedAt: null,
     masterySessions: new Map(),
+    dishBySlot: {},
   };
 
   function setSession(s: AppSession | null, change: AuthChange = s ? 'signed_in' : 'signed_out') {
@@ -145,6 +150,10 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       days_per_week: 3,
       minutes_per_session: 30,
       onboarding_completed: true,
+      tasteLoaded: true,
+      cuisines: [],
+      meal_types: [],
+      dietary_needs: [],
       created_at: user.createdAt,
     };
     state.completions = {};
@@ -158,6 +167,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     state.checkInLog = [];
     state.masteryEarnedAt = null;
     state.masterySessions = new Map();
+    state.dishBySlot = {};
     for (const s of SLOTS.slice(0, user.completedSlots)) {
       const extra = user.extraCooks[s.slot_id] ?? 0;
       state.completions[s.slot_id] = 1 + extra;
@@ -202,7 +212,8 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
   }
 
   function currentPlan() {
-    return derivePlan(SLOTS, state.completions, state.recipeSlots);
+    const slots = SLOTS.map((s) => (state.dishBySlot[s.slot_id] ? { ...s, dish_name: state.dishBySlot[s.slot_id] } : s));
+    return derivePlan(slots, state.completions, state.recipeSlots);
   }
 
   function badgesFor(
@@ -267,6 +278,7 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
       state.checkInLog = [];
       state.masteryEarnedAt = null;
       state.masterySessions = new Map();
+      state.dishBySlot = {};
       setSession({ userId: 'mock-user-new', email, firstName: firstName.trim() || null, accessToken: 'mock-access-token' });
       return { signedIn: true };
     },
@@ -318,13 +330,46 @@ export function createMockBackend(opts: MockOptions = {}): Backend {
     async saveOnboarding(userId, input: ProfileInput) {
       await delay(500);
       requireSession();
-      const row = ProfileInputSchema.parse(input);
+      const { includeTaste, ...row } = ProfileInputSchema.parse(input);
+      const kept = state.profile;
       state.profile = {
         id: userId,
         ...row,
+        ...(includeTaste || !kept ? {} : { cuisines: kept.cuisines, meal_types: kept.meal_types, dietary_needs: kept.dietary_needs }),
+        tasteLoaded: true,
         onboarding_completed: true,
         created_at: state.profile?.created_at ?? new Date().toISOString(),
       };
+      return { tasteSaved: true };
+    },
+
+    async personalizeMyPath() {
+      await delay(300);
+      requireSession();
+      const p = state.profile;
+      const picked: { slot_id: number; dish_name: string }[] = [];
+      const noChicken = !!p && ['vegetarian', 'vegan', 'no_poultry'].some((d) => p.dietary_needs.includes(d));
+      for (const s of SLOTS) {
+        // Like the SQL: started = a check-in (incl. mastery) exists. A saved recipe
+        // alone does not count as started.
+        if ((state.completions[s.slot_id] ?? 0) > 0) continue;
+        const previous = state.dishBySlot[s.slot_id] ?? s.dish_name;
+        let name = s.dish_name;
+        let found = false;
+        for (const cuisine of p?.cuisines ?? []) {
+          const entry = MOCK_DISH_CATALOG[cuisine]?.[s.slot_id];
+          if (!entry) continue;
+          name = entry.chicken && noChicken && entry.alt ? entry.alt : entry.name;
+          found = true;
+          break;
+        }
+        if (!found && noChicken && MOCK_MEATLESS_SLOT_DISHES[s.slot_id]) name = MOCK_MEATLESS_SLOT_DISHES[s.slot_id];
+        if (name === s.dish_name) delete state.dishBySlot[s.slot_id];
+        else state.dishBySlot[s.slot_id] = name;
+        if (name !== previous) state.recipeSlots.delete(s.slot_id); // the cached recipe was for the old dish
+        picked.push({ slot_id: s.slot_id, dish_name: name });
+      }
+      return picked;
     },
 
     async getPlan() {

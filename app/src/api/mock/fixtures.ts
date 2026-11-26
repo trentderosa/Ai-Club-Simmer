@@ -31,6 +31,33 @@ export const SLOTS: readonly SlotFixture[] = [
   { slot_id: 10, slot_order: 10, dish_name: 'Roast Chicken', technique_focus: 'Complete meal execution', xp_value: 181, cook_minutes: 80, is_final: true },
 ];
 
+/**
+ * FAKE stand-in for the curated dish catalog that personalize_my_path reads in
+ * the real database. A few cuisines and slots only; other slots keep the
+ * canonical dish. `chicken` dishes swap to `alt` for vegetarian, vegan or
+ * no-poultry users. Technique focus and XP never change per user.
+ */
+export const MOCK_DISH_CATALOG: Record<string, Record<number, { name: string; chicken?: boolean; alt?: string }>> = {
+  mexican: {
+    1: { name: 'Pico de Gallo' },
+    4: { name: 'Chicken Fajitas', chicken: true, alt: 'Veggie Fajitas' },
+    6: { name: 'Burrito Bowl' },
+  },
+  italian: {
+    1: { name: 'Caprese Salad' },
+    4: { name: 'Garlic Shrimp and Peppers' },
+    9: { name: 'Minestrone' },
+  },
+  japanese: {
+    2: { name: 'Tamagoyaki' },
+    6: { name: 'Teriyaki Chicken Rice Bowl', chicken: true, alt: 'Teriyaki Tofu Rice Bowl' },
+    9: { name: 'Miso Soup' },
+  },
+};
+
+/** The canonical slot-8 dish is chicken, so meatless users get this in mock mode. */
+export const MOCK_MEATLESS_SLOT_DISHES: Record<number, string> = { 8: 'Seared Tofu Steaks' };
+
 /** Signing in (not up) in mock mode lands on this user: 3 slots done, 239 XP. */
 export const DEMO_USER = {
   email: 'demo@simmer.test',
