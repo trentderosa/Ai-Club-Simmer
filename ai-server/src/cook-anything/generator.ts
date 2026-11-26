@@ -2,6 +2,7 @@ import { ZodError } from 'zod';
 import { getRecipeJsonSchema, type Recipe } from '../schemas/recipe.js';
 import type { UserProfile } from '../schemas/user.js';
 import {
+  dropUnsafeCoachNote,
   cleanRecipe,
   ensureSafetyFlags,
   INVALID_JSON_REASON,
@@ -79,7 +80,9 @@ export async function generateCookAnythingRecipe(
         lastError = validationResult.error;
         continue;
       }
-      const recipe = ensureSafetyFlags(cleanRecipe(validationResult.data, FreeformRecipeSchema));
+      const recipe = ensureSafetyFlags(
+        dropUnsafeCoachNote(cleanRecipe(validationResult.data, FreeformRecipeSchema))
+      );
       if (recipeHasAffirmativeProteinRinse(recipe)) {
         console.warn('Recipe attempt rejected', { reason: 'unsafe_raw_protein_rinse', attempt });
         lastUnsafeRecipe = recipe;

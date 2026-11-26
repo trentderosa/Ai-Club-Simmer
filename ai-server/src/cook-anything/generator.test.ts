@@ -121,4 +121,17 @@ describe('generateCookAnythingRecipe', () => {
       expect(result.recipe.steps[0].techniqueName).toBe('soak noodles');
     }
   });
+
+  it('drops a coachNote that says to rinse raw chicken and keeps the recipe', async () => {
+    const generate = vi
+      .fn()
+      .mockResolvedValue(JSON.stringify({ ...validRecipe, coachNote: 'Rinse the chicken first.' }));
+    const result = await generateCookAnythingRecipe({ generate }, 'Pad Thai', user);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.recipe.coachNote).toBeUndefined();
+      expect(result.recipe.steps).toEqual(validRecipe.steps);
+    }
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
 });

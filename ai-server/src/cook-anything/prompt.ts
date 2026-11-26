@@ -62,7 +62,7 @@ CRITICAL CONSTRAINTS:
 3. Keep ingredient costs appropriate for their budget.
 4. Flag any step involving heat, knives, boiling water, raw meat, or hot oil as a safety step (isSafetyStep: true).
 5. Include "whyItMatters" explanations for key technique steps to help them learn.
-6. Include "techniqueName" for steps that could benefit from a video demonstration. Write it as a short plain-English phrase such as "pan toast" or "dice onion", with no label or prefix.
+6. Include "techniqueName" only for a step that teaches a real technique, written as 2 or 3 plain words taken from that step itself (a step that says "Dice the onion" gets "dice onion"). Never give a step a technique it does not do, and leave it out for steps like serving or gathering ingredients.
 ${FOOD_SAFETY_RULE}
 ${RECIPE_CONSISTENCY_RULES}${dietaryConstraint}
 
@@ -70,7 +70,8 @@ Generate a complete recipe with:
 - A clear title
 - A list of ingredients with amounts
 - Time estimate in minutes
-- Ordered steps with instructions, safety flags, and optional technique names/explanations`;
+- Ordered steps with instructions, safety flags, and optional technique names/explanations
+- If it cooks chicken or other poultry, a step that checks the thickest part reaches 165°F (74°C)`;
 }
 
 /** For tests: the delimiters that must wrap the dish and that the dish must not appear as an instruction. */

@@ -193,6 +193,14 @@ describe('buildCoachNotePrompt context', () => {
     expect(prompt).toContain('Never suggest a mandoline');
   });
 
+  it('tells the model to cook raw or undercooked poultry to 165°F instead of patting dry', () => {
+    const prompt = buildCoachNotePrompt('hard', 'chicken was pink inside', null);
+    expect(prompt).toContain('raw, pink, or undercooked inside');
+    expect(prompt).toContain('thermometer in the thickest part reads 165°F (74°C) for poultry');
+    expect(prompt).toContain('for other meat, until it is cooked to a safe temperature');
+    expect(prompt).toContain('Do not suggest patting it dry for that problem');
+  });
+
   it('emits the data block for dish and equipment even with no feedback text', () => {
     const prompt = buildCoachNotePrompt('ok', null, null, { equipment: ['stove'] });
     expect(prompt).toContain('<user_data>');

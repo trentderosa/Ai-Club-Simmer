@@ -207,4 +207,28 @@ describe('getRecipeJsonSchema', () => {
     expect(js.properties.ingredients.items?.required).toEqual(['name', 'amount']);
     expect(js.properties.steps.items?.required).toEqual(['instruction', 'isSafetyStep']);
   });
+
+  it('requires coachNote only when asked', () => {
+    const base = ['title', 'ingredients', 'timeEstimateMinutes', 'steps'];
+    expect((getRecipeJsonSchema({}) as { required: string[] }).required).toEqual(base);
+    expect((getRecipeJsonSchema({ requireCoachNote: false }) as { required: string[] }).required).toEqual(base);
+    expect((getRecipeJsonSchema({ requireCoachNote: true }) as { required: string[] }).required).toEqual([
+      ...base,
+      'coachNote',
+    ]);
+  });
+});
+
+describe('getRecipeJsonSchema coachNote length', () => {
+  it('caps coachNote at the same length the Zod schema allows', () => {
+    const js = getRecipeJsonSchema() as { properties: { coachNote: { maxLength: number } } };
+    expect(js.properties.coachNote.maxLength).toBe(500);
+  });
+
+  it('requires a non-empty coachNote when one is given', () => {
+    for (const requireCoachNote of [false, true]) {
+      const js = getRecipeJsonSchema({ requireCoachNote }) as { properties: { coachNote: { minLength: number } } };
+      expect(js.properties.coachNote.minLength).toBe(1);
+    }
+  });
 });
