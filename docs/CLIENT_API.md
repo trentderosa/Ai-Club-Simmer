@@ -13,7 +13,7 @@ The app never holds the service-role key or the YouTube key, and it never calls 
 | --- | --- |
 | Sign up / log in / log out (F1) | `supabase.auth.signUp / signInWithPassword / signOut` |
 | Password reset (F1) | `supabase.auth.resetPasswordForEmail` (`redirectTo`: current web origin + Pages base path + `/reset-password`), then `supabase.auth.updateUser({ password })` on the recovery session |
-| Onboarding, edit profile (F1) | `profiles` insert / update (own row) |
+| Onboarding, edit profile (F1) | `profiles` insert / update (own row), then `rpc('personalize_my_path')` (best effort) |
 | Plan (F2, F7) | `rpc('get_my_plan')` + `rpc('get_my_plan_summary')` |
 | Recipe + cook mode (F3, F4, F5) | AI server `POST /api/recipes/generate/:slotId` |
 | Cook anything (F11) | AI server `POST /api/recipes/cook-anything`, then `user_generated_recipes` select for a saved recipe |
@@ -39,9 +39,28 @@ await supabase.from('profiles').upsert({
   budget: 'low',                          // 'low' | 'medium' | 'high'
   days_per_week: 3,                       // 1-7
   minutes_per_session: 30,                // > 0
+  cuisines: ['mexican', 'thai'],          // optional, default []
+  meal_types: ['quick_weeknight'],        // optional, default []
+  dietary_needs: ['vegetarian'],          // optional, default []
   onboarding_completed: true,
 });
 ```
+
+The three taste columns are `text[]`, NOT NULL, default `'{}'`. Allowed values:
+
+- `cuisines`: `mexican`, `italian`, `chinese`, `japanese`, `korean`, `thai`, `indian`, `mediterranean`, `middle_eastern`, `american`
+- `meal_types`: `quick_weeknight`, `meal_prep`, `breakfast`, `date_night`, `comfort`
+- `dietary_needs`: `vegetarian`, `vegan`, `no_pork`, `no_beef`, `no_poultry`, `no_fish`, `no_shellfish`, `dairy_free`, `gluten_free`, `nut_free`, `egg_free`, `no_mushrooms`, `no_spicy`
+
+The app treats a missing column as `[]` when it reads a profile row. Because the migration is applied after the app ships, the app also tolerates a database without the columns: if the profile select fails with a missing-column error (`42703`, or `PGRST204` on the upsert) it retries once with the old columns, drops the taste fields from the upsert (the answers simply aren't saved), and remembers that for the session. Any other error still surfaces. Vegan implies vegetarian in the UI (selecting Vegan also selects Vegetarian).
+
+After the upsert, call `personalize_my_path` (authenticated, no arguments):
+
+```ts
+const { data } = await supabase.rpc('personalize_my_path'); // [{ slot_id, dish_name }, ...]
+```
+
+It (re)picks the dish for each slot the user hasn't started, from their taste answers, and returns all 10 slots as `{ slot_id: int, dish_name: text }` rows with the dish now in effect (started slots keep theirs). Changing `dietary_needs` also invalidates the cached recipes for unstarted slots on the server (a database trigger), so the next recipe request is generated for the current dish. `technique_focus`, order and XP never change. `get_my_plan`, `get_my_plan_summary` and the recipe book return the personalized `dish_name`, so re-read them after personalizing (Today re-reads on focus). The call is best effort: if it fails (an older database without the function returns PostgREST `PGRST202` / 404, or the network drops), the client carries on and the canonical dishes show.
 
 Routing rule: if `profiles.onboarding_completed` is not `true`, show onboarding. Otherwise go to the plan. The AI server refuses to generate recipes until onboarding is complete (404, "Please complete onboarding first").
 

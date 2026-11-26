@@ -33,7 +33,7 @@ Simmer is a mobile app that helps new cooks build skills step by step — "the D
 ## 4. Features
 
 ### F1. Sign-up and onboarding
-New users create an account and answer a short onboarding form: cooking goals, experience level, kitchen equipment, budget, and weekly schedule (how many days/how much time they can cook).
+New users create an account and answer a short onboarding form: cooking goals, experience level, kitchen equipment, budget, and weekly schedule (how many days/how much time they can cook). It also asks what they like to eat, from fixed lists: cuisines, kinds of meals, and dietary needs, all optional. After saving, the app calls `personalize_my_path`, which picks each user's dish for every slot they haven't started from a curated catalog. The ten technique slots, their order and XP stay the same for everyone. If that call fails (for example the database doesn't have it yet), the user still reaches Today with the canonical dishes.
 
 **Acceptance criteria**
 - [ ] A user can sign up, log in, and log out using Supabase Auth (email + password).
@@ -43,7 +43,7 @@ New users create an account and answer a short onboarding form: cooking goals, e
 - [ ] Answers are saved to the user's profile in Supabase and can be edited later from a settings or profile screen.
 - [ ] A returning user who has finished onboarding goes straight to their plan.
 
-*Client (`app/`, UI Direction A):* sign up and sign in are on one screen (email + password). The first name is saved in auth `user_metadata.first_name` for the greeting and the profile, since `profiles` has no name column. Onboarding is steps 2–4 of 4 (about you, your kitchen, your week) and upserts the user's own `profiles` row with `onboarding_completed: true`. The diet question from the mockups is left out because there's no column for it. Users with `onboarding_completed` not `true` are routed to onboarding; everyone else goes straight to Today. The profile shows those answers and can edit them with the same steps and columns. Sign-out is on the profile.
+*Client (`app/`, UI Direction A):* sign up and sign in are on one screen (email + password). The first name is saved in auth `user_metadata.first_name` for the greeting and the profile, since `profiles` has no name column. Onboarding is steps 2–5 of 5 (about you, what you like to eat, your kitchen, your week) and upserts the user's own `profiles` row with `onboarding_completed: true`, including `cuisines`, `meal_types` and `dietary_needs` (lowercase values from fixed lists; Vegan also selects Vegetarian). It then calls `rpc('personalize_my_path')` and ignores a failure. Editing answers from the profile does the same. Users with `onboarding_completed` not `true` are routed to onboarding; everyone else goes straight to Today. The profile shows those answers and can edit them with the same steps and columns. Sign-out is on the profile.
 
 *Password reset (`app/`, UI Direction A):* From sign-in, Forgot your password asks for an email and calls `supabase.auth.resetPasswordForEmail`. The redirect is the current web origin plus the Expo base path (GitHub Pages `/Ai-Club-Simmer`, or the local origin) and `/reset-password`, the same allow-list as the other auth redirects. The recovery session opens a set-new-password screen (`updateUser`) before Today or onboarding. Full mock mode shows the same confirmation, says it is practice mode, and does not call Supabase or send email. If the auth service has already sent its hourly email limit, the request says to try again in an hour. There is no account deletion.
 

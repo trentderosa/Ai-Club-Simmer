@@ -13,7 +13,25 @@ import { z } from 'zod';
 export const EXPERIENCE_LEVELS = ['never_cooked', 'a_little', 'comfortable'] as const;
 export const BUDGETS = ['low', 'medium', 'high'] as const;
 
-/** Columns the app writes on `profiles`. Diet isn't in the schema yet. */
+export const CUISINES = ['mexican', 'italian', 'chinese', 'japanese', 'korean', 'thai', 'indian', 'mediterranean', 'middle_eastern', 'american'] as const;
+export const MEAL_TYPES = ['quick_weeknight', 'meal_prep', 'breakfast', 'date_night', 'comfort'] as const;
+export const DIETARY_NEEDS = [
+  'vegetarian',
+  'vegan',
+  'no_pork',
+  'no_beef',
+  'no_poultry',
+  'no_fish',
+  'no_shellfish',
+  'dairy_free',
+  'gluten_free',
+  'nut_free',
+  'egg_free',
+  'no_mushrooms',
+  'no_spicy',
+] as const;
+
+/** Columns the app writes on `profiles`. */
 export const ProfileInputSchema = z.object({
   goals: z.string().max(500),
   experience_level: z.enum(EXPERIENCE_LEVELS),
@@ -21,8 +39,21 @@ export const ProfileInputSchema = z.object({
   budget: z.enum(BUDGETS),
   days_per_week: z.number().int().min(1).max(7),
   minutes_per_session: z.number().int().positive(),
+  cuisines: z.array(z.enum(CUISINES)).default([]),
+  meal_types: z.array(z.enum(MEAL_TYPES)).default([]),
+  dietary_needs: z.array(z.enum(DIETARY_NEEDS)).default([]),
+  /**
+   * Not a column. False when the form was loaded without the taste answers (the
+   * taste columns were missing, or the user never touched them), so the save
+   * must not overwrite what the database holds. Defaults to true.
+   */
+  includeTaste: z.boolean().default(true),
 });
-export type ProfileInput = z.infer<typeof ProfileInputSchema>;
+/** Input side of the schema, so callers that predate the taste fields still compile; parsing fills them with []. */
+export type ProfileInput = z.input<typeof ProfileInputSchema>;
+export type Cuisine = (typeof CUISINES)[number];
+export type MealType = (typeof MEAL_TYPES)[number];
+export type DietaryNeed = (typeof DIETARY_NEEDS)[number];
 
 export const ProfileSchema = z.object({
   id: z.string(),
@@ -33,6 +64,12 @@ export const ProfileSchema = z.object({
   days_per_week: z.number().int().nullable(),
   minutes_per_session: z.number().int().nullable(),
   onboarding_completed: z.boolean().nullable(),
+  /** Added with personalize_my_path. Default [] keeps older servers and rows working. */
+  cuisines: z.array(z.string()).default([]),
+  meal_types: z.array(z.string()).default([]),
+  dietary_needs: z.array(z.string()).default([]),
+  /** Not a column. The live backend sets false when it read the row without the taste columns. */
+  tasteLoaded: z.boolean().default(true),
   /** Existing column; used as "Cooking since …" on the profile. */
   created_at: z.string().nullable().optional(),
 });
@@ -58,6 +95,10 @@ export const PlanSlotSchema = z.object({
 export type PlanSlot = z.infer<typeof PlanSlotSchema>;
 
 export const PlanSchema = z.array(PlanSlotSchema);
+
+/** personalize_my_path() returns the dish now chosen for each slot the user hasn't started. */
+export const PersonalizedPathSchema = z.array(z.object({ slot_id: z.number().int(), dish_name: z.string() }));
+export type PersonalizedPath = z.infer<typeof PersonalizedPathSchema>;
 
 export const PlanSummarySchema = z.object({
   total_xp: z.number().int(),

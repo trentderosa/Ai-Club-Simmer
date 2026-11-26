@@ -18,6 +18,10 @@ import { T } from '../../components/text';
 import { badgeCounts, badgeSealLabel } from '../../domain/badges';
 import {
   budgetTitle,
+  CUISINE_OPTIONS,
+  DIETARY_OPTIONS,
+  formatChoiceList,
+  MEAL_TYPE_OPTIONS,
   experienceTitle,
   formatEquipmentList,
   formatSchedule,
@@ -202,6 +206,12 @@ function Answers({ profile }: { profile: Profile }) {
   if (equipment) rows.push({ label: 'Equipment', value: equipment });
   const budget = budgetTitle(profile.budget);
   if (budget) rows.push({ label: 'Budget', value: budget });
+  const cuisines = formatChoiceList(profile.cuisines, CUISINE_OPTIONS);
+  if (cuisines) rows.push({ label: 'Cuisines', value: cuisines });
+  const mealTypes = formatChoiceList(profile.meal_types, MEAL_TYPE_OPTIONS);
+  if (mealTypes) rows.push({ label: 'Meals', value: mealTypes });
+  const dietary = formatChoiceList(profile.dietary_needs, DIETARY_OPTIONS);
+  if (dietary) rows.push({ label: 'Diet', value: dietary });
   const schedule = formatSchedule(profile.days_per_week, profile.minutes_per_session);
   if (schedule) rows.push({ label: 'Schedule', value: schedule });
 
