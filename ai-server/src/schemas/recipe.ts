@@ -152,6 +152,7 @@ export function getRecipeJsonSchema(options: { requireCoachNote?: boolean } = {}
       },
       coachNote: {
         type: 'string',
+        minLength: 1,
         maxLength: MAX_COACH_NOTE_LENGTH,
         description: 'Optional personalized tip based on user feedback',
       },

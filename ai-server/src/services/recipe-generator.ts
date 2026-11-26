@@ -617,13 +617,21 @@ export function cleanRecipe(recipe: Recipe, schema: z.ZodType<Recipe> = RecipeSc
   const cleaned = cleanRecipeUnchecked(recipe);
   // The cleaned recipe must still pass the schema it was validated against
   // (it is re-validated when read back from the database). If not, keep the original.
-  return schema.safeParse(cleaned).success ? cleaned : recipe;
+  // The coach note is trimmed either way, so an empty one is never kept.
+  return schema.safeParse(cleaned).success ? cleaned : cleanCoachNote(recipe);
+}
+
+/** coachNote is optional: trim it, and drop it when only whitespace is left. */
+function cleanCoachNote(recipe: Recipe): Recipe {
+  const { coachNote, ...withoutNote } = recipe;
+  const trimmedNote = coachNote?.trim();
+  return trimmedNote ? { ...withoutNote, coachNote: trimmedNote } : withoutNote;
 }
 
 function cleanRecipeUnchecked(recipe: Recipe): Recipe {
   const strippedTitle = recipe.title.replace(SIMMER_TITLE_PREFIX, '').trim();
   return {
-    ...recipe,
+    ...cleanCoachNote(recipe),
     title: strippedTitle || recipe.title.trim(),
     ingredients: recipe.ingredients.map((ingredient) => ({
       name: ingredient.name.trim() || ingredient.name,

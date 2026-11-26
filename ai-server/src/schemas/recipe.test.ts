@@ -224,4 +224,11 @@ describe('getRecipeJsonSchema coachNote length', () => {
     const js = getRecipeJsonSchema() as { properties: { coachNote: { maxLength: number } } };
     expect(js.properties.coachNote.maxLength).toBe(500);
   });
+
+  it('requires a non-empty coachNote when one is given', () => {
+    for (const requireCoachNote of [false, true]) {
+      const js = getRecipeJsonSchema({ requireCoachNote }) as { properties: { coachNote: { minLength: number } } };
+      expect(js.properties.coachNote.minLength).toBe(1);
+    }
+  });
 });
