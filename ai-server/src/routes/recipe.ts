@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import rateLimit from 'express-rate-limit';
 import { z } from 'zod';
+import { mergeDietaryNeeds } from '../services/dietary-needs.js';
 import { createPathRecipeService, type PathRecipeService } from '../services/path-recipe-service.js';
 import { generateRecipe, PathSlot } from '../services/recipe-generator.js';
 import type { OllamaClient } from '../services/ollama-client.js';
@@ -76,21 +77,7 @@ export interface RecipeRouterOptions {
   };
 }
 
-const MAX_DIETARY_NEEDS = 20; // DietaryNeedsSchema max
-
-/** Stored needs first, then body needs; case-insensitive dedupe, capped at the schema max. */
-export function mergeDietaryNeeds(stored: readonly string[] | undefined, added: readonly string[] | undefined): string[] {
-  const merged: string[] = [];
-  const seen = new Set<string>();
-  for (const need of [...(stored ?? []), ...(added ?? [])]) {
-    const key = need.trim().toLowerCase();
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    merged.push(need.trim());
-    if (merged.length >= MAX_DIETARY_NEEDS) break;
-  }
-  return merged;
-}
+export { mergeDietaryNeeds };
 
 export function createRecipeRouter(
   deps: RecipeRouterDeps,
@@ -316,7 +303,8 @@ export function createRecipeRouter(
         return;
       }
 
-      const media = await mediaPromise;
+      // A stale-check regeneration may have used a swapped dish: fetch its media.
+      const media = await (result.dishName === slot.dishName ? mediaPromise : dishMedia(result.dishName));
       res.json({
         recipe: slot.isFinal ? maskRecipeForMastery(result.recipe) : result.recipe,
         cached: false,

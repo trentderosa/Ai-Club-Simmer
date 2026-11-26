@@ -299,6 +299,59 @@ describe('stale generation after the inputs change', () => {
     expect(t.saveRecipe).toHaveBeenCalledTimes(1);
   });
 
+  it('body extra needs with no change: one prompt, one save', async () => {
+    const t = build(
+      () => next,
+      () => ({ ...profile, dietaryNeeds: ['vegan'] })
+    );
+    const result = await t.service.generate(USER, next, { ...profile, dietaryNeeds: ['vegan', 'no cilantro'] });
+    expect(result.success).toBe(true);
+    expect(t.prompts).toHaveLength(1);
+    expect(t.saveRecipe).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns the dish the recipe was generated for', async () => {
+    let dish = 'Scrambled Eggs';
+    const t = build(
+      () => ({ ...next, dishName: dish }),
+      () => profile
+    );
+    const first = t.service.generate(USER, next, profile);
+    dish = 'Shakshuka';
+    const result = await first;
+    expect(result.success && result.dishName).toBe('Shakshuka');
+  });
+
+  it('does not regenerate when too little budget is left', async () => {
+    let clock = 0;
+    const budget = { budgetMs: 1000, ollamaTimeoutMs: 500, queueTimeoutMs: 100, now: (): number => clock };
+    const prompts: string[] = [];
+    const client: OllamaClient = {
+      generate: (prompt) => {
+        prompts.push(prompt);
+        clock += 700; // the first generation used most of the budget
+        return Promise.resolve(recipeJson);
+      },
+    };
+    const saveRecipe = vi.fn();
+    const supabase = {
+      saveRecipe,
+      getPathSlot: vi.fn().mockResolvedValue({ ...next, dishName: 'Shakshuka' }),
+      getUserProfile: vi.fn().mockResolvedValue(profile),
+    } as unknown as SupabaseService;
+    const service = createPathRecipeService({
+      ollamaClient: client,
+      supabase,
+      generationBudget: budget,
+      logger: { warn: vi.fn() },
+    });
+    const result = await service.generate(USER, next, profile);
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.type).toBe('stale');
+    expect(prompts).toHaveLength(1);
+    expect(saveRecipe).not.toHaveBeenCalled();
+  });
+
   it('saves nothing when the re-read fails', async () => {
     const t = build(
       () => next,

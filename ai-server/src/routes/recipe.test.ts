@@ -284,6 +284,29 @@ describe('POST /api/recipes/generate/:slotId', () => {
     expect(photoSearch.search).toHaveBeenCalledWith('test dish');
   });
 
+  it('fetches the photo for the swapped dish when the dish changes mid-generation', async () => {
+    const photoSearch: DishPhotoSearchClient = { search: vi.fn().mockResolvedValue(null) };
+    const supabase = createMockSupabase({ tokenValid: true, pathSlot: mockSlot, userProfile: mockUserProfile });
+    // Route read sees the old dish; the pre-save re-read sees the swap.
+    (supabase.getPathSlot as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(mockSlot)
+      .mockResolvedValue({ ...mockSlot, dishName: 'Shakshuka' });
+    const app = createApp({
+      ollamaClient: createMockOllamaClient(),
+      supabase,
+      photoFinder: new DishPhotoFinder(new InMemoryDishPhotoCache(), photoSearch),
+    });
+
+    const response = await request(app)
+      .post('/api/recipes/generate/1')
+      .set('Authorization', 'Bearer valid-token');
+
+    expect(response.status).toBe(200);
+    const searched = (photoSearch.search as ReturnType<typeof vi.fn>).mock.calls.map((c: unknown[]) => c[0] as string);
+    expect(searched).toContain('shakshuka');
+    expect(supabase.saveRecipe).toHaveBeenCalledTimes(1);
+  });
+
   it('hides internal error details from client', async () => {
     const ollamaClient: OllamaClient = {
       generate: vi.fn().mockRejectedValue(new Error('Internal: model host at 192.168.1.100 failed')),
