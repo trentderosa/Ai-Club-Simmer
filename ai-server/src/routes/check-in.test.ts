@@ -8,6 +8,7 @@ import { InMemoryCheckInRepository } from '../repositories/in-memory-check-in-re
 import type { JwtVerifier, JwtVerifyResult } from '../services/jwt-verifier.js';
 import type { CoachNoteGenerator } from '../services/coach-note.js';
 import { FALLBACK_NOTE } from '../services/coach-note.js';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 import type { XpAwardResult, XpAwarder } from '../services/xp-awarder.js';
 
 function createMockJwtVerifier(defaultResult: JwtVerifyResult): JwtVerifier {
@@ -720,5 +721,54 @@ describe('Check-in unexpected error logging', () => {
       processSpy.mockRestore();
       errorSpy.mockRestore();
     }
+  });
+});
+
+describe('Check-in database timeout', () => {
+  async function postWithError(error: Error): Promise<request.Response> {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const processSpy = vi.spyOn(CheckInService.prototype, 'processCheckIn').mockRejectedValue(error);
+    try {
+      const userId = randomUUID();
+      const recipeId = randomUUID();
+      const repository = new InMemoryCheckInRepository();
+      repository.seedUserRecipe({ id: recipeId, user_id: userId, slot_id: 1 });
+      const app = express();
+      app.use(express.json());
+      app.use(
+        '/api/check-ins',
+        createCheckInRouter(
+          {
+            checkInService: new CheckInService(repository, createMockCoachNoteGenerator()),
+            jwtVerifier: createMockJwtVerifier({ valid: true, userId }),
+          },
+          { rateLimit: { windowMs: 60000, maxRequests: 100 } }
+        )
+      );
+      return await request(app)
+        .post('/api/check-ins')
+        .set('Authorization', 'Bearer valid-token')
+        .send({ user_recipe_id: recipeId, slot_id: 1, rating: 'ok' });
+    } finally {
+      processSpy.mockRestore();
+      errorSpy.mockRestore();
+    }
+  }
+
+  it('returns 503 DATABASE_UNAVAILABLE when Supabase times out', async () => {
+    const response = await postWithError(
+      new SupabaseRestError('Supabase check-in create timed out after 5000ms', undefined, { kind: 'timeout' })
+    );
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({
+      error: 'The database is not responding right now. Try again in a moment.',
+      code: 'DATABASE_UNAVAILABLE',
+    });
+  });
+
+  it('keeps 500 for a non-timeout Supabase error', async () => {
+    const response = await postWithError(new SupabaseRestError('Supabase check-in create failed: 500', 500));
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({ error: 'Internal server error' });
   });
 });

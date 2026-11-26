@@ -7,6 +7,8 @@ import {
   cleanTechniqueName,
   sanitizeUserText,
   SAFETY_KEYWORDS,
+  FOOD_SAFETY_RULE,
+  RECIPE_CONSISTENCY_RULES,
   hasAffirmativeProteinRinse,
   PathSlot,
 } from './recipe-generator.js';
@@ -735,6 +737,15 @@ describe('ensureSafetyFlags - raw protein rinse and poultry doneness', () => {
     expect(step.instruction).not.toMatch(/165/);
   });
 
+  it.each([
+    'Insert a thermometer into the thickest part and check it reaches 165°F (74°C).',
+    'Make sure the internal temperature is high enough.',
+  ])('flags a standalone thermometer or internal temperature step (%s)', (instruction) => {
+    const step = flag(instruction);
+    expect(step.isSafetyStep).toBe(true);
+    expect(step.instruction).toBe(instruction);
+  });
+
   it('keeps the safe handling lines and the dangerous rinse visible on slot 10', () => {
     const recipe = ensureSafetyFlags({
       title: 'Roast chicken',
@@ -928,6 +939,32 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
     const result = await run(client, finalSlot);
     expect(result.success).toBe(true);
     expect(client.generate).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not hide or count a standalone thermometer step toward the slot 10 minimum', async () => {
+    const temp = step('Insert a thermometer into the thickest part and check it reaches 165°F (74°C).');
+    const twoPlusTemp = recipeWith([
+      step('Gather the ingredients on the counter.'),
+      step('Season the chicken with salt and pepper.'),
+      temp,
+    ]);
+    // Only 2 hideable steps once the thermometer step is flagged, so all 3 attempts fail.
+    const failing = createMockOllamaClient([twoPlusTemp, twoPlusTemp, twoPlusTemp]);
+    const result = await run(failing, finalSlot);
+    expect(result.success).toBe(false);
+    expect(failing.generate).toHaveBeenCalledTimes(3);
+
+    const ok = createMockOllamaClient([
+      recipeWith([step('Gather the ingredients on the counter.'), step('Season the chicken with salt and pepper.'), step('Mix the herbs with butter in a bowl.'), temp]),
+    ]);
+    const good = await run(ok, finalSlot);
+    expect(good.success).toBe(true);
+    if (good.success) {
+      const masked = maskRecipeForMastery(good.recipe);
+      const tempStep = masked.steps.find((s) => s.instruction === temp.instruction);
+      expect(tempStep?.isSafetyStep).toBe(true);
+      expect(tempStep?.isHidden).toBeFalsy();
+    }
   });
 
   it('retries a 1-step recipe and succeeds when the retry has enough hideable steps', async () => {
@@ -1170,6 +1207,26 @@ describe('buildPrompt - food safety and honest coach note', () => {
   it('keeps the dietary and mastery numbering consistent with the food-safety rule', () => {
     const prompt = buildPrompt(mockSlot, { ...mockUserProfile, dietaryNeeds: ['vegan'] });
     expect(prompt).toContain('\n7. RESPECT dietary needs');
+  });
+
+  it('includes the recipe consistency rules right after the food-safety rule', () => {
+    const prompt = buildPrompt(mockSlot, mockUserProfile);
+    expect(prompt).toContain(`${FOOD_SAFETY_RULE}\n${RECIPE_CONSISTENCY_RULES}`);
+    expect(prompt).toContain('INGREDIENTS AND STEPS MUST MATCH');
+    expect(prompt).toContain('165°F (74°C)');
+  });
+
+  it('keeps the consistency rules and numbering in the final slot and dietary variants', () => {
+    const finalSlot: PathSlot = { id: 10, dishName: 'Roast Chicken', techniqueFocus: 'Roasting', isFinal: true };
+    const diet = buildPrompt(mockSlot, { ...mockUserProfile, dietaryNeeds: ['vegan'] });
+    expect(diet).toContain(RECIPE_CONSISTENCY_RULES);
+    expect(diet).toContain(`${RECIPE_CONSISTENCY_RULES}\n7. RESPECT dietary needs`);
+    const noDiet = buildPrompt(finalSlot, { ...mockUserProfile, dietaryNeeds: [] });
+    expect(noDiet).toContain(RECIPE_CONSISTENCY_RULES);
+    expect(noDiet).toContain(`${RECIPE_CONSISTENCY_RULES}\n7. This is the final mastery recipe`);
+    const both = buildPrompt(finalSlot, { ...mockUserProfile, dietaryNeeds: ['vegan'] });
+    expect(both).toContain(`${RECIPE_CONSISTENCY_RULES}\n7. RESPECT dietary needs`);
+    expect(both).toContain('\n8. This is the final mastery recipe');
   });
 
   const withCheckIns = (difficulty: 'easy' | 'ok' | 'hard'): UserProfile => ({
