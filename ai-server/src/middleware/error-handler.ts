@@ -1,4 +1,6 @@
 import type { ErrorRequestHandler, Express, NextFunction, Request, RequestHandler, Response } from 'express';
+import { isDatabaseTimeout } from '../services/supabase-rest.js';
+import { sendDatabaseUnavailable } from '../routes/database-unavailable.js';
 
 /** JSON 404 for any route no router handled. */
 export const notFoundHandler: RequestHandler = (_req: Request, res: Response): void => {
@@ -8,7 +10,7 @@ export const notFoundHandler: RequestHandler = (_req: Request, res: Response): v
 /**
  * Final error handler. Body-parser failures get a specific 4xx; any other
  * exposable 4xx client error keeps its status with a generic body; everything
- * else is a generic 500. The response never carries a stack or error message,
+ * else is a generic 500. A Supabase timeout is a 503 DATABASE_UNAVAILABLE. The response never carries a stack or error message,
  * and the 500 log line has only the error name (and a string code), never the
  * message, headers, body or tokens.
  */
@@ -42,6 +44,12 @@ export const errorHandler: ErrorRequestHandler = (
     } else {
       res.status(status).json({ error: 'Bad request', code: 'BAD_REQUEST' });
     }
+    return;
+  }
+
+  if (isDatabaseTimeout(err)) {
+    console.error('Unhandled error: SupabaseRestError (timeout)');
+    sendDatabaseUnavailable(res);
     return;
   }
 

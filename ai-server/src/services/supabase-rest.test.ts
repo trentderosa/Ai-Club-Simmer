@@ -1,6 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { inspect } from 'node:util';
-import { SupabaseRest, SupabaseRestError, httpFailureMessage, parseJsonText, postgrestCode, readJson } from './supabase-rest.js';
+import {
+  SupabaseRest,
+  SupabaseRestError,
+  httpFailureMessage,
+  isDatabaseTimeout,
+  parseJsonText,
+  postgrestCode,
+  readJson,
+  withSupabaseTimeout,
+} from './supabase-rest.js';
 
 const config = { url: 'https://db.simmer.invalid', serviceRoleKey: 'test-service-role', timeoutMs: 100 };
 
@@ -135,5 +144,53 @@ describe('parseJsonText', () => {
 
   it('returns parsed JSON', () => {
     expect(parseJsonText<number[]>('[1]', 'x', 200)).toEqual([1]);
+  });
+});
+
+describe('withSupabaseTimeout', () => {
+  const hangUntilAborted = (signal: AbortSignal): Promise<never> =>
+    new Promise((_resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    });
+
+  it('returns the result of run', async () => {
+    await expect(withSupabaseTimeout('read', 50, () => Promise.resolve(7))).resolves.toBe(7);
+  });
+
+  it('turns an abort into a timeout SupabaseRestError with a body-free message', async () => {
+    const error = await failure(withSupabaseTimeout('check-in read', 5, hangUntilAborted));
+    expect(error.kind).toBe('timeout');
+    expect(error.status).toBeUndefined();
+    expect(error.message).toBe('Supabase check-in read timed out after 5ms');
+  });
+
+  it('passes a SupabaseRestError through unchanged', async () => {
+    const original = new SupabaseRestError('Supabase read failed: 503', 503);
+    await expect(withSupabaseTimeout('read', 50, () => Promise.reject(original))).rejects.toBe(original);
+  });
+
+  it('propagates other errors before the timeout', async () => {
+    const original = new TypeError('boom');
+    await expect(withSupabaseTimeout('read', 50, () => Promise.reject(original))).rejects.toBe(original);
+  });
+
+  it('clears the timer when run finishes', async () => {
+    vi.useFakeTimers();
+    try {
+      await withSupabaseTimeout('read', 1000, () => Promise.resolve(1));
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('isDatabaseTimeout', () => {
+  it('is true only for a timeout SupabaseRestError', () => {
+    expect(isDatabaseTimeout(new SupabaseRestError('t', undefined, { kind: 'timeout' }))).toBe(true);
+    expect(isDatabaseTimeout(new SupabaseRestError('n', undefined, { kind: 'network' }))).toBe(false);
+    expect(isDatabaseTimeout(new SupabaseRestError('h', 503))).toBe(false);
+    expect(isDatabaseTimeout(new Error('timeout'))).toBe(false);
+    expect(isDatabaseTimeout(undefined)).toBe(false);
   });
 });
