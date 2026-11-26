@@ -366,7 +366,8 @@ CREATE TRIGGER profiles_dietary_needs_invalidate_recipes
 -- candidates = catalog dishes for the slot whose `contains` does not overlap
 --              excluded_contains(profile.dietary_needs)
 -- score      = 2 * matching cuisines + matching meal types
--- order      = score desc, then md5(user_id || dish id) (stable, varies by user)
+-- order      = score desc, then the slot's canonical dish first (so no preferences
+--              gives the classic path), then md5(user_id || dish id) (stable)
 -- No candidate (impossible restriction combo): the user's pick for that slot is
 -- removed and the canonical dish is used. The recipe generator still receives
 -- the dietary needs, so it can adapt that canonical dish.
@@ -455,6 +456,7 @@ BEGIN
         ORDER BY
             (2 * COALESCE(cardinality(ARRAY(SELECT UNNEST(d.cuisines) INTERSECT SELECT UNNEST(v_cuisines))), 0)
              + COALESCE(cardinality(ARRAY(SELECT UNNEST(d.meal_types) INTERSECT SELECT UNNEST(v_meal_types))), 0)) DESC,
+            (d.dish_name = v_slot.canonical) DESC,
             md5(v_user::TEXT || d.id::TEXT)
         LIMIT 1;
 

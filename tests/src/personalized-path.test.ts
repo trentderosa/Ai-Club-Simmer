@@ -305,6 +305,38 @@ describe('personalized path dishes', () => {
       expect(result.find((r) => r.slot_id === slot3)!.dish_name).toBe('Cold Soba Noodles');
     });
 
+    it('gives a user with no preferences exactly the canonical dishes', async () => {
+      const result = await personalize(user.id);
+      const canonical = await q<{ id: number; dish_name: string }>('SELECT id, dish_name FROM path_slots ORDER BY slot_order');
+      expect(result).toEqual(canonical.map((c) => ({ slot_id: c.id, dish_name: c.dish_name })));
+    });
+
+    it('gives a vegetarian with no cuisines the canonical dish where compatible, else a vegetarian one', async () => {
+      await setPrefs(user.id, { dietary_needs: ['vegetarian'] });
+      const result = await personalize(user.id);
+      const canonical = await q<{ id: number; dish_name: string }>('SELECT id, dish_name FROM path_slots ORDER BY slot_order');
+      let swapped = 0;
+      for (const c of canonical) {
+        const got = result.find((r) => r.slot_id === c.id)!.dish_name;
+        const canonicalContains = await containsOf(c.dish_name, c.id);
+        if (canonicalContains.some((t) => MEAT.includes(t))) {
+          expect(got).not.toBe(c.dish_name);
+          expect((await containsOf(got, c.id)).filter((t) => MEAT.includes(t))).toEqual([]);
+          swapped++;
+        } else {
+          expect(got).toBe(c.dish_name);
+        }
+      }
+      expect(swapped).toBeGreaterThanOrEqual(2); // slots 8 and 10 at least
+    });
+
+    it('lets preference scoring beat the canonical dish', async () => {
+      await setPrefs(user.id, { cuisines: ['mexican'] });
+      const slot1 = await db.getSlotId(1);
+      const result = await personalize(user.id);
+      expect(result.find((r) => r.slot_id === slot1)!.dish_name).toBe('Pico de Gallo');
+    });
+
     it('is deterministic for the same user and preferences', async () => {
       await setPrefs(user.id, { cuisines: ['italian'], meal_types: ['quick_weeknight'] });
       const first = await personalize(user.id);
@@ -313,6 +345,8 @@ describe('personalized path dishes', () => {
     });
 
     it('can differ between users with identical preferences (tie-break)', async () => {
+      // Meal-type-only preference: the canonical dishes have no date_night tag, so
+      // several non-canonical dishes tie at the top score in many slots.
       const results = new Set<string>();
       const ids: TestUser[] = [user];
       for (let i = 0; i < 8; i++) {
@@ -321,6 +355,7 @@ describe('personalized path dishes', () => {
         ids.push(u);
       }
       for (const u of ids) {
+        await setPrefs(u.id, { meal_types: ['date_night'] });
         results.add(JSON.stringify(await personalize(u.id)));
       }
       expect(results.size).toBeGreaterThan(1);
