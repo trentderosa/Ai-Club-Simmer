@@ -175,7 +175,7 @@ export const FOOD_SAFETY_RULE =
 /** Shared by the path and Cook anything prompts. */
 export const RECIPE_CONSISTENCY_RULES = `INGREDIENTS AND STEPS MUST MATCH: Every food a step uses (including oil, butter, and seasonings) must be in the ingredients list, and every listed ingredient must be used in a step. Do not add foods the dish does not need.
 POULTRY DONENESS: If the recipe cooks chicken, turkey, or other poultry, the step that finishes cooking it must say to check that the thickest part reaches 165°F (74°C).
-MEAT AND SEAFOOD DONENESS: If the recipe cooks ground beef or ground pork, the step that finishes cooking it must say to check that it reaches 160°F (71°C). Whole cuts of pork, beef, or lamb must reach 145°F (63°C) and then rest 3 minutes. Fish must reach 145°F (63°C) or flake easily with a fork. Shrimp must turn pink and opaque.
+MEAT AND SEAFOOD DONENESS: If the recipe cooks ground beef or ground pork, the step that finishes cooking it must say to check that it reaches 160°F (71°C). Whole cuts of pork, beef, or lamb must reach 145°F (63°C) and then rest 3 minutes. Fish must reach 145°F (63°C) or flake easily with a fork. Shrimp must turn pink and opaque. Put each doneness check inside the step that cooks the food. Do not write a separate step just to check temperature.
 AMOUNTS: Write each amount in plain words and numbers, such as "2", "1 cup", "1/2 tsp", or "to taste".
 ORDER: Write the steps in the order the cook does them.`;
 
@@ -256,7 +256,7 @@ Based on this feedback, include a short "coachNote" at the top of the recipe tha
   // Final slot (mastery challenge): non-safety steps are hidden, so the recipe
   // needs enough of them. Safety flagging stays strict (rule 4 still applies).
   const masteryConstraint = slot.isFinal
-    ? `\n${dietaryConstraint ? 8 : 7}. This is the final mastery recipe. Write at least ${MASTERY_MIN_STEPS} steps, and make at least ${MASTERY_MIN_HIDDEN_STEPS} of them real steps that do NOT involve heat, knives, raw meat, hot oil, peeling, grating, draining, pan work, or roasting, such as gathering and measuring ingredients, seasoning, mixing, and resting. Pat-dry, do-not-rinse, and poultry doneness steps do not count toward that number. Each of those steps must be a full instruction of at least 5 words; one-line steps like "Serve." or "Enjoy!" do not count. Any step that involves heat, knives, raw meat, hot oil, peeling, grating, draining, pan work, or roasting, or that says to pat dry, says do not rinse, or is a poultry doneness step with no temperature, MUST be flagged as a safety step (isSafetyStep: true) and is never hidden.`
+    ? `\n${dietaryConstraint ? 8 : 7}. This is the final mastery recipe. Write at least ${MASTERY_MIN_STEPS} steps, and make at least ${MASTERY_MIN_HIDDEN_STEPS} of them real steps that do NOT involve heat, knives, raw meat, hot oil, peeling, grating, draining, pan work, or roasting. Write these cold steps near the start, each as its own step: (1) "Gather and measure all the ingredients on the counter." (2) "Mix the salt, pepper, herbs, and any oil in a small bowl." (3) "Toss the vegetables with the seasoning mix in a large bowl." Adapt the wording to the dish, name a bowl in each, and do not mention any meat or fish in them. Pat-dry, do-not-rinse, and poultry doneness steps do not count toward that number. Each of those steps must be a full instruction of at least 5 words; one-line steps like "Serve." or "Enjoy!" do not count. Any step that involves heat, knives, raw meat, hot oil, peeling, grating, draining, pan work, or roasting, or that says to pat dry, says do not rinse, or is a poultry doneness step with no temperature, MUST be flagged as a safety step (isSafetyStep: true) and is never hidden.`
     : '';
 
   return `You are a helpful cooking instructor creating a recipe for the Simmer cooking app.
@@ -590,7 +590,7 @@ const PREP_CONTAINER_RE = /\b(?:bowl|jar|measuring\s+cup|plate)\b/i;
 const PREP_CUT_WORDS =
   'thighs?|breasts?|wings?|drumsticks?|fillets?|filets?|patty|patties|ribs?|tenderloins?|loins?|shanks?|cutlets?|hens?|roasts?|steaks?|chops?|raw';
 const PREP_HEAT_WORDS =
-  'saucepans?|pans?|pots?|skillets?|woks?|griddles?|ovens?|stoves?|stovetop|burners?|instant\\s+pot|pressure|boil\\w*|simmer\\w*|hot|warm\\w*|heat\\w*|scald\\w*|caramel\\w*|amber|thicken\\w*|melt\\w*|fr(?:y|ies|ied|ying)|oil\\w*|blenders?|blend\\w*|food\\s+processors?|pulse|pulsing|knife|knives|cut\\w*|chop\\w*|slic\\w*|dic(?:e|es|ed|ing)|minc\\w*|grat(?:e|es|ed|ing)|peel\\w*|lye|microwav\\w*|bak(?:e|es|ed|ing)|grill\\w*|broil\\w*|sear\\w*|steam\\w*|toast\\w*|flame|lids?|until|over\\s+(?:low|medium|high)';
+  'saucepans?|pans?|pots?|skillets?|woks?|griddles?|ovens?|stoves?|stovetop|burners?|instant\\s+pot|pressure|boil\\w*|simmer\\w*|hot|warm\\w*|heat\\w*|scald\\w*|caramel\\w*|amber|thicken\\w*|melt\\w*|fr(?:y|ies|ied|ying)|blenders?|blend\\w*|food\\s+processors?|pulse|pulsing|knife|knives|cut\\w*|chop\\w*|slic\\w*|dic(?:e|es|ed|ing)|minc\\w*|grat(?:e|es|ed|ing)|peel\\w*|lye|microwav\\w*|bak(?:e|es|ed|ing)|grill\\w*|broil\\w*|sear\\w*|steam\\w*|toast\\w*|flame|lids?|until|over\\s+(?:low|medium|high)';
 const PREP_BLOCKER_RE = new RegExp(
   `\\b(?:${ANIMAL_PROTEIN_WORDS_SOURCE()}|ground|birds?|kebabs?|${PREP_CUT_WORDS}|${PREP_HEAT_WORDS})\\b`,
   'i'
@@ -643,7 +643,7 @@ function prepStepsFlaggedSafety(recipe: Recipe): number[] {
 function masteryRetryHint(recipe: Recipe, hideable: number): string {
   const prep = prepStepsFlaggedSafety(recipe);
   const named = prep.length > 0 ? ` Steps ${prep.join(', ')} of the last recipe are plain prep and must have isSafetyStep false.` : '';
-  return `CORRECTION: The last recipe had only ${hideable} steps with isSafetyStep false, but at least ${MASTERY_MIN_HIDDEN_STEPS} are required.${named} Include at least ${MASTERY_MIN_HIDDEN_STEPS} full-sentence prep steps (gather and measure ingredients, mix a seasoning or sauce in a bowl, let the dish rest) that involve no heat, knives, raw meat, or oil, and set isSafetyStep to false only for those. Keep every heat, knife, raw meat, and hot oil step flagged true.`;
+  return `CORRECTION: The last recipe had only ${hideable} steps with isSafetyStep false, but at least ${MASTERY_MIN_HIDDEN_STEPS} are required.${named} Include at least ${MASTERY_MIN_HIDDEN_STEPS} full-sentence cold prep steps, such as "Gather and measure all the ingredients on the counter.", "Mix the salt, pepper, herbs, and any oil in a small bowl.", and "Toss the vegetables with the seasoning mix in a large bowl." They must involve no heat, knives, or meat or fish, and set isSafetyStep to false only for those. Keep every heat, knife, raw meat, and hot oil step flagged true.`;
 }
 
 /** Keeps an edited recipe only if it still passes the schema (e.g. the step limit). */

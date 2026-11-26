@@ -360,6 +360,8 @@ describe('repairMasteryHideableSteps: strict allowlist', () => {
     'Toss the salad greens with the herb mix on a plate.',
     'Set out the plates and bowls for serving on a plate.',
     'Stir together the vinegar and sugar in a bowl.',
+    'Mix the salt, pepper, rosemary, and olive oil in a small bowl.',
+    'Toss the potatoes with the seasoning mix in a large bowl.',
   ];
   it.each(mayUnflag)('may unflag this step: %s', (text) => {
     const { recipe: out } = repairMasteryHideableSteps(withFlagged(text));
@@ -471,5 +473,22 @@ describe('diet guard: beef cuts and steak substitutes', () => {
   });
   it.each(['portobello steak', 'cauliflower steak', 'tofu steak', 'eggplant steak', 'seitan steak', 'tempeh steak tips'])('allows %s', (name) => {
     expect(findForbiddenTerm(name, 'vegetarian')).toBeNull();
+  });
+});
+
+describe('slot 10 prompt asks for cold prep steps and folds doneness into the cook step', () => {
+  const slot: PathSlot = { id: 10, dishName: 'Roast Chicken', techniqueFocus: 'Complete meal execution', isFinal: true };
+  const user = { id: '00000000-0000-4000-8000-000000000001', experienceLevel: 'a_little', budget: 'medium', equipment: ['oven'] } as Parameters<typeof buildPrompt>[1];
+
+  it('names three cold prep steps with a bowl and keeps meat out of them', () => {
+    const prompt = buildPrompt(slot, user);
+    expect(prompt).toContain('Gather and measure all the ingredients on the counter.');
+    expect(prompt).toContain('in a small bowl');
+    expect(prompt).toContain('in a large bowl');
+    expect(prompt).toContain('do not mention any meat or fish in them');
+  });
+
+  it('tells the model not to write a separate temperature step', () => {
+    expect(buildPrompt(slot, user)).toContain('Do not write a separate step just to check temperature.');
   });
 });
