@@ -92,15 +92,15 @@ describe('personalized path dishes', () => {
   }
 
   describe('dish_catalog', () => {
-    it('has 80 rows, 8 per slot, including each canonical dish', async () => {
+    it('has 81 rows, 8 to 9 per slot, including each canonical dish', async () => {
       const total = await q<{ n: string }>('SELECT count(*) AS n FROM dish_catalog');
-      expect(Number(total[0].n)).toBe(80);
+      expect(Number(total[0].n)).toBe(81);
 
       const perSlot = await q<{ slot_id: number; n: string }>(
         'SELECT slot_id, count(*) AS n FROM dish_catalog GROUP BY slot_id ORDER BY slot_id'
       );
       expect(perSlot).toHaveLength(10);
-      for (const row of perSlot) expect(Number(row.n)).toBe(8);
+      for (const row of perSlot) expect(Number(row.n)).toBe(row.slot_id === 8 ? 9 : 8);
 
       const missing = await q(
         `SELECT s.id FROM path_slots s
@@ -157,9 +157,38 @@ describe('personalized path dishes', () => {
       }
     });
 
+    it('every slot has a compatible dish for every non-empty combination of the 13 dietary needs', async () => {
+      const needs = NEEDS.map((n) => `'${n}'`).join(',');
+      const rows = await q<{ mask: number; slot_id: number }>(
+        `WITH n AS (SELECT ARRAY[${needs}]::text[] AS all_needs),
+              combos AS (
+                SELECT m AS mask,
+                       (SELECT COALESCE(array_agg(n.all_needs[i + 1]), '{}'::text[])
+                        FROM generate_series(0, 12) i WHERE (m >> i) & 1 = 1) AS needs
+                FROM n, generate_series(1, 8191) m
+              )
+         SELECT c.mask, s.id AS slot_id
+         FROM combos c CROSS JOIN path_slots s
+         WHERE NOT EXISTS (
+           SELECT 1 FROM dish_catalog d
+           WHERE d.slot_id = s.id AND NOT (d.contains && excluded_contains(c.needs)))
+         LIMIT 20`
+      );
+      expect(rows).toEqual([]);
+    });
+
+    it('vegan + no_mushrooms + no_spicy never gets poultry in slot 8', async () => {
+      await setPrefs(user.id, { dietary_needs: ['vegan', 'no_mushrooms', 'no_spicy'] });
+      const picks = await personalize(user.id);
+      const slot8 = picks.find((p) => p.slot_id === 8)!;
+      const contains = await containsOf(slot8.dish_name, 8);
+      expect(contains).not.toContain('poultry');
+      expect(contains).toEqual([]);
+    });
+
     it('is readable by authenticated, hidden from anon, and not writable by clients', async () => {
       const rows = await asUser(user.id, 'SELECT count(*)::int AS n FROM dish_catalog');
-      expect(rows[0].n).toBe(80);
+      expect(rows[0].n).toBe(81);
 
       expect(await q<{ ok: boolean }>(`SELECT has_table_privilege('anon', 'public.dish_catalog', 'SELECT') AS ok`)).toEqual([{ ok: false }]);
       for (const priv of ['INSERT', 'UPDATE', 'DELETE']) {
@@ -458,6 +487,18 @@ describe('personalized path dishes', () => {
   });
 
   describe('personalize_my_path rate limit', () => {
+    it('counts dietary_needs changes toward the hourly budget without ever blocking the update', async () => {
+      await q('DELETE FROM personalize_path_hits WHERE user_id = $1', [user.id]);
+      for (let i = 0; i < 12; i++) {
+        await setPrefs(user.id, { dietary_needs: i % 2 === 0 ? ['no_pork'] : ['no_beef'] });
+      }
+      const rows = await q<{ dietary_needs: string[] }>('SELECT dietary_needs FROM profiles WHERE id = $1', [user.id]);
+      expect(rows[0].dietary_needs).toEqual(['no_beef']);
+      const hits = await q<{ n: string }>('SELECT count(*) AS n FROM personalize_path_hits WHERE user_id = $1', [user.id]);
+      expect(Number(hits[0].n)).toBe(12);
+      await expect(asUser(user.id, 'SELECT * FROM personalize_my_path()')).rejects.toThrow(/PERSONALIZE_RATE_LIMITED/);
+    });
+
     it('allows 10 calls per hour, then raises PERSONALIZE_RATE_LIMITED and changes nothing', async () => {
       await q('DELETE FROM personalize_path_hits WHERE user_id = $1', [user.id]);
       await setPrefs(user.id, { cuisines: ['mexican'] });

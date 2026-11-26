@@ -7,7 +7,7 @@
 -- by plain SQL (never by the AI), so diet safety is data-driven:
 --
 --   1. profiles gains cuisines, meal_types and dietary_needs (fixed lists).
---   2. dish_catalog: 8 curated dishes per slot, each tagged with cuisines,
+--   2. dish_catalog: 8-9 curated dishes per slot (81 in all), each tagged with cuisines,
 --      meal types and what it `contains` (pork, dairy, gluten, ...).
 --   3. excluded_contains(): the ONE place that maps a dietary need to the
 --      `contains` tags it rules out.
@@ -102,7 +102,7 @@ FROM (VALUES
     (1, NULL, '{american}', '{quick_weeknight,meal_prep}', '{}'),
     (1, 'Pico de Gallo', '{mexican}', '{quick_weeknight,meal_prep}', '{spicy}'),
     (1, 'Caprese Salad', '{italian}', '{quick_weeknight,date_night}', '{dairy}'),
-    (1, 'Kachumber Salad', '{indian}', '{quick_weeknight,meal_prep}', '{}'),
+    (1, 'Kachumber Salad', '{indian}', '{quick_weeknight,meal_prep}', '{spicy}'),
     (1, 'Tabbouleh', '{middle_eastern}', '{meal_prep}', '{gluten}'),
     (1, 'Thai Cucumber Salad', '{thai}', '{quick_weeknight}', '{spicy,nuts}'),
     (1, 'Korean Cucumber Salad', '{korean}', '{quick_weeknight,meal_prep}', '{spicy,gluten}'),
@@ -169,6 +169,7 @@ FROM (VALUES
     (8, 'Pan-Seared Pork Chops with Apples', '{american}', '{comfort,date_night}', '{pork}'),
     (8, 'Pan-Seared Steak with Garlic Butter', '{american}', '{date_night}', '{beef,dairy}'),
     (8, 'Teriyaki Salmon', '{japanese}', '{quick_weeknight}', '{fish,gluten}'),
+    (8, 'Garlic Lemon Pan-Seared Tofu', '{mediterranean}', '{quick_weeknight,meal_prep}', '{}'),
     (8, 'Seared Paneer', '{indian}', '{quick_weeknight}', '{dairy,spicy}'),
     -- Slot 9: Building flavor
     (9, NULL, '{american}', '{comfort,meal_prep}', '{}'),
@@ -182,7 +183,7 @@ FROM (VALUES
     -- Slot 10: Complete meal execution (mastery)
     (10, NULL, '{american}', '{comfort,date_night}', '{poultry}'),
     (10, 'Whole Roasted Cauliflower with Tahini', '{middle_eastern}', '{date_night}', '{}'),
-    (10, 'Wild Rice Stuffed Acorn Squash', '{american}', '{comfort,date_night}', '{}'),
+    (10, 'Wild Rice Stuffed Acorn Squash', '{american}', '{comfort,date_night}', '{dairy,nuts}'),
     (10, 'Roasted Lemon Salmon with Potatoes', '{mediterranean}', '{date_night}', '{fish}'),
     (10, 'Tandoori-Style Roast Chicken Thighs', '{indian}', '{comfort}', '{poultry,dairy,spicy}'),
     (10, 'Roasted Pork Loin with Rosemary Potatoes', '{italian}', '{comfort,date_night}', '{pork}'),
@@ -343,6 +344,10 @@ BEGIN
     THEN
         RETURN NEW;
     END IF;
+
+    -- Count this change toward the hourly personalize_my_path budget (never
+    -- blocks: a user must always be able to save an allergy).
+    INSERT INTO public.personalize_path_hits (user_id) VALUES (NEW.id);
 
     FOR v_slot IN SELECT s.id FROM public.path_slots s ORDER BY s.slot_order LOOP
         PERFORM public.lock_unstarted_slot(NEW.id, v_slot, TRUE);
