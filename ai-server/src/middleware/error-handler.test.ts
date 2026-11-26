@@ -3,6 +3,7 @@ import express from 'express';
 import request from 'supertest';
 import { createCorsMiddleware } from './cors.js';
 import type { NextFunction, Request, Response } from 'express';
+import { SupabaseRestError } from '../services/supabase-rest.js';
 import { errorHandler, mountErrorHandlers } from './error-handler.js';
 
 const ORIGIN = 'http://localhost:8081';
@@ -17,6 +18,9 @@ function buildApp(): express.Express {
   });
   app.get('/boom', () => {
     throw new Error('secret-token-abc leaked in message');
+  });
+  app.get('/db-timeout', () => {
+    throw new SupabaseRestError('Supabase read timed out after 5000ms', undefined, { kind: 'timeout' });
   });
   app.get('/late', (_req, res, next) => {
     res.write('partial');
@@ -35,6 +39,16 @@ afterEach(() => {
 });
 
 describe('error handlers', () => {
+  it('returns 503 DATABASE_UNAVAILABLE for a Supabase timeout', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const res = await request(buildApp()).get('/db-timeout');
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({
+      error: 'The database is not responding right now. Try again in a moment.',
+      code: 'DATABASE_UNAVAILABLE',
+    });
+  });
+
   it('returns 400 JSON for malformed JSON', async () => {
     const res = await request(buildApp())
       .post('/echo')
