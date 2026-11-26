@@ -38,6 +38,14 @@ export interface FlowCache {
   getMastery(slotId: number): MasterySession | null;
   setMastery(slotId: number, session: MasterySession): void;
   clearMastery(slotId: number): void;
+  /**
+   * After personalizing: forget the plan, summary and recipes of every slot
+   * that isn't done, since their dish (and so their recipe) may have changed.
+   */
+  invalidateUnstarted(): void;
+  /** A one-shot message for Today (for example, taste answers weren't saved). */
+  setNotice(message: string | null): void;
+  takeNotice(): string | null;
   /** Drop everything (sign-out). */
   clear(): void;
 }
@@ -60,6 +68,7 @@ export function FlowCacheProvider({ children }: { children: ReactNode }) {
     generated: new Map<string, CookAnythingResponse>(),
     generatedOutcomes: new Map<string, GeneratedCheckInOutcome>(),
     mastery: new Map<number, MasterySession>(),
+    notice: null as string | null,
   });
   const cache = useMemo<FlowCache>(() => {
     const c = ref.current;
@@ -79,6 +88,19 @@ export function FlowCacheProvider({ children }: { children: ReactNode }) {
       getMastery: (id) => c.mastery.get(id) ?? null,
       setMastery: (id, session) => void c.mastery.set(id, session),
       clearMastery: (id) => void c.mastery.delete(id),
+      invalidateUnstarted: () => {
+        const done = new Set((c.plan ?? []).filter((p) => p.status === 'done').map((p) => p.slot_id));
+        for (const id of [...c.recipes.keys()]) if (!done.has(id)) c.recipes.delete(id);
+        for (const id of [...c.mastery.keys()]) if (!done.has(id)) c.mastery.delete(id);
+        c.plan = null;
+        c.summary = null;
+      },
+      setNotice: (m) => void (c.notice = m),
+      takeNotice: () => {
+        const m = c.notice;
+        c.notice = null;
+        return m;
+      },
       clear: () => {
         c.plan = null;
         c.summary = null;
@@ -87,6 +109,7 @@ export function FlowCacheProvider({ children }: { children: ReactNode }) {
         c.generated.clear();
         c.generatedOutcomes.clear();
         c.mastery.clear();
+        c.notice = null;
       },
     };
   }, []);

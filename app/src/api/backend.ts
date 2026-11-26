@@ -11,6 +11,7 @@ import type {
   CheckInHistoryEntry,
   CheckInInput,
   CheckInResponse,
+  PersonalizedPath,
   PlanSlot,
   PlanSummary,
   Profile,
@@ -74,7 +75,18 @@ export interface Backend {
 
   // Profile / onboarding (F1). RLS: own row only.
   getProfile(userId: string): Promise<Profile | null>;
-  saveOnboarding(userId: string, input: ProfileInput): Promise<void>;
+  /**
+   * `tasteSaved` is false when the user gave taste answers but the database
+   * doesn't have those columns yet (older deploy), so they weren't stored.
+   */
+  saveOnboarding(userId: string, input: ProfileInput): Promise<{ tasteSaved: boolean }>;
+
+  /**
+   * Re-picks dishes for slots the user hasn't started, from their cuisines,
+   * meal types and dietary needs. Call after saveOnboarding. Callers treat a
+   * failure as non-fatal (the canonical dishes still show).
+   */
+  personalizeMyPath(): Promise<PersonalizedPath>;
 
   // Plan (F2, F7)
   getPlan(): Promise<PlanSlot[]>;

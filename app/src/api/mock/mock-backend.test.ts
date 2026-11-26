@@ -1,6 +1,7 @@
 import { BADGES, MASTERY_USER, MASTERY_USER_XP, RECIPES, SLOTS } from './fixtures';
 import { catalogBadge, createMockBackend, mockUserRecipeId } from './mock-backend';
 import { awardXp, derivePlan, deriveSummary } from './mock-plan';
+import type { ProfileInput } from '../schemas';
 
 describe('mock plan rules', () => {
   it('matches the real 10 slots and XP values', () => {
@@ -386,5 +387,82 @@ describe('mock mastery account and check-in payload', () => {
         't',
       ),
     ).rejects.toMatchObject({ kind: 'validation', code: 'MASTERY_NOT_ALLOWED', status: 400 });
+  });
+});
+
+describe('mock personalizeMyPath', () => {
+  const base = { goals: '', experience_level: 'never_cooked' as const, equipment: ['stove'], budget: 'low' as const, days_per_week: 2, minutes_per_session: 30 };
+
+  async function newUser(extra: Partial<ProfileInput>) {
+    const b = createMockBackend({ latency: 0 });
+    await b.signUp('new@simmer.test', 'secret1', 'Sam');
+    const s = await b.getSession();
+    await b.saveOnboarding(s!.userId, { ...base, ...extra });
+    return b;
+  }
+
+  it('keeps the canonical dishes and the real technique focus until personalized', async () => {
+    const b = await newUser({ cuisines: ['mexican'] });
+    expect((await b.getPlan())[0].dish_name).toBe('Knife Basics Salad');
+  });
+
+  it('changes dish names for a Mexican user and keeps technique_focus and XP', async () => {
+    const b = await newUser({ cuisines: ['mexican'] });
+    const before = await b.getPlan();
+    await b.personalizeMyPath();
+    const after = await b.getPlan();
+    expect(after[0].dish_name).toBe('Pico de Gallo');
+    expect(after[3].dish_name).toBe('Chicken Fajitas');
+    expect(after.map((p) => p.technique_focus)).toEqual(before.map((p) => p.technique_focus));
+    expect(after.map((p) => p.xp_value)).toEqual(before.map((p) => p.xp_value));
+  });
+
+  it('swaps chicken dishes for vegetarians', async () => {
+    const b = await newUser({ cuisines: ['mexican'], dietary_needs: ['vegetarian'] });
+    await b.personalizeMyPath();
+    const plan = await b.getPlan();
+    expect(plan[3].dish_name).toBe('Veggie Fajitas');
+    expect(plan[7].dish_name).toBe('Seared Tofu Steaks');
+  });
+
+  it('leaves started slots unchanged', async () => {
+    const b = createMockBackend({ latency: 0, startSignedIn: true });
+    const s = await b.getSession();
+    await b.saveOnboarding(s!.userId, { ...base, cuisines: ['mexican'] });
+    await b.personalizeMyPath();
+    const plan = await b.getPlan();
+    expect(plan[0].dish_name).toBe('Knife Basics Salad'); // slot 1 is done for the demo user
+    expect(plan[3].dish_name).toBe('Chicken Fajitas');
+  });
+
+  it('returns to canonical dishes when the picks are cleared', async () => {
+    const b = await newUser({ cuisines: ['mexican'] });
+    await b.personalizeMyPath();
+    const s = await b.getSession();
+    await b.saveOnboarding(s!.userId, base);
+    await b.personalizeMyPath();
+    expect((await b.getPlan())[0].dish_name).toBe('Knife Basics Salad');
+  });
+
+  it('does not treat a saved recipe as started, and drops the cached recipe when the dish changes', async () => {
+    const b = await newUser({ cuisines: ['mexican'] });
+    await b.generateRecipe(1, 't'); // caches a recipe for the canonical dish; no check-in yet
+    await b.personalizeMyPath();
+    expect((await b.getPlan())[0].dish_name).toBe('Pico de Gallo');
+    expect((await b.getPlan())[0].has_recipe).toBe(false);
+  });
+
+  it('reports tasteSaved: true from the mock save', async () => {
+    const b = createMockBackend({ latency: 0 });
+    await b.signUp('new@simmer.test', 'secret1', 'Sam');
+    const s = await b.getSession();
+    await expect(b.saveOnboarding(s!.userId, base)).resolves.toEqual({ tasteSaved: true });
+  });
+
+  it('keeps stored taste answers when a save says includeTaste: false', async () => {
+    const b = await newUser({ cuisines: ['thai'], dietary_needs: ['no_pork'] });
+    const s = await b.getSession();
+    await b.saveOnboarding(s!.userId, { ...base, includeTaste: false });
+    expect(await b.getProfile(s!.userId)).toMatchObject({ cuisines: ['thai'], dietary_needs: ['no_pork'] });
   });
 });

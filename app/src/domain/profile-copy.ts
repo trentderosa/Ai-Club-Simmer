@@ -2,7 +2,7 @@
  * Labels for onboarding answers on the profile screen, and helpers to round
  * trip the goals string stored on `profiles`.
  */
-import type { Profile, ProfileInput } from '../api';
+import type { Cuisine, DietaryNeed, MealType, Profile, ProfileInput } from '../api';
 
 export const EXPERIENCE_OPTIONS: { value: ProfileInput['experience_level']; title: string; subtitle: string }[] = [
   { value: 'never_cooked', title: 'Never, really', subtitle: 'Microwave, cereal, the occasional toast' },
@@ -20,6 +20,64 @@ export const BUDGET_OPTIONS: { value: ProfileInput['budget']; title: string; sub
   { value: 'medium', title: 'Somewhere in the middle', subtitle: 'A few fresh things each week' },
   { value: 'high', title: 'Not a big worry', subtitle: 'Happy to buy what the recipe asks for' },
 ];
+
+/** Stored lowercase (snake_case) on profiles; values match the database check constraints. */
+export const CUISINE_OPTIONS: { value: Cuisine; label: string }[] = [
+  { value: 'mexican', label: 'Mexican' },
+  { value: 'italian', label: 'Italian' },
+  { value: 'chinese', label: 'Chinese' },
+  { value: 'japanese', label: 'Japanese' },
+  { value: 'korean', label: 'Korean' },
+  { value: 'thai', label: 'Thai' },
+  { value: 'indian', label: 'Indian' },
+  { value: 'mediterranean', label: 'Mediterranean' },
+  { value: 'middle_eastern', label: 'Middle Eastern' },
+  { value: 'american', label: 'American' },
+];
+
+export const MEAL_TYPE_OPTIONS: { value: MealType; label: string }[] = [
+  { value: 'quick_weeknight', label: 'Quick weeknight dinners' },
+  { value: 'meal_prep', label: 'Meal prep' },
+  { value: 'breakfast', label: 'Breakfast' },
+  { value: 'date_night', label: 'Date night' },
+  { value: 'comfort', label: 'Comfort food' },
+];
+
+export const DIETARY_OPTIONS: { value: DietaryNeed; label: string }[] = [
+  { value: 'vegetarian', label: 'Vegetarian' },
+  { value: 'vegan', label: 'Vegan' },
+  { value: 'no_pork', label: 'No pork' },
+  { value: 'no_beef', label: 'No beef' },
+  { value: 'no_poultry', label: 'No poultry' },
+  { value: 'no_fish', label: 'No fish' },
+  { value: 'no_shellfish', label: 'No shellfish' },
+  { value: 'dairy_free', label: 'Dairy-free' },
+  { value: 'gluten_free', label: 'Gluten-free' },
+  { value: 'nut_free', label: 'Nut allergy' },
+  { value: 'egg_free', label: 'No eggs' },
+  { value: 'no_mushrooms', label: 'No mushrooms' },
+  { value: 'no_spicy', label: 'Not spicy' },
+];
+
+/** Toggles a dietary need. Vegan implies vegetarian; dropping vegetarian drops vegan. */
+export function toggleDietary(list: readonly string[], value: string): string[] {
+  if (list.includes(value)) {
+    const rest = list.filter((x) => x !== value);
+    return value === 'vegetarian' ? rest.filter((x) => x !== 'vegan') : rest;
+  }
+  const next = [...list, value];
+  return value === 'vegan' && !next.includes('vegetarian') ? [...next, 'vegetarian'] : next;
+}
+
+/** "Mexican, Middle Eastern" for the profile screen; unknown stored values are skipped. */
+export function formatChoiceList(
+  values: readonly string[] | null | undefined,
+  options: readonly { value: string; label: string }[],
+): string | null {
+  if (!values || values.length === 0) return null;
+  const labels = options.filter((o) => values.includes(o.value)).map((o) => o.label);
+  return labels.length ? labels.join(', ') : null;
+}
 
 export const MINUTES_OPTIONS = [15, 20, 30, 45, 60] as const;
 export const DEFAULT_EQUIPMENT = ['stove', 'pan', 'pot', 'knife', 'cutting board'] as const;

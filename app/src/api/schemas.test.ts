@@ -1,4 +1,4 @@
-import { BadgesSchema, CheckInHistorySchema, CheckInInputSchema, MasteryRevealResponseSchema, MasteryStartResponseSchema, parseStoredDishPhoto, RecipeBookSchema, RecipeStepSchema } from './schemas';
+import { ProfileInputSchema, ProfileSchema, BadgesSchema, CheckInHistorySchema, CheckInInputSchema, MasteryRevealResponseSchema, MasteryStartResponseSchema, parseStoredDishPhoto, RecipeBookSchema, RecipeStepSchema } from './schemas';
 
 describe('recipe book and badge schemas', () => {
   it('parses a get_my_recipe_book row, including a null user_recipe_id', () => {
@@ -180,5 +180,35 @@ describe('parseStoredDishPhoto', () => {
     expect(parseStoredDishPhoto(photo)).toEqual(photo);
     expect(parseStoredDishPhoto(null)).toBeNull();
     expect(parseStoredDishPhoto({ url: 'not-a-photo' })).toBeNull();
+  });
+});
+
+describe('profile schemas and the taste fields', () => {
+  const oldRow = {
+    id: 'u1',
+    goals: null,
+    experience_level: 'a_little',
+    equipment: ['stove'],
+    budget: 'low',
+    days_per_week: 3,
+    minutes_per_session: 30,
+    onboarding_completed: true,
+  };
+
+  it('parses a profile row without the new columns, defaulting them to []', () => {
+    expect(ProfileSchema.parse(oldRow)).toMatchObject({ cuisines: [], meal_types: [], dietary_needs: [] });
+  });
+
+  it('parses a profile row with the new columns', () => {
+    const row = { ...oldRow, cuisines: ['thai'], meal_types: ['comfort'], dietary_needs: ['no_pork'] };
+    expect(ProfileSchema.parse(row)).toMatchObject({ cuisines: ['thai'], meal_types: ['comfort'], dietary_needs: ['no_pork'] });
+  });
+
+  it('accepts input without the taste fields and rejects values outside the fixed lists', () => {
+    const { id: _id, onboarding_completed: _o, ...input } = oldRow;
+    const base = { ...input, goals: '' };
+    expect(ProfileInputSchema.parse(base)).toMatchObject({ cuisines: [], meal_types: [], dietary_needs: [] });
+    expect(() => ProfileInputSchema.parse({ ...base, cuisines: ['Mexican'] })).toThrow();
+    expect(() => ProfileInputSchema.parse({ ...base, dietary_needs: ['keto'] })).toThrow();
   });
 });

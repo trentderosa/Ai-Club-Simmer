@@ -1,30 +1,33 @@
 /**
- * The three onboarding questions (about you, your kitchen, your week).
- * Used for first-time setup and for editing answers from the profile.
- * Diet is left out because profiles has no column for it yet.
+ * The four onboarding steps (about you, what you like to eat, your kitchen,
+ * your week). Used for first-time setup and for editing answers from the profile.
  */
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
-import type { Profile, ProfileInput } from '../api';
+import type { Cuisine, DietaryNeed, MealType, Profile, ProfileInput } from '../api';
 import { Button, IconButton } from './button';
 import { Chip, Chips, OptionRow } from './choice';
 import { gutter, Screen } from './layout';
 import { T } from './text';
 import {
   BUDGET_OPTIONS,
+  CUISINE_OPTIONS,
   DEFAULT_EQUIPMENT,
+  DIETARY_OPTIONS,
   EQUIPMENT_OPTIONS,
   EXPERIENCE_OPTIONS,
   GOAL_OPTIONS,
+  MEAL_TYPE_OPTIONS,
   MINUTES_OPTIONS,
   capEquipment,
   joinGoals,
   parseGoals,
+  toggleDietary,
 } from '../domain/profile-copy';
 import { color, font, space } from '../theme/tokens';
 
-export type OnboardingStep = 2 | 3 | 4;
+export type OnboardingStep = 2 | 3 | 4 | 5;
 
 export interface OnboardingFormProps {
   mode: 'create' | 'edit';
@@ -43,6 +46,10 @@ export function valuesFromProfile(profile: Profile | null | undefined): {
   budget: ProfileInput['budget'] | null;
   days: number;
   minutes: number;
+  cuisines: string[];
+  mealTypes: string[];
+  dietary: string[];
+  tasteLoaded: boolean;
 } {
   return {
     experience: profile?.experience_level ?? null,
@@ -51,6 +58,10 @@ export function valuesFromProfile(profile: Profile | null | undefined): {
     budget: profile?.budget ?? null,
     days: profile?.days_per_week ?? 3,
     minutes: profile?.minutes_per_session ?? 30,
+    cuisines: [...(profile?.cuisines ?? [])],
+    mealTypes: [...(profile?.meal_types ?? [])],
+    dietary: [...(profile?.dietary_needs ?? [])],
+    tasteLoaded: profile?.tasteLoaded ?? true,
   };
 }
 
@@ -63,9 +74,14 @@ export function OnboardingForm({ mode, initial, saving, error, onSave, onCancel,
   const [budget, setBudget] = useState<ProfileInput['budget'] | null>(seed.budget);
   const [days, setDays] = useState(seed.days);
   const [minutes, setMinutes] = useState(seed.minutes);
+  const [cuisines, setCuisines] = useState<string[]>(seed.cuisines);
+  const [mealTypes, setMealTypes] = useState<string[]>(seed.mealTypes);
+  const [dietary, setDietary] = useState<string[]>(seed.dietary);
+  // Chips that were preloaded without the user's stored answers must not overwrite them unless touched.
+  const [tasteTouched, setTasteTouched] = useState(false);
 
   const toggle = (list: string[], set: (v: string[]) => void, v: string) => set(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
-  const canContinue = step === 2 ? experience !== null : step === 3 ? equipment.length > 0 && budget !== null : true;
+  const canContinue = step === 2 ? experience !== null : step === 4 ? equipment.length > 0 && budget !== null : true;
 
   function submit() {
     if (!experience || !budget) return;
@@ -76,12 +92,16 @@ export function OnboardingForm({ mode, initial, saving, error, onSave, onCancel,
       budget,
       days_per_week: days,
       minutes_per_session: minutes,
+      cuisines: cuisines as Cuisine[],
+      meal_types: mealTypes as MealType[],
+      dietary_needs: dietary as DietaryNeed[],
+      includeTaste: seed.tasteLoaded || tasteTouched,
     });
   }
 
-  const next = () => (step === 4 ? submit() : setStep((step + 1) as 3 | 4));
+  const next = () => (step === 5 ? submit() : setStep((step + 1) as OnboardingStep));
   const back = () => {
-    if (step > 2) setStep((step - 1) as 2 | 3);
+    if (step > 2) setStep((step - 1) as OnboardingStep);
     else onCancel?.();
   };
   const showBack = step > 2 || (mode === 'edit' && !!onCancel);
@@ -90,7 +110,7 @@ export function OnboardingForm({ mode, initial, saving, error, onSave, onCancel,
     <Screen
       footer={
         <Button
-          label={step === 4 ? (mode === 'edit' ? 'Save changes' : 'Build my path') : 'Continue'}
+          label={step === 5 ? (mode === 'edit' ? 'Save changes' : 'Build my path') : 'Continue'}
           kind="ink"
           onPress={next}
           disabled={!canContinue}
@@ -101,19 +121,19 @@ export function OnboardingForm({ mode, initial, saving, error, onSave, onCancel,
     >
       <View style={styles.top}>
         {showBack ? <IconButton icon="back" label="Back" onPress={back} /> : <View style={{ width: 44 }} />}
-        <View style={styles.bar} accessibilityLabel={`Step ${step} of 4`}>
-          {[1, 2, 3, 4].map((i) => (
+        <View style={styles.bar} accessibilityLabel={`Step ${step} of 5`}>
+          {[1, 2, 3, 4, 5].map((i) => (
             <View key={i} style={[styles.barSeg, i <= step && styles.barOn]} />
           ))}
         </View>
         <T variant="caption" style={styles.stepLabel}>
-          {step} of 4
+          {step} of 5
         </T>
       </View>
 
       {step === 2 ? (
         <>
-          <Intro over="About you" title={['Let’s start where ', 'you', ' are.']} body="Everyone gets the same ten dishes. This changes how we write them for you." />
+          <Intro over="About you" title={['Let’s start where ', 'you', ' are.']} body="Everyone learns the same ten skills. This changes how we write them for you." />
           <Question title="How much have you cooked?">
             {EXPERIENCE_OPTIONS.map((o, i) => (
               <OptionRow key={o.value} first={i === 0} title={o.title} subtitle={o.subtitle} selected={experience === o.value} onPress={() => setExperience(o.value)} />
@@ -127,12 +147,39 @@ export function OnboardingForm({ mode, initial, saving, error, onSave, onCancel,
             </Chips>
           </Question>
           <T variant="caption" style={[gutter, { marginTop: 24 }]}>
-            Next: your kitchen (equipment and budget), then your week.
+            Next: what you like to eat, your kitchen, then your week.
           </T>
         </>
       ) : null}
 
       {step === 3 ? (
+        <>
+          <Intro over="Your tastes" title={['What do you like to ', 'eat', '?']} body="We’ll pick dishes you’ll actually want to cook for each skill." />
+          <Question title="Cuisines you like" aside="Pick any">
+            <Chips>
+              {CUISINE_OPTIONS.map((o) => (
+                <Chip key={o.value} label={o.label} selected={cuisines.includes(o.value)} onPress={() => { setTasteTouched(true); toggle(cuisines, setCuisines, o.value); }} />
+              ))}
+            </Chips>
+          </Question>
+          <Question title="What kind of meals?" aside="Pick any">
+            <Chips>
+              {MEAL_TYPE_OPTIONS.map((o) => (
+                <Chip key={o.value} label={o.label} selected={mealTypes.includes(o.value)} onPress={() => { setTasteTouched(true); toggle(mealTypes, setMealTypes, o.value); }} />
+              ))}
+            </Chips>
+          </Question>
+          <Question title="Anything you don’t eat?" aside="Pick any">
+            <Chips>
+              {DIETARY_OPTIONS.map((o) => (
+                <Chip key={o.value} label={o.label} selected={dietary.includes(o.value)} onPress={() => { setTasteTouched(true); setDietary(toggleDietary(dietary, o.value)); }} />
+              ))}
+            </Chips>
+          </Question>
+        </>
+      ) : null}
+
+      {step === 4 ? (
         <>
           <Intro over="Your kitchen" title={['What are we ', 'working', ' with?']} body="Recipes only ask for tools you have, and stay inside your budget." />
           <Question title="What do you have?" aside="Pick all that apply">
@@ -155,7 +202,7 @@ export function OnboardingForm({ mode, initial, saving, error, onSave, onCancel,
         </>
       ) : null}
 
-      {step === 4 ? (
+      {step === 5 ? (
         <>
           <Intro over="Your week" title={['How often can you ', 'cook', '?']} body="We’ll suggest how many sessions a week fit, and roughly when you’ll reach the final roast chicken." />
           <Question title="Days a week" aside={`${days} ${days === 1 ? 'day' : 'days'}`}>
