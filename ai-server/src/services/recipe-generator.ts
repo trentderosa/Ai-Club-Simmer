@@ -8,6 +8,7 @@ import { OllamaBusyError, OllamaPreemptedError } from './ollama-gate.js';
 import { startDeadline, type OllamaBudget } from './ollama-budget.js';
 import {
   ANIMAL_PROTEIN_WORDS_SOURCE,
+  ANIMAL_FLESH_WORDS_SOURCE,
   parseDietRules,
   findDietViolations,
   dietCorrectiveHint,
@@ -556,6 +557,32 @@ function isTemperatureCheckStep(instruction: string): boolean {
  *
  * Uses word-boundary matching to avoid false positives like "pan" in "Spanish".
  */
+// Any step that names an animal protein or cut, says "raw", says pat dry, or
+// mentions rinsing or washing is a safety step, so slot 10 never hides it.
+// Errs toward flagging: "Serve the sliced pork" is flagged too.
+const PROTEIN_STEP_RE = new RegExp(
+  `\\b(?:${ANIMAL_FLESH_WORDS_SOURCE()}|birds?|kebabs?|thighs?|breasts?|wings?|drumsticks?|fillets?|filets?|patty|patties|ribs?|tenderloins?|loins?|shanks?|cutlets?|hens?|roasts?|chops?|raw|rins\\w*|wash\\w*)\\b`,
+  'i'
+);
+function isProteinOrRawHandlingStep(instruction: string): boolean {
+  return PROTEIN_STEP_RE.test(instruction) || (PAT_RE.test(instruction) && DRY_RE.test(instruction));
+}
+
+/**
+ * Slot 10 only: force isSafetyStep on every step that names an animal protein,
+ * says raw, says pat dry, or mentions rinsing, so the mastery challenge never
+ * hides it. Final recipes only because only they hide steps, and the general
+ * ensureSafetyFlags behavior (for example "Rinse the rice") stays unchanged.
+ */
+export function forceProteinSafetyFlags(recipe: Recipe): Recipe {
+  return {
+    ...recipe,
+    steps: recipe.steps.map((step) =>
+      step.isSafetyStep || !isProteinOrRawHandlingStep(step.instruction) ? step : { ...step, isSafetyStep: true }
+    ),
+  };
+}
+
 function ensureSafetyFlags(recipe: Recipe): Recipe {
   return {
     ...recipe,
@@ -599,6 +626,7 @@ const PREP_BLOCKER_RE = new RegExp(
 function isPlainPrepStep(step: Recipe['steps'][number]): boolean {
   const text = step.instruction;
   if (!PREP_START_RE.test(text)) return false;
+  if (isProteinOrRawHandlingStep(text)) return false;
   if (!PREP_NO_CONTAINER_OK_RE.test(text) && !PREP_CONTAINER_RE.test(text)) return false;
   if (PREP_BLOCKER_RE.test(text)) return false;
   // Belt and braces: the existing safety classifiers must agree it is not a safety step.
@@ -856,6 +884,7 @@ export async function generateRecipe(
       // the model gave none. Always a safety step, so slot 10 counts are unchanged.
       const withDoneness = withinSchema(ensureDonenessSteps(cleaned), cleaned);
       let recipeWithSafetyFlags = ensureSafetyFlags(withDoneness);
+      if (slot.isFinal) recipeWithSafetyFlags = forceProteinSafetyFlags(recipeWithSafetyFlags);
 
       // Slot 10: when the model flagged plain prep steps as safety, clear those flags.
       if (slot.isFinal) {

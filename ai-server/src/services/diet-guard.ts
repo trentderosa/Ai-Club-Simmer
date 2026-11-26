@@ -97,6 +97,9 @@ function normalizeText(text: string): string {
 /** Every animal protein word we know (meat, poultry, fish, shellfish, egg). Used by the slot 10 prep-step allowlist. */
 export const ANIMAL_PROTEIN_WORDS_SOURCE = (): string => [POULTRY, PORK, BEEF, OTHER_MEAT, FISH, SHELLFISH, EGG].join('|');
 
+/** Meat, poultry, fish, and shellfish words (no egg). Used by the slot 10 forced safety flag. */
+export const ANIMAL_FLESH_WORDS_SOURCE = (): string => [POULTRY, PORK, BEEF, OTHER_MEAT, FISH, SHELLFISH].join('|');
+
 const words = (list: string): string => `\\b(?:${list})\\b`;
 
 // Broth and stock are not listed on their own: "vegetable broth" is fine. They

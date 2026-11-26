@@ -945,7 +945,7 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
     const temp = step('Insert a thermometer into the thickest part and check it reaches 165°F (74°C).');
     const twoPlusTemp = recipeWith([
       step('Gather the ingredients on the counter.'),
-      step('Season the chicken with salt and pepper.'),
+      step('Season the potatoes with salt and pepper.'),
       temp,
     ]);
     // Only 2 hideable steps once the thermometer step is flagged, so all 3 attempts fail.
@@ -955,7 +955,7 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
     expect(failing.generate).toHaveBeenCalledTimes(3);
 
     const ok = createMockOllamaClient([
-      recipeWith([step('Gather the ingredients on the counter.'), step('Season the chicken with salt and pepper.'), step('Mix the herbs with butter in a bowl.'), temp]),
+      recipeWith([step('Gather the ingredients on the counter.'), step('Season the potatoes with salt and pepper.'), step('Mix the herbs with butter in a bowl.'), temp]),
     ]);
     const good = await run(ok, finalSlot);
     expect(good.success).toBe(true);
@@ -988,7 +988,7 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
   it('does not save a slot 10 rinse that also misses the hideable-step floor', async () => {
     const rinsing = recipeWith([
       step('Rinse the chicken under cold water.'),
-      step('Season the chicken with salt and pepper.'),
+      step('Season the potatoes with salt and pepper.'),
       step('Gather the ingredients on the counter.'),
     ]);
     const client = createMockOllamaClient([rinsing, rinsing, rinsing]);
@@ -1019,7 +1019,7 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
     // 3 real hideable steps would pass; here only 2 are real, the rest are trivial.
     const mostlyTrivial = recipeWith([
       step('Gather the ingredients on the counter.'),
-      step('Season the chicken with salt and pepper.'),
+      step('Season the potatoes with salt and pepper.'),
       step('Serve.'),
       step('Enjoy!'),
       step('Preheat the oven.'),
@@ -1035,7 +1035,7 @@ describe('generateRecipe - final slot minimum hidden steps', () => {
   it('passes when exactly the minimum of non-trivial steps is present, trivial steps aside', async () => {
     const three = recipeWith([
       step('Gather the ingredients on the counter.'),
-      step('Season the chicken with salt and pepper.'),
+      step('Season the potatoes with salt and pepper.'),
       step('Mix the herbs with butter in a bowl.'),
       step('Serve.'),
       step('Preheat the oven.'),

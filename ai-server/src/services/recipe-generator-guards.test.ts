@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { findForbiddenTerm } from './diet-guard.js';
-import { generateRecipe, buildPrompt, repairMasteryHideableSteps, type PathSlot } from './recipe-generator.js';
+import { generateRecipe, buildPrompt, repairMasteryHideableSteps, forceProteinSafetyFlags, type PathSlot } from './recipe-generator.js';
 import { generateCookAnythingRecipe } from '../cook-anything/generator.js';
 import type { OllamaClient } from './ollama-client.js';
 import type { Recipe } from '../schemas/recipe.js';
@@ -490,5 +490,59 @@ describe('slot 10 prompt asks for cold prep steps and folds doneness into the co
 
   it('tells the model not to write a separate temperature step', () => {
     expect(buildPrompt(slot, user)).toContain('Do not write a separate step just to check temperature.');
+  });
+});
+
+describe('forceProteinSafetyFlags (slot 10)', () => {
+  const flagged = (text: string): boolean => forceProteinSafetyFlags(recipe(['x'], [step(text)])).steps[0].isSafetyStep;
+
+  it.each([
+    'Season the pork loin with the rosemary mix.',
+    'Season the chicken with salt and pepper.',
+    'Drizzle the lemon mixture over the salmon fillets.',
+    'Place the thighs in the dish.',
+    'Pat the potatoes dry with paper towels.',
+    'Pat dry the meat with paper towels.',
+    'Rinse the parsley under cold water.',
+    'Wash the potatoes in cold water.',
+    'Handle the raw mixture with clean hands.',
+    'Serve the sliced pork with the potatoes.',
+    'Let the roast rest for 10 minutes.',
+    'Stuff the onion inside the cavity of the bird.',
+  ])('forces a safety flag: %s', (text) => {
+    expect(flagged(text)).toBe(true);
+  });
+
+  it.each([
+    'Gather and measure all the ingredients on the counter.',
+    'Mix the salt, pepper, rosemary, and olive oil in a small bowl.',
+    'Toss the potatoes with the seasoning mix in a large bowl.',
+    'Whisk the eggs until smooth in a bowl.',
+  ])('leaves a plain prep step alone: %s', (text) => {
+    expect(flagged(text)).toBe(false);
+  });
+
+  it('keeps existing flags and returns the same step objects when nothing changes', () => {
+    const r = recipe(['x'], [step('Toss the potatoes in a bowl with salt.'), step('Roast the pork.', true)]);
+    const out = forceProteinSafetyFlags(r);
+    expect(out.steps[0]).toBe(r.steps[0]);
+    expect(out.steps[1].isSafetyStep).toBe(true);
+  });
+
+  it('generateRecipe never hides a protein step on slot 10', async () => {
+    const r = recipe(['pork loin', 'potatoes', 'rosemary'], [
+      step('Gather and measure all the ingredients on the counter.'),
+      step('Season the pork loin with the rosemary mix.'),
+      step('Mix the salt, pepper, and rosemary in a small bowl.'),
+      step('Toss the potatoes with the seasoning mix in a large bowl.'),
+      step('Pat the pork loin dry with paper towels.'),
+    ]);
+    const result = await generateRecipe(clientWith([json(r)]), finalSlot, plain);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      const hidden = result.recipe.steps.filter((s) => !s.isSafetyStep).map((s) => s.instruction);
+      expect(hidden.some((t) => /pork|pat/i.test(t))).toBe(false);
+      expect(hidden).toHaveLength(3);
+    }
   });
 });
